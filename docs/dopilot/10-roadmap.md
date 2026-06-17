@@ -36,6 +36,7 @@
 | 前端骨架 M0 | 🆕 | Vite+Vue3+EP+TS + 登录/布局/菜单 + axios + SSE 客户端 | `06-frontend-rewrite.md` §2 |
 | i18n 框架 | 🆕 | 过渡期：旧 Jinja2 用 Flask-Babel(方案B)；新 SPA 用 vue-i18n；默认中文 | `04-gap-i18n.md` §7、`06-frontend-rewrite.md` §7 |
 | server/agent Docker 化 | 🆕 | 两种镜像 + 卷持久化（注意 `vars.py` 启动清目录坑） | `08-docker-deployment.md` |
+| 镜像构建发布 + CI | 🆕 | Dockerfile.server/agent + `.dockerignore`（排除 `reference/`）+ GitHub Actions 推送 `rabbir/dopilot:latest`（决策 7、monorepo 决策 8） | `08-docker-deployment.md` §7 |
 | 测试回归基线 | ✅ | 固化 `tests/` 为"零回归"安全网，明确复跑方式 | `07-testing-baseline.md` |
 | 实时日志框架(第一步) | 🆕 | SSE + LogSource 主干，先打通 scrapyd | `03-gap-realtime-logs.md` §4 |
 

@@ -48,3 +48,5 @@
 - **认证**：单用户唯一管理员
 - **前端**：Vue 3 + Element Plus + Vite + TS，前后端分离，渐进式 strangler
 - **实时日志**：SSE（单向流，纯 WSGI 可跑）
+- **镜像发布**：构建推送到 Docker Hub `rabbir/dopilot:latest`（agent 为 `rabbir/dopilot-agent:latest`）；镜像命名空间 `rabbir` ≠ git origin `senjianlu`
+- **仓库结构**：monorepo —— server + agent 同仓开发，`reference/scrapydweb/` 仅基线参考、不参与构建
