@@ -41,6 +41,8 @@ dopilot 是在开源项目 [scrapydweb](https://github.com/my8100/scrapydweb)（
 | 4 | 用户 / 权限体系 | **单用户、唯一管理员**。无需多用户/角色，保留并简化为单管理员认证即可。 |
 | 5 | dopilot 自身部署形态 | 分 **server**（调度中心 + Web）与 **agent**（worker 节点）两种部署角色，**均使用 Docker 部署**。 |
 | 6 | 前端技术栈（整体重构） | **Vue 3 + Element Plus + Vite + TypeScript**；走**前后端分离**（Flask 收敛为 `/api/v1/*` JSON API）；**渐进式 strangler** 迁移（搭 SPA 骨架后按页迁移，新旧共存）。归属**阶段 0**。详见 `docs/dopilot/06-frontend-rewrite.md`。 |
+| 7 | 镜像构建与发布 | dopilot 镜像统一构建并推送到 **Docker Hub `rabbir/dopilot`**：server 角色镜像即 `rabbir/dopilot:latest`；agent 角色后续以 `rabbir/dopilot-agent:latest`（或同仓不同 tag）发布。⚠️ git `origin` 为 `senjianlu/dopilot`，镜像命名空间为 `rabbir`（Docker Hub 账号），**两者独立**，文档/CI 中不要混用。详见 `docs/dopilot/08-docker-deployment.md` §7。 |
+| 8 | 代码仓库结构 | **monorepo**：server（调度中心 + Web）与 agent（worker 执行器）**在本仓库同仓开发**，不拆分多仓；`reference/scrapydweb/` 仅作基线参考（不参与构建）。dopilot 自身代码（含未来 agent）置于仓库根，详见 `docs/dopilot/05-dev-setup-and-known-issues.md` §1 仓库布局。 |
 
 ## 5. 分期路线（由决策推导）
 
@@ -65,6 +67,8 @@ dopilot 是在开源项目 [scrapydweb](https://github.com/my8100/scrapydweb)（
 └─────────────────────────────┘        └──────────────────────────┘
                                   (agent 可多实例 = 多 worker 节点)
 ```
+
+> **镜像与仓库**：上图两个角色都在**同一 monorepo**（决策 8）内开发；构建产物推送到 Docker Hub —— server = `rabbir/dopilot:latest`，agent = `rabbir/dopilot-agent:latest`（决策 7）。阶段 1 的 agent 可先直接复用现成 Scrapyd 镜像，待脚本/容器执行器落地后再发布自有 agent 镜像。
 
 ## 6. 文档导航
 

@@ -4,16 +4,27 @@
 
 ## 1. 仓库与远程
 
+本仓库为 **monorepo**（`00-requirements.md` 决策 8）：server 与 agent 同仓开发，`reference/` 仅作基线参考、不参与构建。
+
 ```
 /workspaces/dopilot/            <- dopilot 仓库（origin: senjianlu/dopilot）
 ├── reference/
-│   └── scrapydweb/             <- scrapydweb 1.6.0 本体（参考代码，保留上游目录结构）
+│   └── scrapydweb/             <- scrapydweb 1.6.0 本体（参考代码，保留上游目录结构，不参与构建）
 │       ├── scrapydweb/         <- 应用包
 │       ├── setup.py / requirements.txt / tests/ / screenshots/
 │       └── UPSTREAM_README.md / README_CN.md / LICENSE / MANIFEST.in
 ├── README.md                   <- dopilot 自己的 README
-└── docs/                       <- 本套文档（architecture/ 现状 + dopilot/ 改造）
+├── docs/                       <- 本套文档（architecture/ 现状 + dopilot/ 改造）
+│
+│   # —— 以下为阶段 0 起逐步落地的 dopilot 自身代码（monorepo，当前尚未创建）——
+├── dopilot/                    <- 应用包（scrapydweb 改名而来，见 09-package-rename.md）
+├── agent/                      <- worker 执行器（阶段 2 起，见 01-gap-executors.md）
+├── frontend/                   <- Vue3 + Element Plus + Vite SPA（见 06-frontend-rewrite.md）
+├── Dockerfile.server / Dockerfile.agent / .dockerignore   <- 镜像构建（见 08 §7）
+└── .github/workflows/docker.yml                           <- CI 推送 rabbir/dopilot:latest（见 08 §7.4）
 ```
+
+> 镜像发布命名空间为 Docker Hub **`rabbir`**（与 git `origin` 的 `senjianlu` 互不等同），详见 `08-docker-deployment.md` §7。
 
 Git 远程：
 

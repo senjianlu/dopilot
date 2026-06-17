@@ -196,7 +196,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.server
-    image: dopilot-server:dev
+    image: rabbir/dopilot:latest      # Docker Hub 发布名（见 §7）；本地开发可另打 dopilot-server:dev tag
     ports:
       - "5000:5000"
     environment:
@@ -216,7 +216,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.agent
-    image: dopilot-agent:dev
+    image: rabbir/dopilot-agent:latest   # 自有 agent 镜像（阶段 2 起）；见 §7
     # 期 1 也可直接用：image: vimagick/scrapyd 之类的 Scrapyd 镜像
     ports:
       - "6800:6800"
@@ -402,3 +402,94 @@ scrapydweb 的后台执行分两类，共 3 个单元：
 4. **server↔agent 鉴权**：compose 内网用服务名直连，跨主机部署时 agent（6800）的访问控制（上游靠 `SCRAPYD_SERVERS` 里的 `username:password`，`default_settings.py:39-47`）是否够用？
 5. **LogParser 在分离架构下的落点**：它读**本机**日志（`LOCAL_SCRAPYD_LOGS_DIR`），server/agent 分离后日志在 agent 侧，是把 LogParser 移进 agent 镜像，还是改为 agent 主动回传？（`03-gap-realtime-logs.md`）
 6. **多 agent 的日志/产物卷**：每个 agent 自己的 `/agent-data` 如何与 server 的展示打通（共享卷 vs API 拉取）？
+
+---
+
+## 7. 镜像命名、构建与推送（决策 7 / 决策 8）
+
+> 对应 `00-requirements.md` §4 决策 7（镜像发布到 `rabbir/dopilot`）、决策 8（server + agent monorepo）。本节为**改造草案**：当前仓库尚无 Dockerfile/CI，待阶段 0 落地。
+
+### 7.1 镜像命名约定
+
+| 角色 | Docker Hub 镜像 | 何时发布 | Dockerfile |
+|------|----------------|----------|-----------|
+| server（Web + 调度中心） | **`rabbir/dopilot:latest`** | 阶段 0 起 | `Dockerfile.server`（§2.3 草案） |
+| agent（worker 执行器） | **`rabbir/dopilot-agent:latest`** | 阶段 2 起（阶段 1 先复用现成 Scrapyd 镜像） | `Dockerfile.agent`（§2.4 草案） |
+
+约定：
+- **命名空间区分**：git `origin` = `senjianlu/dopilot`（源码托管），镜像命名空间 = `rabbir`（Docker Hub 账号，对应 `rabbirbot00@gmail.com`）。两者**互不等同**，CI/文档里不要把 `senjianlu` 当镜像前缀。
+- 发布 tag：`latest`（滚动）+ 建议附带不可变 tag（`rabbir/dopilot:<git-short-sha>` 或语义版本 `:1.6.0-dopilot.0`），便于回滚。
+- 两个镜像**同源单仓**（monorepo）：同一次提交可产出 server / agent 两个镜像，靠 `--target` 或不同 Dockerfile 区分。
+
+### 7.2 monorepo 构建布局（决策 8）
+
+server 与 agent 同仓开发，构建上下文统一在仓库根。落地后的目录预期（阶段 0 改名后）：
+
+```
+dopilot/                         <- 仓库根（构建上下文）
+├── dopilot/                     <- 应用包（scrapydweb 改名而来，见 09-package-rename.md）
+├── agent/                       <- worker 执行器代码（阶段 2 起，含 agent/requirements.txt）
+├── frontend/                    <- Vue3 + Vite SPA（见 06-frontend-rewrite.md）
+├── requirements.txt             <- server 依赖（含 pin setuptools<81，见 05 §4.1）
+├── Dockerfile.server            <- 产出 rabbir/dopilot:latest
+├── Dockerfile.agent             <- 产出 rabbir/dopilot-agent:latest
+├── .dockerignore                <- 排除 reference/、.venv/、docs/、tests/、*.pyc 等
+├── docker-compose.yml           <- §2.5 草案
+└── reference/scrapydweb/        <- 基线参考，**不参与构建**（.dockerignore 必须排除）
+```
+
+> ⚠️ `.dockerignore` **务必排除 `reference/`**，否则会把整份 scrapydweb 参考代码打进构建上下文，拖慢构建且可能误拷。
+
+### 7.3 本地构建与推送（手动）
+
+```bash
+# 在仓库根，先登录 Docker Hub（rabbir 账号）
+docker login -u rabbir
+
+# 构建并推送 server 镜像
+docker build -f Dockerfile.server -t rabbir/dopilot:latest -t rabbir/dopilot:$(git rev-parse --short HEAD) .
+docker push rabbir/dopilot:latest
+docker push rabbir/dopilot:$(git rev-parse --short HEAD)
+
+# 多架构（可选，amd64 + arm64）：
+# docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.server \
+#   -t rabbir/dopilot:latest --push .
+```
+
+### 7.4 CI 自动构建推送（GitHub Actions 草案）
+
+源码在 GitHub（`senjianlu/dopilot`），用 Actions 在 push/tag 时构建并推到 Docker Hub `rabbir`：
+
+```yaml
+# .github/workflows/docker.yml（草案）
+name: build-and-push
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: rabbir
+          password: ${{ secrets.DOCKERHUB_TOKEN }}   # 在仓库 Secrets 配置 Docker Hub access token
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.server
+          push: true
+          tags: |
+            rabbir/dopilot:latest
+            rabbir/dopilot:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+```
+
+落地前置：
+- 在 Docker Hub 创建 `rabbir/dopilot` 仓库 + access token；在 GitHub 仓库加 `DOCKERHUB_TOKEN` secret。
+- 阶段 0 需先完成改名（`09-package-rename.md`）、确定 `requirements.txt`（pin `setuptools<81` 或升 APScheduler，见 `05-dev-setup-and-known-issues.md` §4.1）、补 `.dockerignore`，Dockerfile 才能真正 build 通过。
+- agent 镜像加一个并列 job（`Dockerfile.agent` → `rabbir/dopilot-agent:latest`），阶段 2 启用。
