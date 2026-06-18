@@ -39,7 +39,7 @@
 
 | Epic | 类型 | 说明 | 文档 |
 |------|------|------|------|
-| 搭建 dopilot 骨架(apps/packages) | 🆕 | 新建 `apps/server`、`apps/agent`、`apps/web`、`packages/protocol` 骨架（structure-first，权威布局见 `05` §1），不对 scrapydweb 改名/git mv | `09-package-rename.md`（行为参考 + 移植注意事项） |
+| 搭建 dopilot 骨架(apps/packages) | 🆕 | 新建 `apps/server`、`apps/agent`、`apps/web`、`packages/protocol` 骨架（structure-first，权威布局见 `05` §1），不对 scrapydweb 改名/git mv | `../phases/phase-0/00-brief.md`、`09-package-rename.md` |
 | 单管理员 token 认证 | 🟡 | HTTP Basic → token 登录（单用户，无需 RBAC） | `06-frontend-rewrite.md` §5、`architecture/06-auth-and-utils.md` |
 | 前端骨架 M0 | 🆕 | Vite+Vue3+EP+TS + 登录/布局/菜单 + axios + SSE 客户端；后端 FastAPI `/api/v1` 骨架 | `06-frontend-rewrite.md` §2 |
 | i18n 框架 | 🆕 | SPA 用 vue-i18n，默认中文；后端 `/api/v1` 仅返回结构化 message code，由前端做文案映射 | `04-gap-i18n.md` §7、`06-frontend-rewrite.md` §7 |
@@ -114,7 +114,7 @@ node_strategy ──► (阶段1 起对所有 Executor 生效)
 
 | 阶段 | 必读现状 | 必读改造 |
 |------|---------|---------|
-| 阶段0 | `architecture/00,01,06` | `dopilot/05,06,07,08,09` |
+| 阶段0 | `architecture/00,01,06` | `phases/phase-0/00-brief`, `dopilot/05,06,07,08,09` |
 | 阶段1 | `architecture/02,03,04,05` | `dopilot/01,02,03,06` |
 | 阶段2 | `architecture/01,02` | `dopilot/01,08` |
 | 阶段3 | `architecture/05` | `dopilot/01,02,03` |

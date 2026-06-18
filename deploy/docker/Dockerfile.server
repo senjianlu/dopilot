@@ -1,0 +1,50 @@
+# dopilot server image (Web + scheduler hub).
+#
+# Build context = repo ROOT (compose passes context: ../..).
+# Base image is glibc (python:3.12-slim), never Alpine: parent-death subprocess
+# signaling relies on glibc libc.so.6 prctl.
+#
+# This image MUST NOT contain apps/web (the SPA is built/served separately) and
+# MUST NOT contain reference/ (read-only scrapydweb behavioral reference).
+
+# ---- Stage: build wheels --------------------------------------------------
+FROM python:3.12-slim AS py-deps
+
+WORKDIR /build
+
+RUN pip install --no-cache-dir wheel
+
+# Only the server needs the protocol package + server package.
+COPY packages/protocol ./packages/protocol
+COPY apps/server ./apps/server
+
+# Build wheels for the local packages (and their resolved deps).
+RUN pip wheel --wheel-dir=/wheels ./packages/protocol ./apps/server
+
+# ---- Stage: runtime -------------------------------------------------------
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+COPY --from=py-deps /wheels /wheels
+RUN pip install --no-cache-dir /wheels/* \
+    && rm -rf /wheels
+
+# Alembic assets so the image can run `alembic upgrade head` at deploy time
+# (used by the compose `migrate` service). They live beside dopilot_server in the
+# source tree and are NOT part of the wheel, so copy them explicitly. The app
+# itself never calls create_all(); Alembic is the only schema authority.
+COPY apps/server/alembic.ini ./alembic.ini
+COPY apps/server/migrations ./migrations
+
+ENV DOPILOT_CONFIG=/app/configs/server.toml
+ENV DOPILOT_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
+
+# Log bodies + server data live here (see docs/dopilot/08-docker-deployment.md).
+VOLUME ["/server-data"]
+
+EXPOSE 5000
+
+# uvicorn runs workers=1 (single-instance hard constraint) inside run().
+ENTRYPOINT ["python", "-m", "dopilot_server.app"]
+CMD ["-b", "0.0.0.0", "-p", "5000"]

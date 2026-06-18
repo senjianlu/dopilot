@@ -47,3 +47,19 @@ build/
 
 .idea
 .vscode/
+
+# --- dopilot (greenfield) ---
+.venv-ref/
+node_modules/
+apps/web/dist/
+apps/web/node_modules/
+# local config copies (examples are committed as configs/*.example.toml)
+configs/server.toml
+configs/agent.toml
+# local server data (log bodies live here, see decision #11)
+server-data/
+agent-data/
+.ruff_cache/
+# web TS build artifacts (incremental build cache; emit is disabled via noEmit)
+*.tsbuildinfo
+

@@ -10,7 +10,8 @@
 
 1. **先看目标**：[`dopilot/00-requirements.md`](dopilot/00-requirements.md) —— 需求、已确认决策、四阶段路线、server/agent 部署。
 2. **再看总纲**：[`dopilot/10-roadmap.md`](dopilot/10-roadmap.md) —— 综合 greenfield 构建/移植路线图，串联 scrapydweb 行为参考+gap+决策。
-3. **按需深入**：scrapydweb 行为参考看 `architecture/`，dopilot 设计/实现看 `dopilot/0x-gap-*`。
+3. **开始实现**：阶段 0 直接看 [`phases/phase-0/00-brief.md`](phases/phase-0/00-brief.md) —— 给 Claude 编码用的任务书与 Codex review/验收清单。
+4. **按需深入**：scrapydweb 行为参考看 `architecture/`，dopilot 设计/实现看 `dopilot/0x-gap-*`。
 
 ## 一、scrapydweb 现状行为参考（`architecture/`）
 
@@ -41,6 +42,15 @@
 | [`08-docker-deployment.md`](dopilot/08-docker-deployment.md) | server/agent Docker 化 + 数据持久化 |
 | [`09-package-rename.md`](dopilot/09-package-rename.md) | scrapydweb 行为/契约移植注意事项（非改名；保留耦合点分析供移植参考） |
 | [`10-roadmap.md`](dopilot/10-roadmap.md) | **综合 greenfield 构建/移植路线图（总纲）** |
+
+## 三、阶段开发执行文档（`phases/`）
+
+阶段开发文档与主线设计文档分开管理。每个阶段单独建目录，并按执行顺序用 `00-`、`01-`、`02-` 前缀排序。阶段结束后，只把长期有效的架构事实同步回 `dopilot/` 主线文档。
+
+| 文档 | 内容 |
+|------|------|
+| [`phase-0/00-brief.md`](phases/phase-0/00-brief.md) | 阶段 0 实现任务书 |
+| [`phase-0/01-review.md`](phases/phase-0/01-review.md) | 阶段 0 review 与返工清单 |
 
 ## 决策速查
 

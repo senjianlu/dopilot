@@ -1,0 +1,43 @@
+# dopilot server example config.
+#
+# Copy to configs/server.toml (or point DOPILOT_CONFIG at your own file) and edit.
+# WARNING: every "change-me" value below is a placeholder and is NOT production-safe.
+# Replace admin_password / token_secret / shared_token before any real deployment.
+
+[server]
+host = "0.0.0.0"
+port = 5000
+public_url = "http://localhost:5000"
+
+[database]
+url = "postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot"
+
+[auth]
+admin_username = "admin"
+admin_password = "change-me"
+token_secret = "change-me"
+access_token_ttl_minutes = 720
+stream_token_ttl_seconds = 60
+
+[agent_auth]
+shared_token = "change-me-agent-token"
+
+[nodes]
+agents = ["localhost:6800"]
+
+[scheduler]
+enabled = true
+timezone = "Asia/Shanghai"
+
+[logs]
+root_dir = "/server-data/logs"
+background_drain_interval_seconds = 30
+realtime_drain_interval_seconds = 1
+max_tail_bytes_per_pull = 262144
+eof_stable_seconds = 3
+final_drain_hard_timeout_seconds = 30
+retention_days = 30
+
+[i18n]
+locale = "zh"
+timezone = "Asia/Shanghai"

@@ -1,0 +1,13 @@
+# Keep the Docker build context lean and enforce the reference boundary.
+# reference/ exclusion is MANDATORY: it must never enter any image.
+reference/
+.venv/
+.venv-ref/
+.git/
+node_modules/
+apps/web/dist/
+docs/
+.vscode/
+**/__pycache__/
+**/.pytest_cache/
+**/tests/.tmp/
