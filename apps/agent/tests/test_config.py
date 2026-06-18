@@ -21,6 +21,11 @@ shared_token = "tok"
 scrapy = true
 script = false
 docker = false
+
+[scrapyd]
+start = false
+host = "127.0.0.1"
+port = 6802
 """
 
 
@@ -43,6 +48,28 @@ def test_loads_from_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert settings.auth.enabled is True
     assert settings.capabilities.scrapy is True
     assert settings.capabilities.docker is False
+    assert settings.scrapyd.start is False
+    assert settings.scrapyd.host == "127.0.0.1"
+    assert settings.scrapyd.port == 6802
+
+
+def test_scrapyd_defaults_when_section_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_ID", raising=False)
+    monkeypatch.delenv("AGENT_WORKDIR", raising=False)
+    cfg = tmp_path / "agent.toml"
+    cfg.write_text(
+        '[agent]\nagent_id = "x"\n[capabilities]\nscrapy = true\n',
+        encoding="utf-8",
+    )
+
+    settings = load_settings(cfg)
+
+    # [scrapyd] omitted => defaults: start on, container-internal 127.0.0.1:6801.
+    assert settings.scrapyd.start is True
+    assert settings.scrapyd.host == "127.0.0.1"
+    assert settings.scrapyd.port == 6801
 
 
 def test_agent_id_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

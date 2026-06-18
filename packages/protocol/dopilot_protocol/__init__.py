@@ -6,6 +6,16 @@ dependency direction is one-way (server and agent depend on protocol).
 
 from __future__ import annotations
 
+from .agent import (
+    AgentRunRequest,
+    AgentRunResponse,
+    AgentStatusResponse,
+    AgentStopRequest,
+    AgentStopResponse,
+    AttemptStatus,
+    CleanupResponse,
+    EggDeployResponse,
+)
 from .common import CapabilitySet, ErrorResponse
 from .execution import ExecutionRunRequest, ExecutionRunResponse
 from .health import HealthResponse
@@ -22,5 +32,14 @@ __all__ = [
     "TailResponse",
     "ExecutionRunRequest",
     "ExecutionRunResponse",
+    # server -> agent execution control (phase 1)
+    "AttemptStatus",
+    "AgentRunRequest",
+    "AgentRunResponse",
+    "AgentStopRequest",
+    "AgentStopResponse",
+    "AgentStatusResponse",
+    "CleanupResponse",
+    "EggDeployResponse",
     "__version__",
 ]

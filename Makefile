@@ -3,7 +3,7 @@
 # Python packages install in dependency order: protocol -> server -> agent.
 # uvicorn always runs workers=1 (single-instance hard constraint).
 
-.PHONY: install web-install db-up migrate server agent web test compose-config fmt lint
+.PHONY: install web-install db-up migrate server agent web test compose-config compose-smoke fmt lint
 
 # --- Python: create venv + editable installs (protocol first) --------------
 install:
@@ -44,6 +44,12 @@ test:
 # --- Compose validation -----------------------------------------------------
 compose-config:
 	cd deploy/docker && docker compose config
+
+# --- Phase-1 clean-volume Scrapy smoke (builds images, real scrapyd) --------
+# Brings up db -> migrate -> agent -> server on fresh volumes, uploads the demo
+# egg, runs demo:phase1, asserts logs + final `complete`, then tears down.
+compose-smoke:
+	scripts/smoke-phase1.sh
 
 # --- Formatting / linting ---------------------------------------------------
 fmt:

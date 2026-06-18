@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import auth, executions, health, nodes
+from . import artifacts, auth, executions, health, nodes
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(health.router)
 router.include_router(auth.router)
 router.include_router(nodes.router)
 router.include_router(executions.router)
+router.include_router(artifacts.router)

@@ -5,6 +5,19 @@ autogenerate and the test ``create_all`` see the full schema.
 """
 
 from .auth_token import AuthToken
+from .execution import (
+    Execution,
+    ExecutionAttempt,
+    ExecutionLogFile,
+    ScrapyArtifact,
+)
 from .node import Node
 
-__all__ = ["AuthToken", "Node"]
+__all__ = [
+    "AuthToken",
+    "Node",
+    "Execution",
+    "ExecutionAttempt",
+    "ExecutionLogFile",
+    "ScrapyArtifact",
+]

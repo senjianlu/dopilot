@@ -13,12 +13,27 @@ async def test_health_shape(client: AsyncClient) -> None:
     assert body["status"] == "ok"
     assert body["service"] == "dopilot-agent"
     assert body["agent_id"] == "agent-test-1"
-    assert body["workdir"] == "/agent-data/test"
+    # workdir is the test tmp dir wired by the conftest fixture.
+    assert body["workdir"].endswith("agent-data")
     assert body["capabilities"] == {
         "scrapy": True,
         "script": True,
         "docker": False,
     }
+
+
+async def test_health_includes_scrapyd_detail(client: AsyncClient) -> None:
+    # /health merges a non-protocol detail.scrapyd block with the subprocess
+    # health. Tests run with [scrapyd].start = false so no child is managed.
+    resp = await client.get("/health")
+    assert resp.status_code == 200
+
+    detail = resp.json()["detail"]
+    assert "scrapyd" in detail
+    scrapyd = detail["scrapyd"]
+    assert scrapyd["running"] is False
+    assert scrapyd["port"] == 6801
+    assert scrapyd["pid"] is None
 
 
 async def test_health_no_token_required_when_auth_on(client_auth: AsyncClient) -> None:

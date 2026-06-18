@@ -17,3 +17,13 @@ shared_token = "change-me-agent-token"
 scrapy = true
 script = false
 docker = false
+
+# Local scrapyd subprocess the agent owns.
+# host/port are container-internal (NEVER exposed to the host); the server only
+# ever talks to the agent on [agent].port (6800). Data dirs live under
+# {workdir}/scrapyd/{eggs,logs,dbs,items}. Set start = false to point the agent
+# at an externally managed scrapyd instead of spawning a child.
+[scrapyd]
+start = true
+host = "127.0.0.1"
+port = 6801

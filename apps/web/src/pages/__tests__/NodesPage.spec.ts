@@ -13,6 +13,7 @@ const sampleNodes: NodeInfo[] = [
     endpoint: "http://10.0.0.1:6800",
     status: "healthy",
     capabilities: { scrapy: true, script: false, docker: false },
+    health: { scrapyd: { running: true, port: 6801, pid: 42 } },
     last_seen_at: "2026-06-18T00:00:00Z",
   },
 ];

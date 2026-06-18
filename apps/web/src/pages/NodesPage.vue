@@ -14,6 +14,32 @@ const statusTagType: Record<NodeStatus, "success" | "danger" | "info"> = {
   unknown: "info",
 };
 
+type ScrapydHealth = "running" | "stopped" | "unknown";
+
+// Read the agent-reported scrapyd subprocess health out of health.scrapyd.
+function scrapydHealthOf(node: NodeInfo): ScrapydHealth {
+  const scrapyd = node.health?.scrapyd as
+    | { running?: unknown }
+    | undefined
+    | null;
+  if (scrapyd == null || scrapyd.running == null) {
+    return "unknown";
+  }
+  return scrapyd.running ? "running" : "stopped";
+}
+
+const scrapydTagType: Record<ScrapydHealth, "success" | "danger" | "info"> = {
+  running: "success",
+  stopped: "danger",
+  unknown: "info",
+};
+
+const scrapydLabel: Record<ScrapydHealth, string> = {
+  running: "nodes.scrapydRunning",
+  stopped: "nodes.scrapydStopped",
+  unknown: "nodes.scrapydUnknown",
+};
+
 async function load(): Promise<void> {
   loading.value = true;
   try {
@@ -52,6 +78,13 @@ onMounted(load);
         <template #default="{ row }">
           <el-tag :type="statusTagType[row.status as NodeStatus]">
             {{ row.status }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column :label="t('nodes.scrapyd')">
+        <template #default="{ row }">
+          <el-tag :type="scrapydTagType[scrapydHealthOf(row as NodeInfo)]">
+            {{ t(scrapydLabel[scrapydHealthOf(row as NodeInfo)]) }}
           </el-tag>
         </template>
       </el-table-column>
