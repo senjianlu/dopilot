@@ -2,15 +2,17 @@
 
 > 适用对象：后续承接 dopilot 改造的工程师。
 > 阅读约定：本文严格区分「**现状事实**」（已 Read/Grep 核实源码，标注 `文件:行号`）与「**改造建议 / 开放问题**」（设计推演，需团队决策）。
-> 代码基线：当前仓库 `master`（基于 scrapydweb 改造）。
+> 行为参考基线：`reference/scrapydweb/`（**只读**，仅作功能 / 行为对照与测试 oracle）；dopilot 代码**全新编写**于 `apps/server/dopilot_server/` 等骨架，本文所有 `文件:行号` 引用均指向 `reference/scrapydweb/` 的行为参考，**不是** dopilot 待改文件。
+
+> **【scrapydweb 参考边界】** scrapydweb 仅作**功能层/行为参考**与**测试 oracle**；其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 的设计依据**。dopilot 为 greenfield、按 `apps/`+`packages/` 自有领域 structure-first 设计(权威布局见 `05-dev-setup-and-known-issues.md` §1)，**不对 scrapydweb 做改名/git mv**。详见 `00-requirements.md` 决策表。
 
 ---
 
 ## 0. 一句话结论
 
-scrapydweb 目前**没有任何「执行器（executor）抽象层」**——所有「运行 / 下发」路径都硬编码为对 scrapyd 的 `*.json` HTTP API 调用。要支持「Docker 常驻爬虫」与「一次性 Python3 脚本」，**必须从零设计一个 Executor 抽象层**，并旁路 / 扩展所有现有的 scrapyd-only 链路。
+scrapydweb 目前**没有任何「执行器（executor）抽象层」**——所有「运行 / 下发」路径都硬编码为对 scrapyd 的 `*.json` HTTP API 调用（行为参考事实）。要支持「Docker 常驻爬虫」与「一次性 Python3 脚本」，dopilot 在 `apps/server/dopilot_server/executors/` 下**全新设计一个 `BaseExecutor` 抽象层**；scrapydweb 的 scrapyd-only 链路仅作为 `ScrapydExecutor` 要复刻的**行为参考**（它做什么 / 语义为何），不是被改造的代码——dopilot 没有「现有链路」可改。
 
-推荐主干：**方案 A（`BaseExecutor` 抽象 + 按 `task_type` 多态分派）**，执行通道按节点形态选配（集中式先用方案 C，分布式终态走方案 B）。
+推荐主干：**方案 A（`BaseExecutor` 抽象 + 按 `task_type` 多态分派）**。执行通道按 v1 已锁定 spec **统一经 dopilot-agent**：server 不直连裸 scrapyd、不直连各节点 docker daemon；ScrapydExecutor / DockerExecutor / ScriptExecutor 一律通过 agent HTTP API 下发，由 agent 在本机调本机 scrapyd（子进程拉起）/ docker SDK / subprocess。**dopilot-agent 是阶段 1 即落地的正式架构（非分布式终态选项）**。
 
 ---
 
@@ -103,12 +105,12 @@ assert any(results), "None of your SCRAPYD_SERVERS could be connected. "
 |------|------|------|------|
 | 生命周期 | 一次跑完即退出 | **常驻 / 长连接，进程不退出** | 一次跑完即退出 |
 | 部署单元 | egg 包 + spider 名 | Docker 镜像 | 脚本文件（`.py`） |
-| 下发协议 | scrapyd `schedule.json` | `docker run -d` / SDK / agent | `subprocess` / SSH / agent |
+| 下发协议（v1 统一经 agent） | agent → 本机 scrapyd `schedule.json` | agent → docker SDK `run -d` | agent → `subprocess` |
 | 启动参数 | `project/version/spider/settings/args` | `image/command/env/volumes/ports` | `script_path/interpreter/args/env` |
 | 状态语义 | pending / running / finished | **running / stopped / unhealthy**（无 finished） | running / exited(退出码) |
-| 状态采集 | scrapyd `/jobs` HTML + logparser | 容器存活 + 健康检查 + 退出码 | 进程存活 + 退出码 |
-| 实时日志 | scrapy 日志文件 | `docker logs --follow`（天然支持） | 子进程 stdout/stderr 捕获 |
-| 停止语义 | `cancel.json`（信号） | `docker stop` | 进程 kill / 信号 |
+| 状态采集（server 轮询 agent `/status`） | agent tail scrapyd `/jobs` + logparser | 容器存活 + 健康检查 + 退出码 | 进程存活 + 退出码 |
+| 实时日志（server pull agent tail API，stream） | scrapyd job.log（stream=log） | agent tail 容器日志（stream=log） | 子进程 stdout/stderr 捕获（stream=stdout/stderr）|
+| 停止语义（经 agent `/stop`） | `cancel.json`（信号） | `docker stop` | 进程 kill / 信号 |
 | 与现有契约 | 完全契合 | **finished 状态机冲突** | scrapyd 无法跑任意脚本 |
 
 关键冲突点：**Docker 常驻进程的「永不 finished」语义**会打乱 scrapyd 风格的 jobs 页 / 告警逻辑（`poll.py`）；而 scrapyd 只接受 egg+spider，**无法运行裸脚本**。这两点决定了不能用 scrapyd 硬扛（见方案 D 反模式）。
@@ -119,15 +121,15 @@ assert any(results), "None of your SCRAPYD_SERVERS could be connected. "
 
 | # | 组件 | 文件:行号 | 复用方式 |
 |---|------|----------|---------|
-| R1 | `TaskExecutor.main()` 编排骨架 | `execute_task.py:42-61` | 「遍历 `selected_nodes` → 逐节点执行 → 成功/失败计数 → 写 `TaskResult/TaskJobResult` → 失败节点延迟 3 秒重试一次」是天然的执行器骨架。新执行器应**只替换 `schedule_task()` 这一个「实际下发」方法**，建议抽象成 `run_on_node(node)` 接口 |
+| R1 | `TaskExecutor.main()` 编排骨架（行为参考） | `execute_task.py:42-61` | 「遍历 `selected_nodes` → 逐节点执行 → 成功/失败计数 → 写 `TaskResult/TaskJobResult` → 失败节点延迟 3 秒重试一次」是可复刻的执行编排行为骨架。dopilot 自有编排基类把「实际下发」抽象成 `run_on_node(node)` 接口、由各子类实现；scrapydweb 中对应的下发逻辑是 `schedule_task()`（`execute_task.py:75-104`），作为 `ScrapydExecutor` 的行为参考 |
 | R2 | 结果记录契约 | `execute_task.py:63,106,125` | `get_task_result_id()` / `db_insert_task_job_result()` / `db_update_task_result()` 与执行类型无关，三类对象通用 |
 | R3 | `TaskResult` / `TaskJobResult` 三层结果模型 | `models.py:131-179` | `TaskResult`（汇总 fail/pass）+ `TaskJobResult`（每节点明细 `node/server/status_code/status/result`）与执行类型解耦，**直接复用** |
 | R4 | Task 的全部触发字段 | `models.py:105-121` | `year..second / start_date / end_date / timezone / jitter / misfire_grace_time / coalesce / max_instances`（cron/interval/date）三类对象共用，只需新增 `task_type` 列并放宽 NOT NULL |
 | R5 | APScheduler 引擎 + 统一回调 | `execute_task.py:150-172`，`utils/scheduler.py` | `execute_task(task_id)` 是 `add_job` 的统一回调，**是按 `task_type` 分派执行器的最佳单点**：第 152 行读出 task 后选 `ScrapydExecutor/DockerExecutor/ScriptExecutor` |
 | R6 | 路由注册机制 | `__init__.py:148` `register_view()` | 统一给视图加 `/<int:node>/` 前缀（第 151 行）。新增 docker/script 页面与下发端点按同样模式挂入，复用 node 索引语义与 1-based 约定 |
 | R7 | 节点选择基座 | `baseview.py:257-262` `get_selected_nodes()` | 解析勾选节点列表，三类对象的「指定/全部」共用；「随机一个」策略可在执行器入口对返回列表做 `random.choice` 归约 |
-| R8 | 统一 HTTP 封装 | `baseview.py:285` `make_request()` | 返回 `(status_code, dict)` 契约稳定。若 Docker/脚本走「节点 HTTP agent」方案，可直接复用它发请求；返回 dict 只要补齐 `status/message/jobid` 即可无缝接入 `db_insert_task_job_result`（`execute_task.py:106-122`） |
-| R9 | 常驻进程范式 | `utils/sub_process.py`（`init_poll:85` / `init_logparser:53`） | `Popen` 拉起子进程 + `prctl(PR_SET_PDEATHSIG)`（第 36-38 行）/ `atexit`（第 57/89 行）绑定父进程生命周期。「本机直接跑脚本 / 起容器客户端进程」可复用此范式管理子进程生命周期 |
+| R8 | 统一 HTTP 封装（行为参考） | `baseview.py:285` `make_request()` | 返回 `(status_code, dict)` 的封装契约可复刻。v1 三类对象**都经 dopilot-agent HTTP API** 下发，dopilot 自有 HTTP 客户端按此契约发请求；返回 dict 只要补齐 `status/message/jobid` 即可无缝接入结果记录（行为参考 `db_insert_task_job_result` `execute_task.py:106-122`）|
+| R9 | 常驻进程范式（行为参考，**用于 agent 侧**） | `utils/sub_process.py`（`init_poll:85` / `init_logparser:53`） | `Popen` 拉起子进程 + `prctl(PR_SET_PDEATHSIG)`（第 36-38 行）/ `atexit`（第 57/89 行）绑定父进程生命周期。**dopilot-agent** 在本机跑脚本 / 拉起本机 scrapyd 子进程时可复刻此范式管理子进程生命周期（server 侧不直接跑这些子进程）|
 | R10 | scrapyd 校验开关 | `check_app_config.py:429`，`CHECK_SCRAPYD_SERVERS` / `-dc` | `assert any(results)` 可被开关跳过（`update_app_config` 已支持）。纯 Docker/脚本部署时复用此开关避免启动失败，**无需改断言** |
 
 > 资产分布示意：
@@ -142,7 +144,8 @@ assert any(results), "None of your SCRAPYD_SERVERS could be connected. "
        仅此处需替换 ─────┐ │              │              │
                   ┌──────┴─┴─────┐ ┌──────┴───────┐ ┌────┴─────────┐
    按 task_type   │ ScrapydExec  │ │ DockerExec   │ │ ScriptExec   │
-   多态分派       │ (迁移现状)   │ │ (待建/新依赖)│ │ (待建/复用R9)│
+   多态分派       │ (复刻 scrapyd│ │ (待建/新依赖)│ │ (待建/参考R9)│
+                  │  下发行为)   │ │              │ │              │
                   └──────────────┘ └──────────────┘ └──────────────┘
 ```
 
@@ -169,20 +172,20 @@ assert any(results), "None of your SCRAPYD_SERVERS could be connected. "
 
 | 方案 | 核心思路 | 主要优点 | 主要缺点 | 工作量 | 定位 |
 |------|---------|---------|---------|-------|------|
-| **A**：`BaseExecutor` 抽象 + 三实现类，按 `task_type` 分派 | 新建 `executors/` 包，定义抽象基类 `run_on_node/stop/get_status/stream_logs`；现有 scrapyd 逻辑下沉为 `ScrapydExecutor`；`execute_task` 按 `task_type` 选实现 | 侵入最小、最贴现有架构；直接复用 `main` 的结果记录/重试/节点遍历；统一入口；加新类型只需加子类 | 需重构 `execute_task.py`；需改 Task 模型 + 迁移；**只解决「如何多态分派」，不解决「在哪执行」** | 中（抽象层 + ScrapydExecutor 迁移约 1-2 天；Docker/Script 具体实现另算） | **架构主干（不可绕过）** |
-| **B**：节点侧自研 worker agent（每节点跑 HTTP agent） | agent 暴露统一 REST：`POST /run`(type=scrapy\|docker\|script)、`/stop`、`GET /status`、`GET /logs/stream`(SSE)；内部对接 scrapyd/docker SDK/subprocess | 真正分布式 push（替代伪分布式）；三类对象节点侧统一收口；主程序极简；实时日志由 agent SSE/WS 推流；docker/脚本本机执行天然解决 | 需新增 + 部署 + 运维 agent（每节点装）；版本兼容 / 安全（token/TLS）面；与现有 scrapyd 并存期双轨 | 高（1-2 周起） | **分布式终态** |
-| **C**：主程序直连 docker SDK + 本机 subprocess（无 agent） | 主程序用 docker SDK 连各节点 docker daemon(over TLS) 起停常驻容器；脚本用 subprocess（复用 `sub_process.py`）或 SSH(paramiko) 跑远程 python3 | 无需开发 agent，落地快；docker SDK 成熟，`run/logs --follow/stop/健康检查` 开箱即用；适合节点少、运维集中 | 暴露 docker daemon over TLS 有安全风险；脚本走 SSH 需各节点免密 + python 环境 + 分发；docker logs 长连与 Flask 同步 WSGI 耦合；与「随机/全部节点」叠加时连接管理复杂 | 中-高（docker SDK 约 2-3 天；SSH 通道 + 依赖 + 安全另算） | **过渡 / 集中式小规模** |
+| **A**：`BaseExecutor` 抽象 + 三实现类，按 `task_type` 分派 | dopilot 在 `apps/server/dopilot_server/executors/` 下新建执行器包，定义抽象基类 `run_on_node/stop/get_status`（日志走 server 侧 pull，见 03，不在 Executor 上放 push 式 `stream_logs`）；三类执行器一律**经 dopilot-agent HTTP API** 下发；scheduler 回调按 `task_type` 选实现 | 结构清晰、可最大化复刻编排骨架行为（R1-R3 结果记录/重试/节点遍历）；统一入口；加新类型只需加子类 | scheduler 回调 + Task 模型 + 迁移须配套实现；**只解决「如何多态分派」，不解决「在哪执行」**（在哪执行由 v1 锁定：经 agent 本机执行） | 中（抽象层 + ScrapydExecutor 约 1-2 天；Docker/Script 具体实现另算） | **架构主干（不可绕过）** |
+| **B（v1 已锁定通道）**：dopilot-agent（每节点跑 HTTP agent，server 只与 agent 通信） | agent 暴露统一 HTTP API：`POST /run`(type=scrapy\|docker\|script)、`/stop`、`GET /status`、**`GET /logs/tail`（按 offset 拉日志增量）**、cleanup；内部对接本机 scrapyd（子进程拉起）/ docker SDK / subprocess。**server 主动 pull、agent 不主动推、第一版完全不使用 WebSocket** | 三类对象节点侧统一收口；server 不直连裸 scrapyd、不直连各节点 docker daemon（docker SDK 调用全归 agent）；docker/脚本本机执行天然解决；实时日志由 **server 按需从 agent tail API 拉取增量**，写 `/server-data/logs` + PG 索引，再经 SSE 推前端（详见 03-gap-realtime-logs） | 需新增 + 部署 + 运维 agent（每节点装）；安全面收敛为 agent `shared_token`（非空才启用，内网防误操作非零信任） | 高（1-2 周起，但 **阶段 1 即落地、非可选项**） | **v1 已锁定执行通道** |
+| ~~**C**：主程序直连 docker SDK + 本机 subprocess（无 agent）~~ | ~~主程序用 docker SDK 连各节点 docker daemon~~ | — | **v1 spec 已否决**：server **不得**直连各节点 docker daemon、不得直连裸 scrapyd；docker SDK 调用 / subprocess 一律归 dopilot-agent 本机执行 | — | **已否决（违反 v1 单一 agent 通道约束）** |
 | **D**：复用 scrapyd 跑脚本 / 包装常驻进程 | 脚本伪装成最简 spider 经 egg 部署；常驻容器用 supervisor spider 拉起。完全复用现有 deploy/schedule/jobs/log 链路 | 几乎不改主程序，复用全部 scrapyd 生态 | **反模式**：脚本伪装成 spider；常驻进程与 finished 状态机冲突（jobs 页/告警全乱）；egg 打包裸脚本极笨重；无法满足 Docker 常驻语义；本质未解决目标 A | 低（但技术债极高） | **不推荐** |
 
 ### 5.2 方案对目标 B（平台功能）的覆盖
 
-| 目标功能 | 方案 A | 方案 B | 方案 C | 方案 D |
+| 目标功能 | 方案 A | 方案 B（v1 通道） | ~~方案 C~~ | 方案 D |
 |---------|:-----:|:-----:|:-----:|:-----:|
-| B-1 实时日志流 | 需配 `stream_logs` 实现 | 原生 SSE/WS 最佳 | docker logs 可，脚本需自建 | 仅 scrapy 日志 |
-| B-2 定时调度 | 复用 APScheduler | 复用 | 复用 | 复用 |
-| B-3 节点策略(全部/随机) | 入口归约 R7 | agent 寻址清晰 | 连接管理复杂 | 复用 |
-| B-4 push 模式下发 | 取决于通道 | **原生 push** | 主程序直推 | 伪分布式 |
-| B-5 i18n（中文） | 与执行器解耦，独立任务 | 同左 | 同左 | 同左 |
+| B-1 实时日志流 | 由 server 侧 pull 链路承载（非 Executor 职责） | **server 从 agent tail API 按 offset 拉增量 + SSE 推前端（无 WS）** | ~~已否决~~ | 仅 scrapy 日志 |
+| B-2 定时调度 | 复用 APScheduler | 复用 | ~~已否决~~ | 复用 |
+| B-3 节点策略(全部/随机) | 入口归约 R7 | agent 寻址清晰 | ~~已否决~~ | 复用 |
+| B-4 push 模式下发 | 取决于通道 | **agent `POST /run` 原生 push** | ~~已否决~~ | 伪分布式 |
+| B-5 i18n（中文） | 与执行器解耦，独立任务 | 同左 | ~~已否决~~ | 同左 |
 
 ---
 
@@ -190,31 +193,35 @@ assert any(results), "None of your SCRAPYD_SERVERS could be connected. "
 
 ### 6.1 推荐组合
 
-> **方案 A 为架构主干**（不可绕过的多态分派层），执行通道按节点形态选配：
-> - 集中式 / 小规模：先用 **方案 C** 快速跑通（docker SDK + subprocess）；
-> - 分布式 / 多节点终态：叠加 **方案 B** 的 worker agent（同时解决 push + SSE 日志 + 常驻健康采集）。
+> **方案 A 为架构主干**（不可绕过的多态分派层），执行通道按 v1 已锁定 spec **统一为方案 B（dopilot-agent）**：
+> - server 端三类 Executor 均**经 dopilot-agent HTTP API** 下发（`POST /run` push）；
+> - agent 在本机执行：scrapy → 调本机 scrapyd（agent 子进程拉起，scrapyd 仅监听容器内部端口、对外只暴露 agent API）；docker → docker SDK；script → subprocess（参考 R9）；
+> - **dopilot-agent 阶段 1 即落地**，不存在「先无 agent 直连、后补 agent」的过渡形态（方案 C 已否决）。
 
 理由：
-1. 无论通道是 agent 还是 docker SDK，都**需要一个 `task_type` 多态分派层**，且能最大化复用 `TaskExecutor.main` 的现成资产（R1-R3）。
-2. 先做 **方案 A + ScrapydExecutor 迁移**（行为不变、零风险回归），再分别填充 Docker/Script。
-3. docker `logs --follow` 天然满足实时日志（B-1）；脚本初期用本机 subprocess（复用 R9），后续统一收敛到 agent。
-4. **务必先加 `Task.task_type` 列并放宽 `project/version/spider/jobid` 的 nullable**，否则三类对象无法共表。
+1. 无论 task_type 为何，都**需要一个 `task_type` 多态分派层**，且能最大化复用 `TaskExecutor.main` 的现成编排资产（R1-R3）。
+2. 先按 scrapyd 的 `schedule.json` 调用语义**全新实现 ScrapydExecutor**（以 `reference/scrapydweb` 的 scrapyd 下发行为为对照 oracle，验证其输出契约一致）；注意 dopilot 的 ScrapydExecutor **不直连裸 scrapyd**，而是 `server → agent → 本机 scrapyd`，agent 内部再调 scrapyd `schedule.json`/`addversion.json`。
+3. 实时日志（B-1）由 **server 侧 pull 链路** 承载：server 按 offset 从 agent `GET /logs/tail` 拉增量、写 `/server-data/logs` 正文 + PG 索引、经 SSE 推前端，**第一版完全不用 WebSocket**（agent tail scrapyd job.log；脚本阶段用 stdout/stderr 流）。详见 03-gap-realtime-logs。
+4. egg 部署 **第一版仅支持上传已构建 egg**：用户上传 → server → 转发 agent → agent 调本机 scrapyd `/addversion.json`，不做本地/源码/Git/CI 构建。
+5. **务必先加 `Task.task_type` 列并放宽 `project/version/spider/jobid` 的 nullable**，否则三类对象无法共表。
 
 ### 6.2 执行器抽象（方案 A 接口设想）
 
 ```text
-scrapydweb/executors/
-├── __init__.py        # BaseExecutor 抽象基类 + EXECUTOR_REGISTRY
-├── scrapyd.py         # ScrapydExecutor（迁移自 execute_task.py，行为不变）
-├── docker.py          # DockerExecutor（docker SDK / agent）
-└── script.py          # ScriptExecutor（subprocess / agent / SSH）
+apps/server/dopilot_server/executors/
+├── base.py            # BaseExecutor 抽象基类 + EXECUTOR_REGISTRY（缝① 执行器注册表）
+├── scrapyd.py         # ScrapydExecutor（经 agent 调本机 scrapyd schedule.json/addversion.json，行为参考 execute_task.py:75-104）
+├── docker.py          # DockerExecutor（经 agent，agent 内部用 docker SDK）
+└── script.py          # ScriptExecutor（经 agent，agent 内部用 subprocess）
 
 class BaseExecutor:
     task_type = None
-    def run_on_node(self, node) -> dict: ...   # 返回 {status, message|jobid, status_code, url}
-    def stop(self, node, job): ...
-    def get_status(self, node, job): ...
-    def stream_logs(self, node, job): ...       # 预留：SSE/WS 实时日志
+    # 三类执行器一律经 dopilot-agent HTTP API 下发（server 不直连裸 scrapyd / docker daemon）
+    def run_on_node(self, agent) -> dict: ...   # POST agent /run；返回 {status, message|jobid, status_code, url}
+    def stop(self, agent, job): ...             # POST agent /stop
+    def get_status(self, agent, job): ...       # GET agent /status（server 轮询此 API 判结束，不依赖 agent 回调）
+    # 注：实时日志不在 Executor 接口上。日志为 server 侧 pull：server 按 offset 调 agent GET /logs/tail
+    #     拉增量 → 写 /server-data/logs 正文 + PG 索引 → SSE 推前端。第一版无 WebSocket。详见 03-gap-realtime-logs。
 
 EXECUTOR_REGISTRY = {
     'scrapy': ScrapydExecutor,
@@ -223,94 +230,108 @@ EXECUTOR_REGISTRY = {
 }
 ```
 
-分派单点（在 `execute_task.py:152` 读出 task 后）：
+分派单点：dopilot scheduler 的统一回调（`apps/server/dopilot_server/scheduler/`）读出 task 后，按 `task_type` 选执行器：
 
 ```text
-task = Task.query.get(task_id)            # execute_task.py:152（现状）
-executor_cls = EXECUTOR_REGISTRY[task.task_type]   # 新增
+task = task_repository.get(task_id)                # dopilot scheduler 回调
+executor_cls = EXECUTOR_REGISTRY[task.task_type]   # 缝① 多态分派
 executor = executor_cls(...)
-executor.main()                            # 复用 main() 骨架，仅 run_on_node 不同
+executor.run()                                     # 执行编排（遍历节点/记结果/重试），仅 run_on_node 不同
 ```
 
-> 关键：`TaskExecutor.main()`（`execute_task.py:42-61`）的循环里把 `self.schedule_task(node)` 改为 `self.run_on_node(node)`，`run_on_node` 由子类实现。`ScrapydExecutor.run_on_node` 就是把现 `schedule_task`（`execute_task.py:75-104`）原样搬过来。
+> 行为参考：scrapydweb 在 `execute_task.py:152` 读出 task 处是天然的分派单点，其 `TaskExecutor.main()`（`execute_task.py:42-61`）「遍历节点→执行→记结果→重试」是可复刻的编排骨架。dopilot 自有的执行编排基类在循环中调用子类 `run_on_node(node)`；`ScrapydExecutor.run_on_node` 按 scrapyd `schedule_task`（`execute_task.py:75-104`）的下发语义全新实现。
 
-### 6.3 终态分布式架构（方案 B worker agent 设想）
+### 6.3 v1 执行/日志架构（方案 B：dopilot-agent，阶段 1 即落地）
+
+> 三类 task_type 共用同一条链路：server → dopilot-agent → 本机执行器。server **不直连裸 scrapyd、不直连各节点 docker daemon**。日志为 **server 主动 pull**（agent tail API），**无 WebSocket、agent 不主动推**。
 
 ```text
-        ┌─────────────────────── dopilot 主程序 (Flask) ───────────────────────┐
-        │  APScheduler ── execute_task(task_id) ── EXECUTOR_REGISTRY[task_type] │
-        │        │                                          │                   │
-        │   ScrapydExecutor                    Docker/ScriptExecutor            │
-        │        │ (兼容期)                            │ make_request(R8)        │
-        └────────┼────────────────────────────────────┼─────────────────────────┘
-                 │ schedule.json                       │ POST /run  (push)
-                 ▼                                      ▼  GET /logs/stream (SSE)
-          ┌─────────────┐                       ┌──────────────────────┐
-          │  scrapyd     │                      │  dopilot worker agent │  ← 每节点一个
-          │  (node-N)    │                      │  /run /stop /status   │
-          └─────────────┘                       │  /logs/stream(SSE)    │
-                                                │   ├─ scrapy → scrapyd │
-                                                │   ├─ docker → SDK     │
-                                                │   └─ script → subproc │
-                                                └──────────────────────┘
+        ┌─────────────────────── dopilot server (FastAPI, 单容器/uvicorn workers=1/单 APScheduler) ───────────────────────┐
+        │  APScheduler ── execute_task(task_id) ── EXECUTOR_REGISTRY[task_type]                                          │
+        │        │              │              │                                                                         │
+        │  ScrapydExecutor  DockerExecutor  ScriptExecutor   ── 均经 agent HTTP API ──┐                                   │
+        │                                                                              │                                  │
+        │  日志 pull loop: 每 30s 后台 drain / 打开日志窗口升 1s ── GET agent /logs/tail?offset (≤256KB/次) ──┐           │
+        │        └─→ 写 /server-data/logs/YYYY/MM/{execution_id}/{attempt_id}.{stream}.log + PG execution_log_files 索引     │
+        │        └─→ SSE 单向推前端 (server→web；无 WS)                                                       │           │
+        └──────────────────────────────────────────────────────────────────────────────┼───────────────────┼───────────┘
+                                         │ POST /run (push) / POST /stop / GET /status / GET /logs/tail / POST /logs/cleanup
+                                         ▼
+                                  ┌────────────────────────────────────────────────────────┐
+                                  │  dopilot-agent  (每节点一个；对外 6800 = agent API)        │
+                                  │  /run /stop /status /logs/tail /logs/cleanup /health      │
+                                  │   ├─ scrapy → 本机 scrapyd（agent 子进程拉起，仅听内部端口如 6801）→ tail job.log │
+                                  │   ├─ docker → docker SDK                                   │
+                                  │   └─ script → subprocess（stdout/stderr）                  │
+                                  │  无状态/无 ack/无去重队列；offset 权威在 server PG          │
+                                  └────────────────────────────────────────────────────────┘
 ```
+
+> 结束检测：server 轮询 agent `GET /status`（不依赖 agent 回调），finished/failed/canceled → finalizing → final drain → EOF 稳定（默认 3s）或 hard timeout（30s）→ complete；complete 后 server 调 agent `POST /executions/{attempt_id}/logs/cleanup`（agent 另有 TTL 兜底）。详见 03-gap-realtime-logs。
 
 ### 6.4 推荐落地顺序
 
+> 注：执行通道从第一步起就是 dopilot-agent（apps/agent，阶段 1 即落地），不存在「先无 agent、后补 agent」的过渡。
+
 ```text
-① 抽象接口 (executors/__init__.py)
+① 抽象接口 (apps/server/dopilot_server/executors/base.py：BaseExecutor + EXECUTOR_REGISTRY)
+   + dopilot-agent 骨架 (apps/agent：/run /stop /status /logs/tail /logs/cleanup /health)
         ↓
-② ScrapydExecutor 迁移 (保证现网零回归) ← 行为不变，可立即合入
+② ScrapydExecutor (经 agent 调本机 scrapyd schedule.json；agent 子进程拉起 scrapyd；
+   egg 仅上传部署：上传→server→agent→本机 scrapyd /addversion.json。以 scrapydweb 行为为对照 oracle)
         ↓
-③ Task 模型加 task_type/node_strategy + 放宽 nullable + 迁移
+③ Task 模型 (apps/server/dopilot_server/models/) 自带 task_type/node_strategy + 三类对象字段
+   + PostgreSQL + SQLAlchemy + 裸 Alembic 迁移 (apps/server/migrations/)
         ↓
-④ DockerExecutor (方案 C：docker SDK，先跑通常驻容器 + logs --follow)
+④ 日志 pull 链路：server 从 agent GET /logs/tail 拉增量 → 写 /server-data/logs 正文 + PG execution_log_files 索引
+   → SSE 推前端（第一版无 WebSocket）。详见 03-gap-realtime-logs
         ↓
-⑤ ScriptExecutor (方案 C：subprocess，复用 sub_process.py 范式)
+⑤ DockerExecutor (经 agent；agent 内部用 docker SDK 起停常驻容器、采集健康/退出码)
         ↓
-⑥ 节点配置模型：4 并行 list → list[dict] / Node DB 表（承载 type/endpoint/token）
+⑥ ScriptExecutor (经 agent；agent 内部用 subprocess，参考 sub_process.py 子进程生命周期范式 R9)
         ↓
-⑦ 视图与表单扩展 (DockerScheduleView / ScriptRunView) + i18n 接入
+⑦ 节点模型：Node 实体 (apps/server/dopilot_server/nodes/ + models/) 承载 stable agent_id/type/endpoint(agent 地址)/token/能力，
+   支持 all/random 策略；第一版 [nodes].agents 仅作初始发现，server 轮询 agent /health 后 upsert nodes 表
         ↓
-⑧ (终态) 收敛到 worker agent (方案 B)：push + SSE 日志 + 常驻健康采集
+⑧ docker/script 的 /api/v1 JSON 端点 + apps/web SPA 页面/路由 + i18n 接入
 ```
 
 ---
 
-## 7. 需改动文件（touch points）
+## 7. dopilot 新建文件 ↔ 行为参考映射
 
-> 标注 `（新建）` 为新增文件；其余为现有文件改动。
+> 左列为 dopilot **全新实现**的文件（`apps/server/dopilot_server/` 等 canon 路径，权威布局见 `05-dev-setup-and-known-issues.md` §1）；右列为「要实现的行为 + `reference/scrapydweb/` 中可对照的行为语义（`文件:行号`，仅作参考，**非**待改文件）」。reference/scrapydweb 只读、不被 import、不进构建上下文。
 
-| 文件 | 改动要点 |
+| dopilot 新建文件 | 要实现的行为 + 行为参考（reference/scrapydweb） |
 |------|---------|
-| `scrapydweb/executors/__init__.py`（新建） | 定义 `BaseExecutor` 抽象基类（`run_on_node/stop/get_status/stream_logs`）与 `EXECUTOR_REGISTRY`（`task_type → Executor`），供 `execute_task` 分派 |
-| `scrapydweb/executors/scrapyd.py`（新建） | 把 `TaskExecutor.schedule_task`（`execute_task.py:75-104`）与 `ScheduleTaskView`（`schedule.py:617`）的 `schedule.json` 逻辑下沉为 `ScrapydExecutor.run_on_node`，**行为保持不变** |
-| `scrapydweb/executors/docker.py`（新建） | `DockerExecutor`：docker SDK 起/停常驻容器、`docker logs --follow` 流式日志、容器健康 / 退出码采集；返回 `(status/message/jobid)` 契约以复用 `db_insert_task_job_result` |
-| `scrapydweb/executors/script.py`（新建） | `ScriptExecutor`：subprocess（复用 `sub_process.py` 范式 R9）或经 agent/SSH 跑 `python3` 脚本，捕获退出码与 stdout |
-| `scrapydweb/views/operations/execute_task.py` | 重构 `TaskExecutor`：`main()`(第 42-61 行) 内 `schedule_task → run_on_node` 委托给按 `task.task_type` 选出的 Executor；`execute_task(task_id)`(第 150-172 行) 第 152 行读 task 后按 `task_type` 实例化。**保留** `main/get_task_result_id/db_insert_task_job_result/db_update_task_result` 骨架 |
-| `scrapydweb/models.py` | `Task` 加 `task_type`（scrapy\|docker\|script，默认 scrapy）与 `node_strategy`（all\|random）列；**放宽** `project/version/spider/jobid`（第 98-101 行）的 nullable；新增 docker/script 专属字段（`image/command/env/volumes/script_path/interpreter/args`，或统一存 `payload` JSON）；`TaskJobResult` 复用。**需配套迁移（当前无 Alembic）** |
-| `scrapydweb/views/operations/schedule.py` | `ScheduleRunView.handle_action()`(第 383-395 行) 即时运行分支按 `task_type` 走对应 Executor，不再硬编码 `make_request(schedule.json)`；`db_process_task()`(第 416 行) / `db_insert_update_task()`(第 399 行) / `add_update_task()`(第 447 行) 写入 `task_type` 与新字段；`ScheduleTaskView`(第 617-642 行) 改为 scrapyd-only 或泛化 |
-| `scrapydweb/utils/check_app_config.py` | `check_scrapyd_servers` / `check_scrapyd_connectivity`(至第 429 行) 扩展支持非 scrapyd 节点；放宽 `assert any(results)`（第 429 行，无 scrapyd 节点时跳过）；扩展节点配置解析携带 `type/能力/凭证` |
-| `scrapydweb/views/baseview.py` | 节点配置从 4 并行 list（第 99-104 行 `node-1` 索引）重构为 `list[dict]` 或 DB 表以承载 `type/docker_endpoint/agent_token`；`get_selected_nodes`(第 257-262 行) 之上加节点策略归约（`random.choice` 实现「随机一个」） |
-| `scrapydweb/__init__.py` | `handle_route()` / `register_view()`(第 147-148 行起) 注册 Docker/脚本新页面与下发端点（如 `DockerScheduleView/ScriptRunView`），并在 `update_g` 挂菜单 URL |
-| `scrapydweb/setup.py` | `install_requires`(第 35 行起) 新增 docker SDK；若用 SSH 通道加 `paramiko`。**注意兼容钉死的 Flask==2.0.0 / Werkzeug==2.0.0 / SQLAlchemy==1.3.24 / APScheduler==3.6.0** |
-| `scrapydweb/default_settings.py` | 新增 Docker/脚本节点配置块（如 `DOCKER_NODES/SCRIPT_NODES` 或统一 `WORKER_NODES`）、`DEFAULT_NODE_STRATEGY`（all\|random）、执行通道默认值（agent 地址/token、docker daemon TLS 等） |
+| `apps/server/dopilot_server/executors/base.py` | 定义 `BaseExecutor` 抽象基类（`run_on_node/stop/get_status`，三者均经 dopilot-agent HTTP API）与 `EXECUTOR_REGISTRY`（`task_type → Executor`），供 scheduler 回调按 `task_type` 分派（缝①）。**日志不在 Executor 接口上**——为 server 侧 pull（见 03）|
+| `apps/server/dopilot_server/executors/scrapyd.py` | `ScrapydExecutor`：经 dopilot-agent 调**本机** scrapyd（server 不直连裸 scrapyd）。`run_on_node` → `POST agent /run`(type=scrapy)，agent 内部调本机 scrapyd `schedule.json`；egg 仅上传部署，经 agent 调本机 scrapyd `addversion.json`。行为参考：`schedule_task`（`execute_task.py:75-104`）+ `ScheduleTaskView`（`schedule.py:617`）的 `schedule.json` 下发语义，作对照 oracle 验证输出契约一致 |
+| `apps/server/dopilot_server/executors/docker.py` | `DockerExecutor`：经 dopilot-agent 起/停常驻容器（**docker SDK 调用归 agent，server 不直连各节点 docker daemon**）；容器健康 / 退出码由 agent 采集、server 轮询 agent `/status`；返回 `(status/message/jobid)` 契约以复用结果记录（行为参考：`db_insert_task_job_result` `execute_task.py:106-122`）。日志经 server pull agent tail API（非 `docker logs --follow` 直连）|
+| `apps/server/dopilot_server/executors/script.py` | `ScriptExecutor`：经 dopilot-agent 跑 `python3` 脚本（subprocess 在 agent 侧；行为参考：`sub_process.py` 的 `Popen+prctl(PR_SET_PDEATHSIG)+atexit` 子进程生命周期范式 R9），捕获退出码；stdout/stderr 经 server pull agent tail API（stream=stdout/stderr）|
+| `apps/server/dopilot_server/scheduler/` | 统一调度回调：读出 task 后按 `task_type` 分派 Executor，执行编排（遍历节点 / 记结果 / 失败延迟 3 秒重试一次）。行为参考：`TaskExecutor.main`（`execute_task.py:42-61`）编排骨架、`execute_task(task_id)`（`execute_task.py:150-172`）作为 APScheduler 统一回调与天然分派单点 |
+| `apps/server/dopilot_server/models/` + `apps/server/migrations/` | `Task` 模型自带 `task_type`（scrapy\|docker\|script）/`node_strategy`（all\|random）与三类对象字段（`image/command/env/volumes/script_path/interpreter/args`，或统一 `payload` JSON）；`TaskResult/TaskJobResult` 三层结果语义；**从第一天起用迁移工具**。行为参考（实现时注意）：scrapydweb `models.py:98-101` 四列 NOT NULL 仅适配 scrapyd、无 `task_type/node_strategy`，且 `models.py:14` 无 Alembic 迁移机制 |
+| `apps/server/dopilot_server/api/v1/` | 即时运行 / 定时任务的 JSON 端点：按 `task_type` 调对应 Executor 并写入 `task_type` 与新字段。行为参考：scrapydweb `schedule.py:383-395`（即时运行）/ `617-642`（定时下发）把两条路径收口到 `schedule.json` 的语义 |
+| `apps/server/dopilot_server/config/` + `nodes/` | 节点连通性校验支持多类型节点：纯 docker/script 部署不因「无 scrapyd」而启动失败。行为参考：scrapydweb `check_app_config.py:429` `assert any(results)` 在启动期强制 scrapyd 连通断言（dopilot 不复刻此强约束）|
+| `apps/server/dopilot_server/nodes/` + `models/` | 建立 `Node` 表，实体自带稳定 `agent_id`（agent 启动传入，容器重启不变）/`type`/`endpoint`(agent 地址，非裸 scrapyd)/`token`(agent shared_token)/能力，支持 all/random 节点策略（入口对节点列表做归约）。第一版 `[nodes].agents=["agent:6800"]` 仅作初始发现地址；server 轮询 agent `GET /health` 后 upsert `nodes` 表，调度只选健康 agent（agent 主动 heartbeat 留后续）。行为参考：scrapydweb `baseview.py:99-104` 四并行 list 按 `node-1` 索引、只能表达 `ip:port + basic auth`；`get_selected_nodes` `baseview.py:257-262` 的勾选/全部选择语义 |
+| `apps/server/dopilot_server/api/v1/` + `apps/web/src/{pages,router}/` | docker/script 的 JSON 端点与对应 SPA 页面 / 路由（greenfield SPA 分阶段交付，**无 Jinja 视图 / 菜单 URL 注入**）。行为参考：scrapydweb 经 `register_view`/`handle_route`（`__init__.py:147-151`）注册视图、用 node 索引前缀的路由语义 |
+| `apps/server/pyproject.toml` | 声明 FastAPI / uvicorn / SQLAlchemy / 裸 Alembic / PostgreSQL driver / APScheduler 等依赖；**docker SDK 归 `apps/agent`（server 不直连 docker daemon），不加 `paramiko`/SSH 通道**。dopilot 自管依赖、自选版本。行为参考（选型时规避的已知坑）：scrapydweb `setup.py:35-56` 钉死的 Flask==2.0.0 / Werkzeug==2.0.0 / SQLAlchemy==1.3.24 / **APScheduler==3.6.0**（后者 `+pkg_resources`/`setuptools` 坑见 `CLAUDE.md`）|
+| `configs/server.example.toml` + `apps/server/dopilot_server/config/` | 以 toml 声明节点 / 执行通道 / `node_strategy`（all\|random）/ 执行通道默认值（**`[nodes].agents` agent 地址列表 + agent `shared_token`**；docker daemon 配置属 agent 侧、不在 server config），由 dopilot 配置加载器（`DOPILOT_CONFIG`）读取，**不继承 scrapydweb 硬编码 settings 形态**。认证为 config-present-or-off：agent `shared_token` 非空才启用 agent 认证。行为参考：scrapydweb 在 `default_settings.py` 以硬编码 settings 承载节点配置块 |
 
 ---
 
 ## 8. 开放问题（需用户决策）
 
-> 以下为**设计决策点**，直接影响实现复杂度与安全模型，须在动工前与团队确认。
+> 下表多数决策点已被 **v1 已锁定 spec** 收口（见 `00-requirements.md` 决策表），此处保留为「已锁定结论 + 仍开放的实现细节」。
 
-| # | 决策点 | 选项 | 影响 |
+| # | 决策点 | v1 已锁定结论 / 仍开放项 | 影响 |
 |---|--------|------|------|
-| Q1 | **Docker 常驻爬虫的执行通道** | (B) 节点 worker agent / (C) 主程序直连 docker daemon over TLS / docker SDK | 决定 `DockerExecutor` 实现复杂度与安全模型。**dopilot 的节点数量级是多少？**（影响 agent 是否值得开发） |
-| Q2 | **一次性脚本「在哪执行」** | 主程序所在机 subprocess / 分发到远程 worker | 脚本如何分发（git 拉取 / 上传 zip / 预装节点）？是否需隔离环境（venv / 容器）？ |
-| Q3 | **常驻进程的「任务状态」语义** | 仅 running/stopped/unhealthy / 加心跳健康检查端点 / 只看容器存活 + 退出码 | 直接影响是否要替换 `poll.py` 的 scrapyd-jobs-HTML 采集机制（G6） |
-| Q4 | **是否保留 scrapyd 兼容** | 长期一等公民 / 仅过渡兼容层 | 决定 `ScrapydExecutor` 定位，也影响节点配置模型是否需向后兼容现有 `SCRAPYD_SERVERS` 格式 |
-| Q5 | **数据库迁移策略** | 引入 Flask-Migrate 正式迁移 / 接受「删库重建」（私有平台早期可接受） | 当前无 Alembic（`models.py:14` TODO）；给 Task 加列时的落地方式 |
-| Q6 | **节点配置模型重构尺度** | 4 并行 list → `list[dict]`（改动集中在 `baseview.__init__` + `check_scrapyd_servers`） / 独立 Node DB 表（改动大但支持运行时增删节点） | **注意**：现有 node 是按排序后顺序的 1-based 索引，已存 `Task.selected_nodes`（`models.py:103`）会随节点增删**漂移** |
-| Q7 | **实时日志流（B-1）与执行器的耦合** | 本轮一并设计 / 先做执行落地，日志流作为独立子任务 | 两者共用 `Executor.stream_logs` 接口，**建议接口先预留**（`docker logs --follow` / agent SSE） |
+| Q1 | **Docker 常驻爬虫的执行通道** | **已锁定 = 方案 B（dopilot-agent）**：server 不直连 docker daemon，docker SDK 调用全归 agent。方案 C（server 直连 daemon over TLS）已否决 | `DockerExecutor` 经 agent `POST /run`；安全面收敛为 agent `shared_token` |
+| Q2 | **一次性脚本「在哪执行」** | **已锁定 = 经 dopilot-agent 在节点本机 subprocess**（不走 SSH、不在 server 本机跑）。仍开放：脚本分发方式 / 是否隔离环境（venv / 容器）| 脚本阶段为第三类对象（在 scrapy → script → docker 顺序的中段）|
+| Q3 | **常驻进程的「任务状态」语义** | server 轮询 agent `GET /status`（不依赖 agent 回调）判 running/finished/failed/canceled。仍开放：常驻容器健康判定细节（存活 + 健康检查 + 退出码组合）| 不复用 `poll.py` 的 scrapyd-jobs-HTML 采集（G6）；状态采集归 agent |
+| Q4 | **是否保留 scrapyd 兼容** | **已锁定 = scrapy 经 agent 调本机 scrapyd 是一等公民链路**（scrapyd 仅监听容器内部端口、对外只暴露 agent API）。不向后兼容 scrapydweb 的 `SCRAPYD_SERVERS` 直连格式 | `ScrapydExecutor` 经 agent，非直连裸 scrapyd |
+| Q5 | **数据库迁移策略** | **已锁定**：PostgreSQL 唯一库 + SQLAlchemy + **裸 Alembic**（非 Flask-Migrate）；禁止以「删库重建」作为正式迁移策略 | reference 无 Alembic（`models.py:14` TODO）；dopilot 不继承 |
+| Q6 | **节点配置模型重构尺度** | **已锁定第一版 = 独立 `nodes` 表 + 稳定 `agent_id`**；`[nodes].agents` 只作为初始发现地址（指向 agent，非裸 scrapyd），server 轮询 agent `/health` 后 upsert 节点 | **注意**：node 索引/选择若沿用顺序索引会随增删漂移；dopilot 统一使用稳定 `agent_id` |
+| Q7 | **实时日志（B-1）与执行器的耦合** | **已锁定 = 解耦**：日志不挂在 Executor 上，而是 server 侧 pull 链路（server 按 offset 调 agent `GET /logs/tail` → 写 `/server-data/logs` + PG 索引 → SSE）。**第一版完全不用 WebSocket**。详见 03-gap-realtime-logs | Executor 接口**不含** `stream_logs`；日志为独立子系统 |
 
 ---
 

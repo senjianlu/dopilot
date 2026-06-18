@@ -1,6 +1,8 @@
 # 04 · Web 视图、路由与前端
 
-> 面向后续 dopilot 改造工程师。本篇覆盖 scrapydweb 的 Flask Web 层（视图 / 路由）与前端（模板 / 静态资源），并标注 dopilot 三类被调度对象、实时日志、定时调度、节点选择、推模式、i18n 的改造切入点。
+> **【scrapydweb 行为参考·边界】** 本文描述 **scrapydweb 现状行为/语义**，作为 dopilot 的**功能层参考**；其代码写法、目录结构、模块划分**不得作为 dopilot 设计依据**。文中 `file:line` 路径均**相对 `reference/scrapydweb/`**（如 `scrapydweb/run.py` 即 `reference/scrapydweb/scrapydweb/run.py`；该目录只读、不被 import、不参与构建、不改名）。任何"改造切入点/复用/保留"类措辞，一律理解为"dopilot 需在 `apps/` 下**全新复刻其行为语义**"，而非改动或照搬 scrapydweb 文件。详见 `../dopilot/00-requirements.md` 决策表。
+>
+> 面向后续 dopilot 工程师。本篇覆盖 scrapydweb 的 Flask Web 层（视图 / 路由）与前端（模板 / 静态资源）的**现状行为**，并标注 dopilot 三类被调度对象、实时日志、定时调度、节点选择、推模式、i18n 的**行为映射参考**。
 >
 > 文中区分两类内容：
 > - **【现状】** = 已 Read/Grep 核实的事实，附 `file:line`。
@@ -112,9 +114,9 @@ def register_view(view, endpoint, url_defaults_list, with_node=True, trailing_sl
 
 > **gotcha**：查 URL 全表只能看 `__init__.py`，不要去各文件里找 Blueprint —— 99% 的端点不在 Blueprint 里。
 
-### 1.4 dopilot 改造挂载点
+### 1.4 dopilot 在 apps/server api/v1 + apps/web 全新实现对应行为的参考映射
 
-【建议】新增"Docker 常驻爬虫""一次性 Python 脚本"两类对象的页面与端点时，统一从 `handle_route()` 里 `register_view()` 挂载（保持 `<int:node>` 语义），不要另起 Blueprint 体系以免割裂路由全表。详见 §10。
+【建议】dopilot 在 `apps/web`（Vue 3 + Element Plus）新增"Docker 常驻爬虫""一次性 Python 脚本"两类对象的页面，并在 `apps/server` 的 `/api/v1/*` 暴露对应 JSON 端点；scrapydweb 通过 `handle_route()` 里 `register_view()` 集中挂载（保持 `<int:node>` 语义）、不另起 Blueprint 的做法仅作"路由不割裂"的行为对照，dopilot 不照搬其注册机制。详见 §10。
 
 ---
 
@@ -167,7 +169,7 @@ def require_login():
 | **`require_login` 在 `run.py` 的 `main()` 里注册，`create_app()`（`__init__.py`）不注册它** | **直接用 `create_app` 起服务（如 WSGI 部署、测试）将完全没有鉴权** |
 | `BaseView` 里的 `ENABLE_AUTH/USERNAME/PASSWORD`（baseview.py:85-87） | 是用于**向下游 Scrapyd 转发认证**，与上面这个面向浏览器的 Basic Auth 是两回事，别混淆 |
 
-【开放问题】dopilot 私有平台若需要登录态/RBAC/审计，须在此重构鉴权（迁移到 `create_app`、引入会话/JWT、加端点粒度），这是安全基线决策。
+【dopilot 决策】dopilot 不沿用 Basic Auth/Jinja 权限链；FastAPI API 采用 config-present-or-off 的单管理员 opaque token，第一版不做 RBAC/多用户。
 
 ---
 
@@ -221,11 +223,11 @@ def require_login():
 
 ### 5.2 改造建议
 
-【建议】
-1. 前端：在 `include_multinodes_checkboxes.html` 或 `schedule.html` 增加策略单选 `el-radio`：`all` / `random` / `push`。
-2. 后端持久化：给 `Task` 模型加 `node_strategy` 列，并在 `ScheduleCheckView.update_data_for_timer_task` 的 `__task_data` 里带上它。
-3. 执行：在 `TaskExecutor.main()`（execute_task.py:42）遍历前，对 `self.selected_nodes` 做策略归约——`random` 时 `random.choice(selected_nodes)`，`all` 时保持全集。
-4. 即时运行路径（`ScheduleRunView`）同步支持随机。
+【建议】dopilot 全新实现 node_strategy（scrapydweb 的对应位置仅作行为对照）：
+1. 前端：dopilot 在 `apps/web` 的调度表单中提供策略单选 `all` / `random` / `push`（scrapydweb `include_multinodes_checkboxes.html` / `schedule.html` 的多节点勾选仅作交互参考）。
+2. 持久化：dopilot 数据模型含 `node_strategy` 字段，提交时随任务数据下传（参考 scrapydweb `update_data_for_timer_task` 组装 `__task_data` 的行为语义）。
+3. 执行：dopilot 执行体在逐节点下发前对 selected_nodes 做策略归约——`random` 取一个、`all` 保持全集（参考 scrapydweb `TaskExecutor.main()` execute_task.py:42 的遍历行为）。
+4. 即时运行路径同步支持随机（参考 scrapydweb `ScheduleRunView` 行为）。
 
 ---
 
@@ -268,7 +270,7 @@ base_mobileui.html  (移动 layout: 精简 nav, 无 aside)
 
 > **gotcha**：桌面 / 移动两套布局各有独立 nav、品牌、title；`jobs/stats/utf8/fail` 各有 `_mobileui` 版本，改名与 i18n 须**两边都改**。
 
-### 6.2 导航与品牌位置（改名 dopilot 的切入点）
+### 6.2 导航与品牌位置（dopilot 品牌化的行为对照）
 
 【现状】
 
@@ -282,11 +284,11 @@ base_mobileui.html  (移动 layout: 精简 nav, 无 aside)
 | favicon / touch icon | `__init__.py:344-346` | `static_icon=.../icon/fav.ico`、`static_icon_apple_touch=.../icon/spiderman.png` |
 | 底部 GitHub 按钮 | `base.html:293` | `<a class="github-button" href="{{ GITHUB_URL.replace('/scrapydweb','') }}">GitHub</a>` |
 
-【建议】
-- 引入全局 `BRAND_NAME` 变量（在 `__init__.py` 的 `inject_variable()` 注入），模板里改用 `{{ BRAND_NAME }}` 替代硬编码 `ScrapydWeb`。
-- 替换 `static/v160/icon/` 下 `fav.ico` / `spiderman.png`，改 `style.css` 的 `nav>.title` 配色。
-- `GITHUB_URL` 改为内部仓库或移除底部 GitHub 按钮（`base.html:293`）。
-- 注意区分：UI 文案里的 `ScrapydWeb`（应改）与后端契约变量 `SCRAPYDWEB_VERSION` / `scrapydweb_version`（**不可改**，改了破坏 metadata/埋点契约）。
+【建议】dopilot 在 `apps/web` 全新实现品牌化（scrapydweb 的硬编码位置仅作"哪里有品牌/图标/配色"的行为对照）：
+- dopilot 用统一品牌变量替代硬编码品牌名，前端集中维护品牌名 / favicon / 配色。
+- dopilot 自有 icon 与主题色，不复用 scrapydweb 的 `fav.ico` / `spiderman.png` / 橙色 `nav>.title` 样式。
+- dopilot 不暴露上游 GitHub 仓库链接（scrapydweb `base.html:293` 的 GitHub 按钮仅作"底部外链位置"对照）。
+- **判定原则（行为参考，dopilot 沿用）**：UI 文案里的品牌名属可改的展示层；而后端契约变量 `SCRAPYDWEB_VERSION` / `scrapydweb_version` 在 scrapydweb 中是 metadata/埋点契约（**不可随意改名**）——dopilot 复刻行为时须同样区分"展示层文案可改 / 协议契约字段不可改"。
 
 ### 6.3 侧边栏菜单（`<aside>`）与 `update_g()`
 
@@ -303,7 +305,7 @@ base_mobileui.html  (移动 layout: 精简 nav, 无 aside)
 
 每个菜单项的 `href` 取自 `g.url_menu_*`，由 `BaseView.update_g()` 每请求构建（baseview.py:356-383）：`g.url_menu_servers/jobs/nodereports/clusterreports/tasks/deploy/schedule/projects/logs/items/sendtext/parse/settings/mobileui`，外加 `g.url_daemonstatus`、`g.scheduler_state_*`（菜单计时器图标变色）。图标来自 `static/v160/js/icons_menu.js`（约 30 个 SVG symbol，`<use xlink:href="#icon-...">`）。
 
-【建议】新增三类对象菜单：在 `<aside>` 相应 `<h3>` 组下加 `<li>`（复用现有 SVG 或新增 symbol），在 `update_g()` 挂 `g.url_menu_xxx`，再 `register_view` 注册对应页面。
+【建议】dopilot 在 `apps/web` 的侧边导航中全新加入三类对象菜单项与对应路由（scrapydweb 的 `<aside>` 分组、`update_g()` 注入 `g.url_menu_*`、`register_view` 注册仅作"菜单如何分组/菜单 URL 如何随节点构建"的行为对照，dopilot 不照搬其模板与注入机制）。
 
 ---
 
@@ -342,13 +344,13 @@ trigger='cron',
 
 ### 7.3 支持 interval 的改造
 
-【建议】
-1. 表单（`schedule.html`）：增加 `trigger` 选择（cron/interval）与 interval 字段（weeks/days/hours/minutes/seconds）。
-2. 后端：改 `schedule.py:189` 与 `schedule.py:300` 两处，改读 `request.form.get('trigger')`；`update_data_for_timer_task` 按 trigger 分支组装不同字段。
-3. `scheduler.add_job(...)` 传 `trigger='interval'` + interval 参数。
-4. `Task` 模型加列以持久化 trigger 类型与 interval 字段。
+【建议】dopilot 全新支持 cron/interval（scrapydweb 的硬编码两处仅作"为何现状恒为 cron"的行为对照）：
+1. 表单：dopilot 在 `apps/web` 调度表单提供 trigger 选择（cron/interval）与 interval 字段（weeks/days/hours/minutes/seconds）。
+2. 后端：dopilot 调度按 trigger 读取并分支组装字段，不像 scrapydweb 那样写死 `'cron'`（schedule.py:189 / schedule.py:300 是其现状写死点）。
+3. 向 APScheduler 传 `trigger='interval'` + interval 参数。
+4. dopilot 数据模型持久化 trigger 类型与 interval 字段。
 
-> **gotcha**：只改表单不改这两处后端，trigger 仍恒为 cron。
+> **gotcha（行为参考）**：scrapydweb 现状即使表单可选 trigger，后端两处写死也使其恒为 cron——dopilot 须确保表单与后端组装一致，避免同类陷阱。
 
 ---
 
@@ -373,9 +375,9 @@ TaskExecutor.main()  (execute_task.py:42)
 - 已具 push 雏形：调度器进程**主动**逐节点下发，含 `nodes_to_retry` 重试（execute_task.py:39,44）与结果入库。
 - **应用内自调用耦合**：`TaskExecutor` 通过 `get_response_from_view`（execute_task.py:8 导入）回打本应用的 `schedule.task` 端点，存在 self-request。
 
-### 8.2 改造为 Docker/脚本类型
+### 8.2 dopilot 全新实现 Docker/脚本类型的行为参考
 
-【建议】保留 `main()` 的"遍历 selected_nodes + 重试 + 入库"骨架，把 `schedule_task()` 里对 Scrapyd `schedule.json` 的 HTTP 调用替换/分派为对节点 **agent** 的下发接口（按对象类型路由：Scrapy→schedule.json，Docker→容器启动 API，脚本→脚本执行 API），复用现有重试与 `TaskResult/TaskJobResult` 入库逻辑。详见 §10。
+【建议】dopilot 在 `apps/server` 全新实现执行体时，可参考 scrapydweb `main()` 的"遍历 selected_nodes + 重试 + 入库"行为语义；下发不再固定走 Scrapyd `schedule.json`，而是按对象类型路由到节点 **agent** 的下发接口（Scrapy→schedule.json，Docker→容器启动 API，脚本→脚本执行 API），并复刻其重试与 `TaskResult/TaskJobResult` 入库的行为语义（dopilot 自有数据模型，非照搬 scrapydweb 类）。详见 §10。
 
 ---
 
@@ -398,9 +400,9 @@ TaskExecutor.main()  (execute_task.py:42)
 ### 9.2 改造建议
 
 【建议】
-1. 后端：在 `log.py` 加 `opt=stream` 分支（或新建专用视图），用 `flask.Response(stream_with_context(...))` 做 SSE，或引入独立 WS/ASGI 服务。
+1. 后端：dopilot 在 `apps/server` 全新实现日志流端点（参考 scrapydweb `log.py` 的 `opt` 分支行为语义），用 SSE（`LogSource` 抽象，见决策表），不照搬 `log.py` 的写法。
 2. Docker 常驻进程：接其 stdout / `docker logs --follow`（经节点 agent 回传，见 §10）。
-3. 前端：在 `utf8.html`（或新页）引入 `EventSource`/WebSocket 客户端 JS，追加日志行并自动滚动（可复用现有 `goLogBottom`/`go-bottom`）。
+3. 前端：dopilot 在 `apps/web` 实现 `EventSource` 客户端组件，追加日志行并自动滚动（scrapydweb `utf8.html` 的 `goLogBottom`/`go-bottom` 仅作交互行为参考）。
 
 ---
 
@@ -410,14 +412,14 @@ TaskExecutor.main()  (execute_task.py:42)
 
 【现状】所有执行/查询路径（`ApiView` / `schedule` / `TaskExecutor` / `LogView`）都**假定下游是 Scrapyd 的 `*.json` HTTP 接口**，经 `BaseView.make_request()`（baseview.py:285）统一发出。Docker 常驻/长连接进程与一次性 Python 脚本**完全没有现成支持**。
 
-### 10.2 改造结构建议
+### 10.2 dopilot 全新实现的结构参考
 
 【建议】
 
 ```
               ┌─────────────────────────── dopilot Web 层 ──────────────────────────┐
-              │  register_view 注册新页面/端点 (__init__.py handle_route)            │
-              │  BaseView 之上抽象 make_request → 多后端分派器                       │
+              │  apps/web 新页面 + apps/server /api/v1 端点                          │
+              │  BaseExecutor 抽象 → 多后端分派器（复刻 make_request 行为语义）       │
               └───────────┬───────────────┬───────────────────┬─────────────────────┘
                           │ Scrapy        │ Docker 常驻        │ Python 脚本
                           ▼               ▼                    ▼
@@ -428,9 +430,9 @@ TaskExecutor.main()  (execute_task.py:42)
 ```
 
 落地步骤：
-1. 在 `handle_route()` 用 `register_view()` 注册三类对象各自的页面与端点（参考 `schedule.html` 的 Vue 表单、`tasks.html` 的 `el-table` 列表）。
+1. dopilot 在 `apps/web` 实现三类对象各自的页面、在 `apps/server /api/v1` 暴露端点（scrapydweb `schedule.html` 的 Vue 表单、`tasks.html` 的 `el-table` 列表仅作交互行为参考，dopilot 用 Vue 3 + Element Plus 全新实现）。
 2. 新增**节点侧 agent**：负责下发 Docker/脚本任务 + 回传实时日志。
-3. 在 `BaseView`（或其上）把 `make_request` 抽象成多后端分派器，兼容非 Scrapyd 后端；`TaskExecutor.schedule_task` 按对象类型路由（§8.2）。
+3. dopilot 用 `BaseExecutor` 抽象多后端分派器（复刻 scrapydweb `make_request` 的转发行为语义），兼容非 Scrapyd 后端；执行体按对象类型路由（§8.2）。
 
 【开放问题】节点 agent 的协议（HTTP/gRPC/消息队列）、容器编排粒度（直连 Docker / k8s）、长连接进程的健康检查与重连策略，均待设计。
 
@@ -459,9 +461,9 @@ TaskExecutor.main()  (execute_task.py:42)
 
 ### 11.3 改造建议
 
-【建议】
-- **解耦目录名与版本号**：固定独立常量（如 `ASSET_VERSION`）替代 `'v'+__version__...`，否则改 dopilot 自己的 `__version__` 会让 `static/v160` 全部 404（须同步物理重命名整个目录树，含 `element-ui@2.4.6` 子树和 `icon`）。
-- 新增 Vue 页时复刻 `schedule.html` 的 `|replace|safe` 转义模式以防 XSS / 语法破坏。
+【建议】dopilot 用 Vue 3 + Vite 全新构建前端（scrapydweb 的目录绑版本号、Jinja2 内联注入仅作"现状陷阱"对照）：
+- dopilot 资源版本由 Vite 构建产物管理，不像 scrapydweb 那样把静态目录名绑 `__version__`（其 `'v'+__version__...` 一改即让 `static/v160` 全部 404，是需规避的现状陷阱）。
+- dopilot 前端数据通过 `/api/v1` JSON 获取，不沿用 scrapydweb `schedule.html` 的 Jinja2 `|replace|safe` 内联注入模式（该转义模式仅作"内联注入易致 XSS"的行为警示）。
 
 ---
 
@@ -484,12 +486,11 @@ TaskExecutor.main()  (execute_task.py:42)
 
 ### 12.2 改造建议
 
-【建议】
-1. 引入 **Flask-Babel**：在 `create_app()` 初始化 Babel + locale selector（当前固定 `zh`），`<html lang="zh">`。
-2. 模板英文串改 `{{ _('...') }}` / `{% trans %}`，提取 `.po`/`.mo` 并提供 zh 翻译。
-3. 后端 `flash()`/字符串包 `gettext`。
-4. JS 文案单独维护中文字典或由后端注入（模板 i18n 覆盖不到 JS）。
-5. 首批集中替换点：`base.html` 的 title / nav / `<aside>` 菜单。
+【建议】dopilot 前后端从零落地 i18n（zh 默认；scrapydweb 文案分布仅作"哪里有硬编码文案"的覆盖面参考）：
+1. 前端：dopilot 在 `apps/web` 用 Vue i18n 集中管理文案，`<html lang="zh">`。
+2. 后端：dopilot 在 `apps/server` 对面向用户的字符串走 gettext，提供 zh 翻译。
+3. dopilot 前端文案集中字典化，不像 scrapydweb 那样分散在模板/视图/JS 内联（其 `common.js`、内联 `<script>` 是模板 i18n 覆盖不到的痛点）。
+4. 覆盖面参考：scrapydweb 的 title / nav / `<aside>` 菜单 / `flash()` / JS 内联文案是文案最密区，dopilot 实现时按此清单全覆盖。
 
 > **gotcha（Jinja 定界符）**：`__init__.py:100-101` 把 Jinja 变量定界符改成了 `variable_start_string = '{{ '`（带尾随空格）、`variable_end_string = ' }}'`（带前导空格）。即模板里必须写 `{{ var }}`（两侧带空格），写 `{{var}}` 不会被解析。自定义模板 / 翻译片段时务必遵守此非标准定界符。
 
@@ -511,16 +512,18 @@ TaskExecutor.main()  (execute_task.py:42)
 
 ---
 
-## 14. 改造切入点总表（一页速查）
+## 14. 行为映射参考总表（一页速查）
 
-| 需求 | 主要文件:符号 | 现状 | 改造动作 |
+> 下表"主要文件:符号"列均为 scrapydweb 现状行为的定位（相对 `reference/scrapydweb/`，只读参考）；"dopilot 实现要点"列描述 dopilot 在 `apps/` 下全新复刻其行为语义的做法，而非改动 scrapydweb 文件。
+
+| 需求 | scrapydweb 行为定位:符号 | 现状语义 | dopilot 实现要点（全新复刻其行为语义） |
 |---|---|---|---|
-| 实时日志流 | `views/files/log.py` `LogView.dispatch_request`（log.py:42）；`templates/scrapydweb/utf8.html` | HTTP 轮询，非流式 | 加 `opt=stream`/新视图 + SSE/WS；前端 EventSource |
-| 定时 cron/interval | `views/operations/schedule.py:189, 300`；`tasks.py` | trigger 硬编码 cron | 改两处 + 表单 + Task 模型加列 |
-| 节点策略(全部/随机) | `baseview.py:257 get_selected_nodes`；`execute_task.py:42 main` | 仅"全部/取首个" | main 前策略归约 + node_strategy 字段 |
-| 推模式下发 | `execute_task.py:42 main / schedule_task` | Scrapyd push 雏形 | schedule.json 替换为 agent 下发，复用重试/入库 |
-| 三类调度对象 | `__init__.py handle_route register_view`；`baseview.py make_request` | 仅 Scrapyd | 注册新页面 + 节点 agent + 后端分派抽象 |
-| 改名 dopilot | `base.html:7,57`；`base_mobileui.html:7`；`500.html`；`style.css nav>.title`；`icon/` | 硬编码 ScrapydWeb | BRAND_NAME 变量 + 换 icon/配色 + 移除 GitHub |
-| i18n（中文） | 全模板 + 视图 flash + JS 文案；`__init__.py:100 jinja 定界符` | 无框架 | Flask-Babel + `_()`/`{% trans %}` + JS 字典 |
-| 资源版本目录 | `__init__.py:302 VERSION`；`static/v160/` | 目录名绑版本号 | 引入独立 ASSET_VERSION 常量 |
-| 鉴权 | `run.py:51 require_login` | 仅 Basic Auth，且 create_app 不注册 | 迁入 create_app + 会话/RBAC |
+| 实时日志流 | `views/files/log.py` `LogView.dispatch_request`（log.py:42）；`templates/scrapydweb/utf8.html` | HTTP 轮询，非流式 | apps/server 全新 SSE 端点（LogSource 抽象）；apps/web EventSource 组件 |
+| 定时 cron/interval | `views/operations/schedule.py:189, 300`；`tasks.py` | trigger 硬编码 cron | dopilot 调度按 cron/interval 分支组装；表单 + 数据模型含 trigger 类型与 interval 字段 |
+| 节点策略(全部/随机) | `baseview.py:257 get_selected_nodes`；`execute_task.py:42 main` | 仅"全部/取首个" | dopilot 执行体下发前做 node_strategy 归约（all/random/push） |
+| 推模式下发 | `execute_task.py:42 main / schedule_task` | Scrapyd push 雏形 | dopilot 下发按对象类型路由到 agent，复刻重试/入库行为语义 |
+| 三类调度对象 | `__init__.py handle_route register_view`；`baseview.py make_request` | 仅 Scrapyd | apps/web 新页面 + apps/server 端点 + 节点 agent + BaseExecutor 多后端分派 |
+| 品牌化 dopilot | `base.html:7,57`；`base_mobileui.html:7`；`500.html`；`style.css nav>.title`；`icon/` | 硬编码 ScrapydWeb | dopilot 前端用统一品牌变量 + 自有 icon/配色（区分 UI 文案 vs 后端契约变量） |
+| i18n（中文） | 全模板 + 视图 flash + JS 文案；`__init__.py:100 jinja 定界符` | 无框架 | dopilot 前后端按 Vue i18n / 后端 gettext 全新落地（zh 默认）|
+| 资源版本目录 | `__init__.py:302 VERSION`；`static/v160/` | 目录名绑版本号 | dopilot 用 Vite 构建产物管理资源版本，不绑 `__version__` |
+| 鉴权 | `run.py:51 require_login` | 仅 Basic Auth，且 create_app 不注册 | dopilot 单管理员登录态在 apps/server 应用工厂内统一注册 |

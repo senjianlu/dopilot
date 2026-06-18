@@ -1,6 +1,8 @@
 # 06 认证、安全与跨切面工具
 
-> 面向 dopilot 改造工程师。本文描述 scrapydweb 现有的**认证、安全、后台进程、告警监控与全局工具**这一横切层，并指出 dopilot 落地“真实用户体系 / 实时日志 / 定时任务 / 推模式 / 多节点策略 / i18n”时需要直接改动或复用的切入点。
+> **【scrapydweb 行为参考·边界】** 本文描述 **scrapydweb 现状行为/语义**，作为 dopilot 的**功能层参考**；其代码写法、目录结构、模块划分**不得作为 dopilot 设计依据**。文中 `file:line` 路径均**相对 `reference/scrapydweb/`**（如 `scrapydweb/run.py` 即 `reference/scrapydweb/scrapydweb/run.py`；该目录只读、不被 import、不参与构建、不改名）。任何“改造切入点/复用/保留”类措辞，一律理解为“dopilot 需在 `apps/` 下**全新复刻其行为语义**”，而非改动或照搬 scrapydweb 文件。详见 `../dopilot/00-requirements.md` 决策表。
+>
+> 面向 dopilot 改造工程师。本文描述 scrapydweb 现有的**认证、安全、后台进程、告警监控与全局工具**这一横切层，并指出 dopilot 落地“真实用户体系 / 实时日志 / 定时任务 / 推模式 / 多节点策略 / i18n”时需要全新复刻其行为语义的行为参考点。
 >
 > 全文严格区分 **【现状事实】**（已读源码核实，标注 `文件:行`）与 **【改造建议 / 开放问题】**（dopilot 待办，未实现）。
 
@@ -214,7 +216,7 @@ Metadata 表存的全局单行状态（`models.py:16-36`）：
             check_exit(): pid_exists / os.kill(main_pid,0) 自杀检测
 ```
 
-### 4.2 子进程启动范式（dopilot 可复用）
+### 4.2 子进程启动范式（dopilot 全新复刻其行为语义）
 
 **【现状事实】** `sub_process.py` 是平台“常驻后台进程”的统一启动范式：
 
@@ -328,13 +330,13 @@ check_app_config(config)                         (check_app_config.py:38)
         └─ init_poll      → POLL_PID      → handle_metadata           (492-495)
 ```
 
-> 改任何认证 / 告警 / 后台进程配置都会经过这里。新增 dopilot 后台采集进程 / 校验项，应在此挂载。
+> scrapydweb 中改任何认证 / 告警 / 后台进程配置都会经过这里；dopilot 在 `apps/` 下全新复刻其行为语义时，新增的后台采集进程 / 校验项应对标这一启动总入口的行为。
 
 ---
 
-## 7. dopilot 改造切入点
+## 7. dopilot 横切能力的行为参考点
 
-> 以下均为 **【改造建议 / 开放问题】**，scrapydweb 现状未实现。
+> 以下均为 **【改造建议 / 开放问题】**，scrapydweb 现状未实现；dopilot 全新实现这些能力时需复刻的行为语义。各小节中“切入点 / 主切入点 / 复用 / 保留 / 必须同步”等措辞，均指 dopilot 在 `apps/` 下全新复刻对应行为语义时需对标的 scrapydweb 行为参考点，而非改动 scrapydweb 文件。
 
 ### 7.1 用真实用户体系替换 HTTP Basic Auth ★核心
 
@@ -342,7 +344,7 @@ check_app_config(config)                         (check_app_config.py:38)
 |----|------|
 | 主切入点 | `run.py:51-58` `require_login()` + `common.py:24-27` `authenticate()` |
 | 数据模型 | `models.py` 新增 `User` 表（`password_hash` / `role` / `is_active`）；废弃 / 哈希化 Metadata 的明文 `username/password`（`models.py:31-32`） |
-| 改法 | `before_request` 改为校验 **flask session** 或 `Authorization: Bearer <JWT>`；失败时重定向登录页（而非返回 Basic 401）。新增 登录 / 登出 view + 登录页模板。保留 `ENABLE_AUTH` 开关语义 |
+| 改法 | dopilot 不沿用 Flask `before_request`；FastAPI `auth/` 模块采用 config-present-or-off 的单管理员登录，返回 Bearer opaque token；失败返回 API 错误码，由 Vue 登录页处理。保留“认证可关闭”的内网部署语义 |
 | **必须同步** | 内部互调凭证：`baseview.get_response_from_view`（`baseview.py:254`）、`execute_task` 从 Metadata 取凭证（`execute_task.py:158-167`）、`poll.py` 命令行凭证（`sub_process.py:99-100`）。**三处全改为 service token**，否则监控告警 / 定时任务 / 跨 view 调用全部 401（见 §3.2） |
 | 安全 | 修复 L2/L3/L4：账号不再明文落库 / 进日志 / 进命令行 |
 
@@ -351,7 +353,7 @@ check_app_config(config)                         (check_app_config.py:38)
 | 项 | 内容 |
 |----|------|
 | 切入点 | `__init__.py:64-101` `create_app()`（jinja env 配置处，第 100-101 行附近）+ `templates/` + `baseview.py` |
-| 改法 | 引入 **Flask-Babel**，在 create_app 注册 Babel + locale selector（默认 `zh`）。把硬编码英文文案抽成可翻译串：`common.authenticate()` 提示（`common.py:26`）、`log.py` 告警 subject（`log.py:504`）、`check_app_config` 日志等 |
+| 改法 | dopilot i18n 走**前端 vue-i18n**(`apps/web`,见 `../dopilot/04-gap-i18n.md`),**不引入 Flask-Babel**。后端面向用户的文案(如 `common.authenticate()` 提示 `common.py:26`、`log.py` 告警 subject `log.py:504`)以错误码/结构化字段返回,由前端本地化;左列 scrapydweb 文案位置仅作行为参考 |
 | 参考 | `default_settings.py` 已有中英双语注释块（如第 34-37 行），可作文案抽取参考 |
 
 ### 7.3 扩展节点选择策略（全部执行 / 随机一个）
@@ -385,7 +387,7 @@ check_app_config(config)                         (check_app_config.py:38)
 | 项 | 内容 |
 |----|------|
 | 切入点 | `log.py` + `poll.py`（当前为拉取轮询，非真正流式） |
-| 改法 | 新增基于 **SSE / WebSocket** 的日志推送 view；对容器爬虫从容器 stdout / log 流式读取。保留 BaseView 统一的 auth 与 node 解析 |
+| 改法 | dopilot v1 见决策 #11:server 按需 pull agent tail API + server→web SSE 流式推送(**不引入 WebSocket**);对容器爬虫从容器 stdout / log 流式读取。auth 与 node 解析在 dopilot 全新实现 |
 
 ---
 

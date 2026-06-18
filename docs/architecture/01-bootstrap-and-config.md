@@ -1,6 +1,8 @@
 # 01 应用启动、CLI 与配置
 
-> 面向后续把 scrapydweb 改造为私有调度平台 **dopilot** 的工程师。
+> **【scrapydweb 行为参考·边界】** 本文描述 **scrapydweb 现状行为/语义**，作为 dopilot 的**功能层参考**；其代码写法、目录结构、模块划分**不得作为 dopilot 设计依据**。文中 `file:line` 路径均**相对 `reference/scrapydweb/`**（如 `scrapydweb/run.py` 即 `reference/scrapydweb/scrapydweb/run.py`；该目录只读、不被 import、不参与构建、不改名）。任何"改造切入点/复用/保留"类措辞，一律理解为"dopilot 需在 `apps/` 下**全新复刻其行为语义**"，而非改动或照搬 scrapydweb 文件。详见 `../dopilot/00-requirements.md` 决策表。
+
+> 面向以 scrapydweb 为行为参考、全新构建私有调度平台 **dopilot** 的工程师。
 >
 > 本文描述 **现状事实**（基于代码实测，标注 `file:line`）与 **改造建议 / 开放问题**（明确标识）。
 > 所有路径均为仓库内绝对路径。本文不涉及任务执行、日志解析等子系统的内部细节（另见后续文档）。
@@ -10,7 +12,7 @@
 ## 0. 一句话总览
 
 scrapydweb 通过 setuptools `console_scripts` 暴露 `scrapydweb` 命令，入口是
-`/workspaces/dopilot/scrapydweb/run.py` 的 `main()`。它用 **app factory 模式**
+`reference/scrapydweb/scrapydweb/run.py` 的 `main()`。它用 **app factory 模式**
 创建 Flask app，按 **4 层 + 1 旁路** 的优先级加载配置，做断言式校验并触发一堆运行时副作用
 （建表、连通性检查、起子进程、注册定时 job），最后用 **werkzeug 内置开发服务器** 阻塞运行。
 
@@ -151,7 +153,7 @@ help 文本会**动态显示当前生效值**（如 `current: ...`）。除 `-b/
 ### 3.1 对 dopilot 的 CLI 改造点
 
 - **命令名**：`-dc` 是开发期绕过 scrapyd 连通性硬断言的现成开关；dopilot 在无 scrapyd 的纯 Docker/脚本环境下必须用它，或改造该断言（见 §7）。
-- **新增参数**：dopilot 若增加节点策略默认值、worker 类型过滤等，应在 `parse_args` 加 `add_argument`，并在 `update_app_config` 加合并分支，保持"CLI 优先级最高"的一致语义。
+- **新增参数**：dopilot 若增加节点策略默认值、worker 类型过滤等，可参照 scrapydweb `parse_args` 定义参数、`update_app_config` 合并参数的行为语义，在 `apps/` 下全新复刻"CLI 优先级最高"的一致语义。
 
 ---
 
@@ -213,9 +215,9 @@ scrapydweb **混用** 两种注册机制（`handle_route`，`__init__.py:147-297
 | `bp_parse_source` | `views/utilities/parse.py` 的 `bp` | `__init__.py:274-275` |
 
 > **改造建议（dopilot 新增三类被调对象）**：新增"Docker 常驻爬虫""一次性 Python 脚本"的页面与下发逻辑时，
-> 在 `handle_route` 里新增对应 MethodView 或 Blueprint（如 `docker` / `script` 视图）。
-> 建议**统一用 Blueprint** 收敛，逐步淘汰 MethodView+add_url_rule 的混用，降低维护成本。
-> 新视图同样可继承 `BaseView`（`views/baseview.py`）以复用配置读取。
+> dopilot 在 `apps/` 下全新实现对应路由（行为参考 scrapydweb 的 `handle_route` 在此挂载 MethodView/Blueprint 的语义，如 `docker` / `script` 视图）。
+> 建议**统一用 Blueprint** 收敛，避免 scrapydweb 现状中 MethodView+add_url_rule 的混用，降低维护成本。
+> 配置读取可参照 scrapydweb `BaseView`（`views/baseview.py`）的行为语义，在 dopilot 中全新复刻其统一读取入口。
 
 ### 4.3 handle_db / handle_template_context
 
@@ -224,8 +226,8 @@ scrapydweb **混用** 两种注册机制（`handle_route`，`__init__.py:147-297
 | `handle_db` | `__init__.py:110-144` | 设 `SQLALCHEMY_DATABASE_URI/_BINDS`（来自 vars.py）；`db.app = app`（旧版 2.x 用法）→ `db.init_app` → `db.create_all`；注册 `teardown_request` 做 session rollback/remove；写 Metadata 版本行；维护 `last_check_update_timestamp` / `pageview` |
 | `handle_template_context` | `__init__.py:300-348` | 用 `@app.context_processor` 注入版本号、GitHub URL、Python/Scrapy/Scrapyd 版本，以及一大批 `url_for(static, ...)` 静态资源路径（按 `VERSION='v'+版本号去点` 取目录） |
 
-> **i18n 接入点**：`handle_template_context` 是注入"当前 locale"等模板变量的天然位置；
-> `create_app` 里 `Compress().init_app(app)` 附近是 `babel.init_app(app)` 的天然位置（见 §6）。
+> **i18n 行为参考**：在 scrapydweb 现状中，`handle_template_context` 承担注入"当前 locale"等模板变量的角色；
+> `create_app` 里 `Compress().init_app(app)` 附近承担扩展 init 的角色。dopilot 在 `apps/` 下全新复刻时，可参照这一行为分层组织等价逻辑（见 §6）。
 
 ---
 
@@ -295,7 +297,7 @@ scrapydweb **混用** 两种注册机制（`handle_route`，`__init__.py:147-297
 | `ENABLE_HTTPS` | `False` | HTTPS 开关 | 私有内网通常关；需要时配合下面两项 |
 | `CERTIFICATE_FILEPATH` / `PRIVATEKEY_FILEPATH` | `''` | 证书/私钥路径 | `app.run(ssl_context=...)` 使用 |
 
-### 6.2 Scrapyd / 节点（dopilot 改造核心）
+### 6.2 Scrapyd / 节点（dopilot 节点模型的行为参考核心）
 
 | 配置项 | 默认值 | 含义 | 对 dopilot 的意义 |
 |---|---|---|---|
@@ -313,7 +315,7 @@ scrapydweb **混用** 两种注册机制（`handle_route`，`__init__.py:147-297
 
 > **改造建议（节点模型）**：dopilot 建议并行引入 `WORKER_NODES` 概念，节点可声明能力
 > （`scrapyd` / `docker` / `python-script`）与连接方式（HTTP / docker daemon / SSH / 自研 agent）。
-> 可复用 `check_scrapyd_servers` 的"解析→规范化并行列表"模式，但需放宽连通性硬断言（见 §7）。
+> 可在 `apps/` 下全新复刻 `check_scrapyd_servers` 的"解析→规范化并行列表"行为语义，但需放宽连通性硬断言（见 §7）。
 
 ### 6.3 Scrapy / 部署
 
@@ -331,8 +333,8 @@ scrapydweb **混用** 两种注册机制（`handle_route`，`__init__.py:147-297
 | `KEEP_TASK_RESULT_WITHIN_DAYS` | `31` | 保留最近 N 天任务结果 | 与上配合 |
 
 > **改造建议（cron/interval）**：底层 APScheduler 已**原生支持 `interval` 与 `cron` 触发器**
-> （`check_app_config.py` 内即用 `trigger='interval'` 注册）。dopilot 新增定时任务类型时
-> **复用同一全局 `scheduler`**（`utils/scheduler.py:45`），新增 `add_job` 并把 `func` 指向新的
+> （`check_app_config.py` 内即用 `trigger='interval'` 注册）。dopilot 新增定时任务类型时，
+> 在 `apps/` 下全新复刻其"单一全局 `scheduler`"行为语义（行为参考 `utils/scheduler.py:45`），新增 `add_job` 并把 `func` 指向新的
 > Docker/脚本 executor。**加 cron 前务必显式设定时区**（见 §7：`timezone` 参数被注释掉了）。
 
 ### 6.5 Run Spider（运行参数默认值）
@@ -383,8 +385,8 @@ SMTP（`SMTP_SERVER` / `SMTP_PORT` / `SMTP_OVER_SSL` / `SMTP_CONNECTION_TIMEOUT`
 | `DATABASE_URL` | `os.environ.get('DATABASE_URL','')` | 数据库后端（默认 SQLite，可 MySQL/PG） | 多节点高并发建议改 MySQL/PG；同样 import 期旁路读取 |
 
 > **i18n 现状与建议**：当前**没有 i18n 框架**，模板文案中英混排在 `templates/` 内（现状事实）。
-> dopilot 接入建议：
-> 1. `setup.py:install_requires` 加 `Flask-Babel`（注意与 Flask 2.0 兼容性，见 §1.1）；
+> dopilot 的 i18n 走**前端 vue-i18n**(`apps/web`,见 `../dopilot/04-gap-i18n.md`),**不给后端加 Flask-Babel/gettext**。以下仅为「scrapydweb 后端若加 i18n」的行为参考:
+> 1. (scrapydweb 参考)`setup.py:install_requires` 加 `Flask-Babel`（注意与 Flask 2.0 兼容性，见 §1.1）；
 > 2. `create_app` 里 `Compress().init_app(app)` 附近 `babel.init_app(app)`，配置 `BABEL_DEFAULT_LOCALE='zh'` 与 `locale_selector`；
 > 3. `default_settings.py` 新增 `LANGUAGE` / `DEFAULT_LOCALE`（默认 `'zh'`）；
 > 4. 模板硬编码文案改 `{{ _('...') }}`，在 `handle_template_context` 注入当前 locale。
@@ -398,7 +400,7 @@ SMTP（`SMTP_SERVER` / `SMTP_PORT` / `SMTP_OVER_SSL` / `SMTP_CONNECTION_TIMEOUT`
 
 | # | 类别 | 内容 | 证据 | 对 dopilot 影响 / 建议 |
 |---|---|---|---|---|
-| G1 | 事实 | **生产服务器**：`app.run()` 用 werkzeug 内置开发服务器，`threaded` 默认开、`use_reloader=False` 写死，非生产级 | `run.py:119-120` | 生产化改 gunicorn/uwsgi；但多 worker 下 BackgroundScheduler 与子进程会被**重复启动**，必须保证单 worker 或外置调度 |
+| G1 | 事实 | **生产服务器**：`app.run()` 用 werkzeug 内置开发服务器，`threaded` 默认开、`use_reloader=False` 写死，非生产级 | `run.py:119-120` | dopilot 改为 FastAPI/uvicorn 且固定 `workers=1`；多 worker 下 BackgroundScheduler 与子进程会被**重复启动**，dopilot 明确不支持多 worker/多副本 |
 | G2 | 事实 | **调度器在 import 时启动**，非 main 显式启动；只要 import 了 `scheduler` 就已运行（paused），`check_app_config` 仅负责 `resume` | `utils/scheduler.py:90`；`check_app_config.py:288-290` | 别误以为能在 `main` 控制调度器生命周期 |
 | G3 | 事实 | **强制 scrapyd 连通性断言**：所有节点都连不上 → `AssertionError` → `sys.exit` | `check_app_config.py:429`（`assert any(results)`）→ `run.py:43-48` | dopilot 无 scrapyd 时直接启动失败；**用 `-dc` 或改造该断言**（按节点类型分流，仅对 scrapyd 类节点做连通性检查） |
 | G4 | 事实 | **首次运行强制退出**：找不到 `scrapydweb_settings_v11.py` 时拷模板 + `sys.exit`，首次不会真正起服务 | `run.py:130-150` | 部署脚本/容器镜像需预置好该文件再启动；或改造为"无文件时用默认值继续" |
@@ -416,17 +418,19 @@ SMTP（`SMTP_SERVER` / `SMTP_PORT` / `SMTP_OVER_SSL` / `SMTP_CONNECTION_TIMEOUT`
 
 ---
 
-## 8. dopilot 改造点速查（按需求 A/B 映射）
+## 8. dopilot 行为参考速查（按需求 A/B 映射）
 
-| dopilot 需求 | 主要改造位置（文件:行） | 现状基础 | 关键注意 |
+> 下表"行为参考位置"列给出 scrapydweb 中实现等价行为的 `file:line`，仅供 dopilot 在 `apps/` 下全新复刻其行为语义时定位参考，**绝非 dopilot 的改动目标**。
+
+| dopilot 需求 | 行为参考位置（scrapydweb file:line） | 现状基础 | 关键注意 |
 |---|---|---|---|
 | 命令名 `scrapydweb→dopilot` | `setup.py:59-63`、`__version__.py:3` | console_scripts | 仅改命令名最省事；彻底重命名包需改全部 import |
 | 三类被调对象（scrapy/docker/script） | `__init__.py:147` `handle_route`；`check_app_config.py:484` `init_subprocess` | 现全部假定经 scrapyd HTTP API | 新增 docker/script 视图；放宽 G3 连通性断言；新建 executor 替代 scrapyd schedule API |
-| 实时日志流 | 现依赖 `LOCAL_SCRAPYD_LOGS_DIR`+logparser | scrapyd 日志文件 | 容器 stdout 需新机制（SSE/WebSocket）；扩展或绕过 `SCRAPYD_LOG_EXTENSIONS` |
+| 实时日志流 | 现依赖 `LOCAL_SCRAPYD_LOGS_DIR`+logparser | scrapyd 日志文件 | 容器 stdout 需新机制（新增 SSE 流式端点（dopilot v1 见决策#11；v1 不引入 WebSocket））；扩展或绕过 `SCRAPYD_LOG_EXTENSIONS` |
 | 定时任务（cron/interval） | `utils/scheduler.py:45`；`check_app_config.py:306/329`；`views/operations/schedule.py`、`execute_task.py` | APScheduler 原生支持 | 复用同一 scheduler；func 指向新 executor；显式设时区(G13) |
 | 节点策略（指定/全部/随机） | `views/operations/schedule.py`（`selected_nodes`/`first_selected_node`）；`<int:node>` 维度 | 多选全部下发已有 | 新增策略字段，random 从候选随机取一个；可加 `DEFAULT_NODE_STRATEGY` 默认配置 |
 | 推模式下发指定节点 | `views/operations/schedule.py`（POST `schedule.json`） | 对 scrapyd 天然是 push（HTTP POST） | docker/脚本节点需实现等价 push 通道（向 worker agent POST），按节点类型分流 |
-| i18n（仅中文） | `create_app`（`__init__.py`）init babel；`handle_template_context` 注入 locale；`templates/` | 当前无 i18n | 加 Flask-Babel 依赖(注意 G6)；`BABEL_DEFAULT_LOCALE='zh'`；文案改 `{{ _('...') }}` |
+| i18n（仅中文） | `create_app`（`__init__.py`）init babel；`handle_template_context` 注入 locale；`templates/` | 当前无 i18n | dopilot i18n 在**前端 vue-i18n**(`apps/web`,见 `../dopilot/04-gap-i18n.md`);**不加 Flask-Babel**(左列为 scrapydweb 后端行为参考) |
 | 绑定/端口/HTTPS/调试 | `run.py:107-120` `app.run`；`default_settings.py` System/ScrapydWeb 块 | 现成 | 生产化替换 WSGI 容器(G1) |
 | 数据库后端 | `default_settings.py:387` `DATABASE_URL`；`vars.py:72-74` | 默认 SQLite | 多节点建议 MySQL/PG；注意 import 期旁路双读取(G5/§5.3) |
 
@@ -436,16 +440,16 @@ SMTP（`SMTP_SERVER` / `SMTP_PORT` / `SMTP_OVER_SSL` / `SMTP_CONNECTION_TIMEOUT`
 
 | 文件 | 角色 |
 |---|---|
-| `/workspaces/dopilot/setup.py` | 打包、console_scripts 入口、钉死依赖 |
-| `/workspaces/dopilot/scrapydweb/run.py` | CLI 入口与主启动序列（`main` / `parse_args` / `load_custom_settings` / `update_app_config`） |
-| `/workspaces/dopilot/scrapydweb/__init__.py` | app factory（`create_app` / `handle_db` / `handle_route` / `handle_template_context`） |
-| `/workspaces/dopilot/scrapydweb/vars.py` | import 期全局初始化（目录、DB URI、常量、历史日志） |
-| `/workspaces/dopilot/scrapydweb/__version__.py` | 元数据单一来源（`__title__` / `__version__` 等） |
-| `/workspaces/dopilot/scrapydweb/default_settings.py` | 默认配置模板（首次运行被拷到 cwd） |
-| `/workspaces/dopilot/scrapydweb/utils/check_app_config.py` | 配置校验 + 派生 + 运行时副作用（建表/连通性/起子进程/注册定时 job） |
-| `/workspaces/dopilot/scrapydweb/utils/scheduler.py` | 全局 BackgroundScheduler（import 时 `start(paused=True)`） |
-| `/workspaces/dopilot/scrapydweb/utils/sub_process.py` | LogParser/Monitor 子进程管理（Popen + prctl + atexit） |
-| `/workspaces/dopilot/scrapydweb/common.py` | `find_scrapydweb_settings_py` / `handle_metadata` / `authenticate` |
-| `/workspaces/dopilot/scrapydweb/views/baseview.py` | 配置消费统一入口（app.config → self.*） |
-| `/workspaces/dopilot/scrapydweb/views/system/settings.py` | `/settings` 配置查看页（密码脱敏） |
-| `/workspaces/dopilot/scrapydweb/views/operations/schedule.py` | 任务下发 / 节点选择实际消费点 |
+| `reference/scrapydweb/setup.py` | 打包、console_scripts 入口、钉死依赖 |
+| `reference/scrapydweb/scrapydweb/run.py` | CLI 入口与主启动序列（`main` / `parse_args` / `load_custom_settings` / `update_app_config`） |
+| `reference/scrapydweb/scrapydweb/__init__.py` | app factory（`create_app` / `handle_db` / `handle_route` / `handle_template_context`） |
+| `reference/scrapydweb/scrapydweb/vars.py` | import 期全局初始化（目录、DB URI、常量、历史日志） |
+| `reference/scrapydweb/scrapydweb/__version__.py` | 元数据单一来源（`__title__` / `__version__` 等） |
+| `reference/scrapydweb/scrapydweb/default_settings.py` | 默认配置模板（首次运行被拷到 cwd） |
+| `reference/scrapydweb/scrapydweb/utils/check_app_config.py` | 配置校验 + 派生 + 运行时副作用（建表/连通性/起子进程/注册定时 job） |
+| `reference/scrapydweb/scrapydweb/utils/scheduler.py` | 全局 BackgroundScheduler（import 时 `start(paused=True)`） |
+| `reference/scrapydweb/scrapydweb/utils/sub_process.py` | LogParser/Monitor 子进程管理（Popen + prctl + atexit） |
+| `reference/scrapydweb/scrapydweb/common.py` | `find_scrapydweb_settings_py` / `handle_metadata` / `authenticate` |
+| `reference/scrapydweb/scrapydweb/views/baseview.py` | 配置消费统一入口（app.config → self.*） |
+| `reference/scrapydweb/scrapydweb/views/system/settings.py` | `/settings` 配置查看页（密码脱敏） |
+| `reference/scrapydweb/scrapydweb/views/operations/schedule.py` | 任务下发 / 节点选择实际消费点 |

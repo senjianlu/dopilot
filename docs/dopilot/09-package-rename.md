@@ -1,103 +1,52 @@
-# 09 · Python 包重命名（scrapydweb → dopilot）影响面
+# 09 · scrapydweb 行为移植注意事项（耦合点清单）
 
-> 面向 dopilot 改造工程师。对应路线图阶段 0 任务"改名 scrapydweb→dopilot"（`docs/dopilot/10-roadmap.md:34`，状态 🟡 待评估）与开放问题 6（`10-roadmap.md:93`）。
+> **【scrapydweb 参考边界】** scrapydweb 仅作**功能层/行为参考**与**测试 oracle**；其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 的设计依据**。dopilot 为 greenfield、按 `apps/`+`packages/` 自有领域 structure-first 设计（权威布局见 `05-dev-setup-and-known-issues.md` §1），**不对 scrapydweb 做改名/git mv**。详见 `00-requirements.md` 决策表。
 >
-> 本文先用 Grep/Read 系统盘点真实代码的耦合点，再给出"全量改包 vs 仅改 UI/命令"的权衡、推荐策略、分步 checklist 与开放问题。
+> **本文已重定位**：早期版本以"把 scrapydweb 包改名成 dopilot"为框架（git mv、改 setup.py/vars.py、分两步全量改包、Jinja strangler 共存等），这一立意已整体废弃。dopilot 不由 scrapydweb 原地改名而来，而是按权威 `apps/`+`packages/` 布局**全新编写**，逐域以 scrapydweb 为**行为参考**重写。`reference/scrapydweb/` 只读、不参与 Docker 构建、不被 import、绝不 git mv。
 >
-> 阅读约定：**【现状事实】**= 已核实代码，附 `file:line`；**【建议/开放问题】**= 改造判断，可讨论。
+> 本文现在是 **scrapydweb 行为/契约移植注意事项**：盘点 scrapydweb 在各功能域上的内部耦合点，作为 dopilot **全新实现**对应功能时"要复刻哪些行为语义、要规避哪些反模式、哪些埋点不移植"的清单。文中 `file:line` 一律是 scrapydweb 行为参考引用（路径相对 `reference/scrapydweb/`），**绝不是 dopilot 的改动目标**。
 
 ---
 
-## 0. 结论速览（TL;DR）
+## 0. 移植要点速览（TL;DR）
 
-| 维度 | 结论 |
-|---|---|
-| 包内绝对 `from scrapydweb...` import | **仅 5 处**，全在 `run.py:12-16`；其余 86 处全是相对 import，**不受改名影响** |
-| 真正的硬骨头 | ① `static/v160/` 目录名与 `__version__` 强绑定；② `templates/scrapydweb/` 子目录名 + 29 处（28 行）`'scrapydweb/xxx.html'` 字符串引用；③ 配置文件名 `scrapydweb_settings_v11.py`；④ MySQL/PG 库名前缀 `scrapydweb_*`（物理契约） |
-| 不可改（对外契约） | `SCRAPYDWEB_BIND/PORT`、配置文件名、MySQL/PG 库名、check_update 埋点参数名 `scrapydweb=`（详见 §7） |
-| 可安全改 | UI 文案 `ScrapydWeb`、命令名、`logger` name、临时目录前缀、demo 资源名 |
-| 推荐 | **阶段 0 分两步**：先做"低风险表层改名"（命令名 + UI 文案 + 顶层目录壳），**暂缓**包目录与配置文件名的全量改包，留到阶段 0 末或与前端分离一起做（见 §5） |
+下表区分"dopilot 必须在自有实现里复刻的对外行为契约语义"与"scrapydweb 内部约定、dopilot 不必沿用"。dopilot 的键名/库名/文件名/目录结构均按自身领域命名，下表只关心**语义**是否需要复刻。
 
----
-
-## 1. 包内 import 规模（grep 统计）
-
-【现状事实】整包 `.py` 中 `scrapydweb` 字样命中 **94 行 / 29 个文件**（按行计；含注释/字符串，出现约 102 次）。但区分 import 形态后，改名压力远小于命中数暗示的规模：
-
-| import 形态 | 数量 | 位置 | 改名是否受影响 |
-|---|---|---|---|
-| 相对 import `from .` / `from ..` / `from ...` | **86** | 全包（`common.py:14`、`utils/check_app_config.py:7-16`、`views/**/*.py` 等） | **不受影响**（相对路径与包名解耦，改目录名即可） |
-| 绝对 import `from scrapydweb ...` | **5** | `run.py:12,13,14,15,16` | 受影响，需逐行改 |
-| 绝对 import `import scrapydweb` | **0** | —— | —— |
-
-绝对 import 全文（`run.py:12-16`）：
-
-```python
-from scrapydweb import create_app
-from scrapydweb.__version__ import __description__, __version__
-from scrapydweb.common import authenticate, find_scrapydweb_settings_py, handle_metadata, handle_slash
-from scrapydweb.vars import ROOT_DIR, SCRAPYDWEB_SETTINGS_PY, SCHEDULER_STATE_DICT, STATE_PAUSED, STATE_RUNNING
-from scrapydweb.utils.check_app_config import check_app_config
-```
-
-【现状事实】另有 1 处字符串形式的绝对包引用（非 import，但 Flask 靠它加载配置类）：
-
-```python
-# scrapydweb/__init__.py:70
-app.config.from_object('scrapydweb.default_settings')
-```
-
-> 【建议】因相对 import 占绝对多数，**重命名包目录 `scrapydweb/ → dopilot/`** 后，仅需改 `run.py` 的 5 行 + `__init__.py:70` 这一字符串，即可让 import 层完整跑通。import 不是难点。
+| 维度 | scrapydweb 行为 | dopilot 移植注意 |
+|---|---|---|
+| 配置项语义 | `SCRAPYDWEB_BIND/PORT` 等键承载"绑定地址/端口"等配置语义 | 语义要复刻（dopilot 配置项名自定，由自有 toml 加载器从 `configs/` 读取，见 §5/§7） |
+| 配置加载形态 | cwd 下一个硬编码文件名的 Python 模块，按模块名 `importlib` 导入 | **反模式，不移植**；dopilot 用 toml（`configs/server.example.toml`、`agent.example.toml`，经 `DOPILOT_CONFIG` 加载） |
+| 数据模型划分 | 数据按 apscheduler/timertasks/metadata/jobs 四类分库 | 数据划分语义可参考（§7），dopilot 库名/schema 自定 |
+| 静态资源↔版本耦合 | static 目录名由 `__version__` 运行期推导（高风险，见 §3） | **反模式教训**：dopilot 用 Vite 构建指纹解耦版本与物理目录 |
+| 平台单例状态 | `Metadata` 单行靠 `version` 唯一键承载全平台单例（见 §6） | dopilot 设计等价"平台单例状态"存储时要理解此语义与版本迁移陷阱 |
+| 版本统计埋点 | check_update 向 `my8100.pythonanywhere.com` 回传 | **不移植**：dopilot 是私有平台，不实现该回传（§7） |
+| 前端 | Jinja 模板渲染页面 | **不移植 Jinja**；前端由 `apps/web` SPA（Vue3+Element Plus+Vite+TS）greenfield 实现，直连 `/api/v1`，**无新旧共存** |
 
 ---
 
-## 2. setup.py：packages / package_data / entry_points
+## 1. scrapydweb 的 import 组织（中性事实，非 dopilot 依据）
 
-【现状事实】`setup.py` 关键耦合点：
+【现状事实】scrapydweb 整包 `.py` 中 `scrapydweb` 字样命中约 94 行 / 29 个文件；其包内 import **以相对 import 为主**（`from .` / `from ..` / `from ...`，约 86 处，如 `common.py:14`、`utils/check_app_config.py:7-16`、`views/**/*.py`），仅 `run.py:12-16` 5 处为绝对 import，另有 1 处字符串形式的包引用 `app.config.from_object('scrapydweb.default_settings')`（`__init__.py:70`）让 Flask 加载配置类。
 
-| 项 | 位置 | 现状 | 改名动作 |
-|---|---|---|---|
-| 读版本元数据 | `setup.py:12` | `open(os.path.join(CURRENT_DIR, 'scrapydweb', '__version__.py'))` | 路径 `'scrapydweb'`→`'dopilot'` |
-| `name` | `setup.py:20` | `about['__title__']`（= `__version__.py:3` 的 `'scrapydweb'`） | 改 `__version__.py:3` `__title__` |
-| `packages` | `setup.py:31` | `find_packages(exclude=("tests",))`（**自动发现**，不写死包名） | 改目录名后自动跟随，无需改 setup.py |
-| `package_data` | —— | **未显式声明**；靠 `include_package_data=True`（`setup.py:32`）+ `MANIFEST.in` | 见下 §2.1 |
-| `entry_points.console_scripts` | `setup.py:59-63` | `"scrapydweb = scrapydweb.run:main"` | 命令名 + 模块路径都要改 |
-
-`entry_points` 现状：
-
-```python
-entry_points={
-    "console_scripts": {
-        "scrapydweb = scrapydweb.run:main"   # setup.py:61
-    }
-},
-```
-
-> 【建议】改为 `"dopilot = dopilot.run:main"`。命令名 `dopilot` 是**对外 CLI 契约**：阶段 0 Docker 镜像 `CMD`、文档、运维脚本都会引用，应一次定稿。可选保留 `scrapydweb` 旧命令名作过渡别名（多写一行 `"scrapydweb = dopilot.run:main"`），但单管理员私有平台通常无此必要。
-
-### 2.1 MANIFEST.in（package_data 的真实来源）
-
-【现状事实】`MANIFEST.in` 全文含 5 处包路径前缀：
-
-```
-include scrapydweb/data/parse/ScrapydWeb_demo.log
-include scrapydweb/data/demo_projects/ScrapydWeb_demo/scrapy.cfg
-graft scrapydweb/static
-graft scrapydweb/templates
-graft scrapydweb/data/demo_projects/ScrapydWeb_demo/ScrapydWeb_demo
-```
-
-> 【建议】改目录名后这 5 行的 `scrapydweb/` 前缀全部要改。`ScrapydWeb_demo*` 是 demo scrapy 工程名（可改可不改，见 §6）。
+> 这只是 scrapydweb 自身的代码组织事实，**对 dopilot 的包/模块结构无参考意义**。dopilot 的包与模块结构按 `apps/server/dopilot_server/...`（及 `apps/agent`、`apps/web`、`packages/`）权威布局全新设计，**不参考** scrapydweb 的 import 组织、目录划分或包名。dopilot 内部 import 形态由自身布局决定。
 
 ---
 
-## 3. static 目录名 `v160` 与 `__version__` 的强绑定（高风险）
+## 2. scrapydweb 的打包/分发形态（仅功能层备注）
 
-这是改名最隐蔽的耦合，**与改包名正交但必须同时理解**。
+【现状事实】scrapydweb 用 `setup.py` + `MANIFEST.in` 打包：`find_packages` 自动发现包、`include_package_data=True` + `MANIFEST.in` 的 `graft` 打包 `static/`、`templates/` 及 demo 工程，`entry_points.console_scripts` 暴露**一个 CLI 命令**（`scrapydweb = scrapydweb.run:main`），`__version__.py` 提供 `__title__`/`__version__` 元数据。
 
-【现状事实】链路如下：
+> 功能层备注（**不沿用其文件形态**）：dopilot 的对应需求——暴露 CLI 入口、声明依赖、打包前端产物——由 dopilot 自有打包声明承担：`apps/server/pyproject.toml`、`apps/agent/pyproject.toml`（Python 侧）与 `apps/web/package.json`（前端侧）以各自方式声明，**不继承** scrapydweb 的 `setup.py` / `MANIFEST.in` / `entry_points` 形态。dopilot 的 CLI 命令名、模块入口由自身布局定义，与 scrapydweb 无关。
 
-| 环节 | 位置 | 内容 |
+---
+
+## 3. static 目录名 `v160` 与 `__version__` 的强绑定（反模式教训）
+
+这是 scrapydweb 最隐蔽的耦合，作为 dopilot 静态资源/版本管理的**反模式警示**保留。
+
+【现状事实】scrapydweb 的链路如下：
+
+| 环节 | 位置（reference/scrapydweb/） | 内容 |
 |---|---|---|
 | 版本号源 | `__version__.py:4` | `__version__ = '1.6.0'` |
 | 拼 VERSION | `__init__.py:302` | `VERSION = 'v' + __version__.replace('.', '')` → 运行期得到 `'v160'` |
@@ -107,60 +56,51 @@ graft scrapydweb/data/demo_projects/ScrapydWeb_demo/ScrapydWeb_demo
 
 > 注意：注释里残留 `# VERSION = 'v131dev'`（`__init__.py:304`），说明历史上发版时会**手动同步**目录名与版本号。
 >
-> **关键风险**：物理目录名 `v160` 由 `__version__='1.6.0'` 运行期推导而来。
-> - **只改包名、不改 `__version__`** → `VERSION` 仍是 `'v160'`，static 目录无需动。**安全**。
-> - **若顺手改 `__version__`**（如想标记 dopilot 自己的 `0.1.0`）→ `VERSION` 变 `'v010'`，但磁盘目录还是 `v160` → **所有 CSS/JS/icon 404，整站裸奔**。
+> **教训**：物理目录名 `v160` 由 `__version__='1.6.0'` 运行期推导而来。一旦版本号变化而不同步重命名物理目录，`url_for('static', ...)` 拼出的路径就指向不存在的目录 → **所有 CSS/JS/icon 全部 404、整站裸奔**。版本号与静态资源物理布局这种隐式强耦合是脆弱反模式。
 
-【建议】
+【dopilot 移植注意】
 
-1. 阶段 0 改包名时**不要动 `__version__`**，static 目录零改动，规避 404。
-2. 若日后要给 dopilot 独立版本号，必须**同时重命名物理目录** `static/v160 → static/v<新版号无点>`，并同步 `MANIFEST.in` 的 `graft` 与 docs §6.2 引用的 `static/v160/...`。
-3. 更彻底的解法（开放问题）：解除 static 目录与版本号的耦合，改用固定目录名 + 构建期 hash 做缓存击穿（与 `06-frontend-rewrite.md` 的 Vite 产物指纹方案天然契合）。**建议留给前端重构阶段**，不在改名任务里顺带做。
+- dopilot **不复刻**这种"版本号运行期推导 static 目录名"的耦合。dopilot 前端为 `apps/web` SPA，由 **Vite 构建产物指纹**（content hash）做缓存击穿，物理目录名与应用版本号解耦——正是吸取此教训。
+- dopilot 的版本号是自身领域的版本，不受任何 scrapydweb 物理目录约束。
 
 ---
 
-## 4. templates/scrapydweb 子目录名（第二处目录耦合）
+## 4. scrapydweb 的 Jinja 模板（不移植）
 
-【现状事实】除包目录外，模板里还藏着一个 `scrapydweb` 目录名：
+【现状事实】scrapydweb 通过 Jinja 渲染页面：模板物理位于 `scrapydweb/templates/scrapydweb/`（34 个 html），后端以 `'scrapydweb/xxx.html'` 字符串引用（`views/**/*.py` 的 `self.template`、`render_template(...)`、`views/baseview.py:239` 的 `template_fail` 等，约 29 处）。
 
-| 项 | 位置 | 内容 |
-|---|---|---|
-| 物理子目录 | `scrapydweb/templates/scrapydweb/`（34 个 html） | 实际模板都在这层 |
-| 字符串引用 | **29 处（28 行；`views/baseview.py:239` 一行含 2 处）** `'scrapydweb/xxx.html'` | `views/**/*.py` 的 `self.template = 'scrapydweb/...'`、`render_template('scrapydweb/...')`、`views/baseview.py:239` 的 `template_fail` |
-
-代表样本：`views/dashboard/jobs.py:78-82`、`views/files/projects.py:57-121`、`views/baseview.py:239`。
-
-> 【建议】若改 `templates/scrapydweb → templates/dopilot`，需同步替换全部 29 处字符串前缀（可脚本批量 `sed 's#scrapydweb/#dopilot/#'` 限定模板字符串上下文）。
+> 【dopilot 移植注意】dopilot **不移植 Jinja 模板**。前端由 `apps/web` SPA（Vue3 + Element Plus + Vite + TS）**greenfield 全新构建**，直接对接后端 `/api/v1` JSON 端点；后端（`apps/server/dopilot_server`）采用 FastAPI，只产出 `/api/v1` JSON + SSE，不渲染 HTML 页面。
 >
-> **此项可暂缓**：模板子目录名是纯内部约定，不对外、不进契约。优先级低于命令名/UI 文案。前端走 strangler 迁移到 Vue（`06-frontend-rewrite.md`）后这批 Jinja 模板会逐页退场，**没必要为将死的模板做一次性大改名**。
+> dopilot **没有继承来的 Jinja 页面**，因此**不存在**"Jinja 与 Vue 新旧共存的 strangler 迁移""模板逐页退场"这类问题——这些都是改名路线的废弃假设。前端按 `06-frontend-rewrite.md` 的 greenfield SPA 分阶段交付即可。scrapydweb 各页面承载的**功能**（dashboard/jobs、files/projects 等）作为行为参考，由 SPA 重新实现。
 
 ---
 
-## 5. 配置文件名 `scrapydweb_settings_v11.py`（对外契约）
+## 5. scrapydweb 的配置加载形态（反模式，dopilot 用 toml 替代）
 
-【现状事实】
+【现状事实】scrapydweb 的配置加载：
 
-| 项 | 位置 | 内容 |
+| 项 | 位置（reference/scrapydweb/） | 内容 |
 |---|---|---|
-| 文件名常量 | `vars.py:29` | `SCRAPYDWEB_SETTINGS_PY = 'scrapydweb_settings_v11.py'` |
-| 动态导入 | `vars.py:32` | `importlib.import_module(os.path.splitext(SCRAPYDWEB_SETTINGS_PY)[0])` → 模块名 `scrapydweb_settings_v11` |
-| 查找/生成 | `run.py:124,131,133,138,150` | `find_scrapydweb_settings_py(...)`；缺失时从 `default_settings.py` copy 一份 |
-| 路径配置键 | `run.py:37,48`、`baseview.py:52` | `app.config['SCRAPYDWEB_SETTINGS_PY_PATH']` |
+| 文件名常量 | `vars.py:29` | `SCRAPYDWEB_SETTINGS_PY = 'scrapydweb_settings_v11.py'`（文件名 + 版本后缀**硬编码**） |
+| 动态导入 | `vars.py:32` | `importlib.import_module(os.path.splitext(SCRAPYDWEB_SETTINGS_PY)[0])` → 按模块名导入 |
+| 查找/生成 | `run.py:124,131,133,138,150` | 在 cwd 查找；缺失时从 `default_settings.py` copy 一份 |
+| 默认值来源 | `default_settings.py` + `__init__.py:70` `from_object(...)` | 包内默认配置类 |
 
-> 【现状事实/契约性】该文件是**用户工作目录下的外置配置文件**，由用户编辑、被 `importlib` 按模块名导入。文件名 = 已部署实例的磁盘文件 = 对外契约。改名会让**现有部署的配置文件失联**（找不到 → 重新 copy 一份默认值 → 用户的自定义配置静默丢失）。
+> 【dopilot 移植注意 · 反模式】scrapydweb 的配置以一个**用户工作目录（cwd）下的 Python 模块**承载，文件名与版本后缀硬编码、按模块名 `importlib` 导入——文件名即"已部署实例的磁盘文件契约"，导致改文件名会让现有配置静默失联。这是 dopilot 要**规避**的反模式。
 >
-> 【建议】
-> - dopilot 是**全新私有部署、无存量用户**（fork 自上游，自身无历史实例），因此改名**无迁移包袱**，可放心改为 `dopilot_settings_v1.py`（顺手把 `_v11` 版本后缀也定为 dopilot 自己的语义）。
-> - 但因它是契约面，**只改一次、文档同步**：需同步 `vars.py:29` 常量、`08-docker-deployment.md` 里挂载/生成配置的路径、Docker `WORKDIR` 约定。
-> - `default_settings.py` 本身**不改名**（它是包内模块，被 `__init__.py:70` 字符串引用 + `run.py` 当作模板 copy 源），只随包目录改名跟随。
+> dopilot 配置由**自有 toml 加载器**从 `configs/` 读取（`configs/server.example.toml`、`configs/agent.example.toml`，经 `DOPILOT_CONFIG` 环境变量指定路径加载），**不继承** scrapydweb 硬编码 settings 文件名、不从 cwd 按模块名 importlib 导入、不依赖包内 `default_settings.py` 模块形态。
+>
+> scrapydweb `default_settings.py` 中各配置键的**语义**（绑定地址/端口、节点列表、各开关等，见 §7）作为行为参考保留，dopilot 在 toml 里以自身的键名/结构表达等价语义。
 
 ---
 
-## 6. Metadata.version 作为唯一键的迁移影响
+## 6. Metadata.version 作为唯一键承载平台单例状态（数据模型语义）
 
-【现状事实】先厘清一个常见误解：**`Metadata.version` 存的不是包名，而是 `__version__`（值 `'1.6.0'`）**。
+作为 dopilot 设计等价"平台单例状态"存储与版本迁移时必须理解的语义保留。
 
-| 项 | 位置 | 内容 |
+【现状事实】先厘清一个常见误解：scrapydweb 的 **`Metadata.version` 存的不是包名，而是 `__version__`（值 `'1.6.0'`）**。
+
+| 项 | 位置（reference/scrapydweb/） | 内容 |
 |---|---|---|
 | 字段定义 | `models.py:21` | `version = db.Column(db.String(20), unique=True, nullable=False)` |
 | 唯一键写入 | `__init__.py:135-136` | `if not Metadata.query.filter_by(version=__version__).first(): metadata = Metadata(version=__version__)` |
@@ -168,136 +108,127 @@ graft scrapydweb/data/demo_projects/ScrapydWeb_demo/ScrapydWeb_demo
 
 `Metadata` 单行承载平台级单例状态：`pageview`、`last_check_update_timestamp`、`main_pid/logparser_pid/poll_pid`、`username/password`、`scheduler_state`、`jobs_per_page`、`url_scrapydweb/url_jobs/...`（`models.py:20-36`）。
 
-> **结论**：
-> - **改包名 `scrapydweb→dopilot` 完全不触碰 `Metadata`**（version 值与包名无关）。✅ 零影响。
-> - **真正有迁移风险的是改 `__version__`**：一旦 `__version__` 从 `'1.6.0'` 变（如 dopilot 想用 `'0.1.0'`），`filter_by(version=新值).first()` 找不到旧行 → `__init__.py:135` 走到**新建一行**分支 → 旧的 pageview/认证/scheduler_state/url 单例**全部回到默认值**（视觉上像"配置被重置"）。
+> 【行为语义与陷阱】scrapydweb 用一个**版本号唯一键**定位"那一行"单例：`version` 值一旦变更，`filter_by(version=新值).first()` 找不到旧行 → 走**新建一行**分支 → 旧的 pageview/认证/scheduler_state/url 等单例状态**全部回到默认值**（视觉上像"配置被重置"）。
 >
-> 【建议】
-> - 改名任务里**不改 `__version__`**（与 §3 static 结论一致），Metadata 零风险。
-> - 若日后要切 dopilot 自有版本号，需写一次性迁移：把旧 version 行的 `version` 字段 UPDATE 成新值（而非让代码新建行），避免单例状态丢失。属阶段 0 末或独立小任务。
+> 【dopilot 移植注意】dopilot 若设计等价的"平台单例状态"存储（如管理员凭据、调度器状态、分页偏好、内部 url 等聚合在单行/单文档），必须理解这一语义：**单例的定位键不应与会变更的版本号绑定**，否则版本迁移会丢失单例状态。dopilot 应以稳定主键定位单例，版本迁移时 UPDATE 而非新建行。键名/存储形态由 dopilot 自定。
 
 ---
 
-## 7. 后端契约 / 环境变量前缀 SCRAPYDWEB_*（不可改 vs 仅文案可改）
+## 7. scrapydweb 的契约键 / 库名 / 埋点（语义参考，键名 dopilot 自定）
 
-依据 `docs/architecture/04-views-and-frontend.md` §6.2（`04-views-and-frontend.md:271-289`）的判定原则：**UI 文案可改，后端契约变量不可改**。逐项核实如下。
+scrapydweb 内部有一批"配置键 / 数据库命名 / 跨进程键 / 埋点"。dopilot 复刻 scrapydweb 行为时，凡属**配置语义 / 数据模型 / 进程间数据流**者要按其语义在新代码里实现（**键名/库名 dopilot 自定，语义复刻**）；凡属纯品牌/埋点者按下文判断。判定方法论参考 `docs/architecture/04-views-and-frontend.md` §6.2。
 
-### 7.1 不可改（对外契约，改了破坏部署/数据/埋点）
+### 7.1 行为契约语义（dopilot 以自身命名复刻语义）
 
-| 标识 | 位置 | 契约性质 |
+| scrapydweb 标识 | 位置（reference/scrapydweb/） | 行为语义（dopilot 移植注意） |
 |---|---|---|
-| `SCRAPYDWEB_BIND` / `SCRAPYDWEB_PORT` | `default_settings.py:18,20`；`check_app_config.py:66-73,93-95`；`baseview.py:82-83`；`run.py:116,119,156-164` | **配置键**，用户外置配置文件里写的就是这俩名字；改名 = 现有配置失效 |
-| `SCRAPYDWEB_SETTINGS_PY` 文件名 | `vars.py:29`（见 §5） | 磁盘配置文件名契约 |
-| MySQL/PG 库名 `scrapydweb_apscheduler/_timertasks/_metadata/_jobs` | `utils/setup_database.py:7-11` | **物理数据库实例名**；改名需对已建库执行 `RENAME DATABASE`/迁移，否则连不上旧数据 |
-| `SCRAPYDWEB_TESTMODE` | `utils/setup_database.py:17` | 测试环境变量，CI/测试脚本引用 |
-| check_update 埋点参数名 `scrapydweb=` | `templates/scrapydweb/jobs*.html:18/42`、`servers.html:38` | 指向 `my8100.pythonanywhere.com/check_update`，URL query key 名（见下，dopilot 应直接移除整个埋点） |
-| `URL_SCRAPYDWEB` / `url_scrapydweb` | `check_app_config.py:95-97`、`baseview.py:93`、`poll.py:48-52`、`views/operations/execute_task.py:21-25,164`、`models.py:27` | 跨进程（poll 子进程、execute_task）传递的 config/metadata 键名，**内部 RPC 契约**，改需全链路同步 |
-| `SCRAPYDWEB_VERSION` / `scrapydweb_version` | `__init__.py:312`、`baseview.py:12,25`、`settings.py:57` | §6.2:289 明列**不可改**（破坏 metadata/埋点契约） |
+| `SCRAPYDWEB_BIND` / `SCRAPYDWEB_PORT` | `default_settings.py:18,20`；`check_app_config.py:66-73,93-95`；`baseview.py:82-83`；`run.py:116,119,156-164` | **绑定地址/端口配置项语义**；dopilot 在 toml 中以自有键表达，语义复刻 |
+| MySQL/PG 库名 `scrapydweb_apscheduler/_timertasks/_metadata/_jobs` | `utils/setup_database.py:7-11` | **数据按 apscheduler/timertasks/metadata/jobs 四类划分**的数据模型语义；dopilot 库名/schema 自定，划分语义可参考 |
+| `SCRAPYDWEB_TESTMODE` | `utils/setup_database.py:17` | **测试环境下控制建库行为**的语义；dopilot 测试建库以自身机制实现 |
+| `URL_SCRAPYDWEB` / `url_scrapydweb` | `check_app_config.py:95-97`、`baseview.py:93`、`poll.py:48-52`、`views/operations/execute_task.py:21-25,164`、`models.py:27` | 在 poll 子进程、execute_task **跨进程传递**的 config/metadata 键，体现**内部 RPC 数据流语义**；dopilot 若有等价跨进程数据流，键名自定，数据流语义参考 |
+| `SCRAPYDWEB_VERSION` / `scrapydweb_version` | `__init__.py:312`、`baseview.py:12,25`、`settings.py:57` | scrapydweb 中与 metadata/埋点耦合的版本标识；dopilot 版本标识自定，注意 §6 的单例迁移语义 |
 
-> 【建议·埋点】check_update 是上游向 `my8100.pythonanywhere.com` 的**版本统计回传**（`jobs*.html`、`servers.html`），私有平台应**整段删除**这些 `<script src=...check_update...>` 标签 + `checkLatestVersion(...)` 调用，而非纠结参数名改不改。删除即同时消除该处契约。
+> check_update 是 scrapydweb 向 `my8100.pythonanywhere.com` 的**版本统计回传**（`templates/scrapydweb/jobs*.html:18/42`、`servers.html:38` 的埋点参数 `scrapydweb=`，及 `checkLatestVersion(...)`）。
+>
+> 【dopilot 移植注意 · 不移植】dopilot 是**私有平台**，**不实现**该版本统计回传——这是"该行为不移植"的功能层判断，dopilot 后端/前端均无此埋点，故也不存在对应的 query key 契约。
 
-### 7.2 仅 UI 文案 / 内部名（可安全改）
+### 7.2 "必须保语义 vs 可自由命名"的判定准则
 
-| 标识 | 位置 | 说明 |
+【方法论参考】scrapydweb 标识可分两类，dopilot 复刻其行为时据此判断：
+
+- **属对外行为契约**（改了会破坏部署/数据/埋点）：配置项语义、数据库命名约定、跨进程 RPC 键、版本/metadata 契约——dopilot 必须**按语义实现**（键名虽自定，但行为等价）。
+- **属纯展示 / 内部名**（仅观感，无功能契约）：品牌文案 `ScrapydWeb`（`base.html:7,57` 等）、CLI banner（`run.py:29,30`）、`logger` name（`poll.py:20`、`send_email.py:11`）、临时目录前缀（`scrapyd_deploy.py:67`、`deploy.py:357,361`）、demo 资源名 `ScrapydWeb_demo*` 等——dopilot **自由命名**。
+
+> 【品牌名】dopilot 的品牌/显示名由 `apps/web` SPA 与其 i18n 自由处理，不存在"在 Jinja 模板里注入 BRAND_NAME 变量"这类动作（dopilot 无 Jinja 模板）。
+
+> 【运行期目录生命周期参考】scrapydweb `vars.py` 在**启动期（import 时）清空** `DATA_PATH` 下 `parse/`、`deploy/`、`schedule/` 目录中的文件，仅保留白名单（如 `ScrapydWeb_demo.log`，`vars.py:65`）。这一"启动清空瞬态目录 + 白名单豁免"的运行期行为，是 dopilot 工作目录**生命周期/持久化设计**的行为参考：dopilot 需明确区分"瞬态可清空目录"与"需持久化目录"（持久化 `database/` 等，见 `08-docker-deployment.md`），并以自身机制实现，不沿用 scrapydweb 的具体目录名/清空逻辑。
+
+---
+
+## 8. 移植要点表（域 / scrapydweb 行为或耦合 / dopilot 移植注意）
+
+| 域 | scrapydweb 行为或耦合 | dopilot 移植注意 |
 |---|---|---|
-| 品牌文案 `ScrapydWeb` | `base.html:7,57`、`base_mobileui.html:7`、`500.html` | §6.2 建议引入 `BRAND_NAME` 注入变量替换（`04-views-and-frontend.md:286`） |
-| CLI 启动 banner | `run.py:29,30` | `"ScrapydWeb version: %s"` / `"Use 'scrapydweb -h'..."` 可改文案 |
-| `logger` name | `poll.py:20`、`send_email.py:11` | `logging.getLogger('scrapydweb.utils.poll')` 仅日志归类，改不改无功能影响（建议跟随包名改） |
-| 临时目录前缀 | `views/operations/scrapyd_deploy.py:67`、`deploy.py:357,361` | `tempfile.mkdtemp(prefix="scrapydweb-...")` 纯本地临时名 |
-| demo 资源名 `ScrapydWeb_demo*` | `data/demo_projects/ScrapydWeb_demo*/`、`vars.py`（保护清单）、`parse.py`、`deploy.py`、`baseview.py` | demo scrapy 工程；注意 `vars.py:65` 把 `ScrapydWeb_demo.log` 列入**不删除白名单**，改名要同步否则 demo 文件被清理逻辑误删 |
-
-> 注意 `data/demo_projects/` 下存在 `ScrapydWeb_demo - 副本/` 这种带中文"副本"的脏目录，改名清理时一并处理。
-
----
-
-## 8. 影响面清单总表（类别 / 位置 / 数量 / 代价）
-
-| # | 类别 | 代表位置 | 数量 | 契约性 | 代价 |
-|---|---|---|---|---|---|
-| 1 | 相对 import | 全包 `from .`/`..`/`...` | 86 | 内部 | **零**（改目录名自动跟随） |
-| 2 | 绝对 import | `run.py:12-16` | 5 | 内部 | 低（逐行改） |
-| 3 | 字符串包引用 | `__init__.py:70` `from_object('scrapydweb.default_settings')` | 1 | 内部 | 低 |
-| 4 | setup.py | `:12,61`（version 路径、entry_points） | 2 | CLI 命令=契约 | 低，但命令名要定稿 |
-| 5 | MANIFEST.in | 5 行包路径前缀 | 5 | 内部 | 低 |
-| 6 | static/v160 目录 | `__init__.py:302` + 物理目录 | 1 目录 | —— | 0（不改 `__version__` 即免动）/ 高（动了要重命名目录+全链路） |
-| 7 | templates/scrapydweb 子目录 | 物理目录 + 29 处 `'scrapydweb/*.html'` | 1+29 | 内部 | 中（批量替换）；**建议暂缓** |
-| 8 | 配置文件名 | `vars.py:29` + `run.py` 5 处 | ~6 | **对外契约** | 中（无存量，可一次改净） |
-| 9 | MySQL/PG 库名 | `setup_database.py:7-11` | 4 常量 | **物理契约** | 高（有存量需迁移）/ 0（新部署） |
-| 10 | `SCRAPYDWEB_BIND/PORT` 等配置键 | `default_settings.py:18,20` 等 | 多处 | **对外契约** | **不改** |
-| 11 | `SCRAPYDWEB_VERSION` 埋点 | `__init__.py:312` 等 | 多处 | **对外契约** | **不改**（埋点整段删） |
-| 12 | UI 品牌文案 | `base.html:7,57` 等 | ~6 处 | 文案 | 低（引入 `BRAND_NAME`） |
-| 13 | logger/临时目录/demo 名 | `poll.py:20` 等 | 散 | 内部 | 低（可选） |
-| 14 | Metadata.version | `models.py:21`、`__init__.py:135` | —— | 数据 | **改包名零影响**；改 `__version__` 才有迁移风险 |
+| 包/import 组织 | 以相对 import 为主的包结构（§1） | 不参考；dopilot 按权威 `apps/` 布局自有结构 |
+| 打包/分发 | setup.py + MANIFEST.in + entry_points CLI（§2） | 不沿用；dopilot 用各 app 的 pyproject.toml / package.json |
+| 静态资源 | static 目录名由 `__version__` 运行期推导（§3，反模式） | 规避；Vite 构建指纹解耦版本与物理目录 |
+| 前端 | Jinja 模板渲染（§4） | 不移植；`apps/web` SPA greenfield，直连 `/api/v1`，无 Jinja 共存 |
+| 配置加载 | cwd 下硬编码文件名的 Python 模块 importlib 导入（§5，反模式） | 规避；dopilot 自有 toml 加载器从 `configs/` 读 |
+| 平台单例 | Metadata 单行靠 version 唯一键承载单例状态（§6） | 复刻"平台单例状态"语义，定位键勿绑版本号 |
+| 配置键语义 | `SCRAPYDWEB_BIND/PORT` 等（§7.1） | 语义复刻，键名 dopilot 自定 |
+| 数据模型 | 数据分 apscheduler/timertasks/metadata/jobs 四类（§7.1） | 划分语义可参考，库名/schema 自定 |
+| 跨进程数据流 | `URL_SCRAPYDWEB` 等在 poll/execute_task 间传递（§7.1） | 等价跨进程流语义参考，键名自定 |
+| 版本统计埋点 | check_update 回传 my8100（§7） | **不移植**（私有平台） |
+| 品牌/内部名 | ScrapydWeb 文案、logger、临时目录、demo 名（§7.2） | 纯展示/内部名，dopilot 自由命名 |
+| 运行期目录 | 启动清空 parse/deploy/schedule + 白名单（§7.2） | 工作目录生命周期/持久化设计参考 |
+| glibc 依赖 | 子进程父死信号依赖 libc.so.6 prctl（`sub_process.py:38`） | dopilot agent 执行器若复刻进程托管行为，基础镜像须 glibc（slim/debian，非 Alpine），见 `08-docker-deployment.md` |
 
 ---
 
-## 9. 改名 vs 暂缓的权衡
+## 9. 为何 dopilot 全新构建而非改名
 
-| 选项 | 范围 | 收益 | 代价/风险 | 适用 |
-|---|---|---|---|---|
-| **A 全量改包** | 包目录 + 模板子目录 + 配置文件名 + 库名 + 全部内部名 | 仓库内"scrapydweb"基本绝迹，新人零困惑；契约面一次定稿 | 一次性 diff 巨大，与并行的执行器/前端改造易冲突；static/version、Metadata 若误碰即翻车 | 团队能冻结其他改动、单独排一个 PR 时 |
-| **B 仅 UI/命令名** | entry_points 命令名 + `BRAND_NAME` 文案 + 删埋点 + CLI banner | 改动小、风险低、用户/运维侧立刻看到"dopilot" | 包目录、模板目录、import 仍是 `scrapydweb`，代码层观感不变 | 想最快出对外效果、内部容忍度高时 |
-| **C 分两步（推荐）** | 先 B；包目录+配置文件名留到阶段 0 末单独 PR；模板目录随前端 strangler 自然消亡 | 兼顾对外效果与低风险；避免与执行器/前端大改撞车 | 中间态仓库里包名仍 `scrapydweb`，需在 docs 注明"内部包名待改" | dopilot 当前阶段 |
+dopilot **不是**由 scrapydweb 原地改名/git mv 而来。原因与边界（详见 `00-requirements.md` 决策表与 `05-dev-setup-and-known-issues.md` §1 权威布局）：
 
-> 决策依据：dopilot **无存量线上实例**（fork 自上游、自身全新部署），所以契约面"破坏迁移"的风险点（配置文件名 §5、库名 §9）在 dopilot 语境下**不是迁移问题、只是定稿问题**——这降低了全量改包的难度，但**与阶段 0 并行的执行器抽象（`01-gap`）和前端重构（`06`）才是冲突源**。结论：风险不在"能不能改名"，而在"何时改、避免与大改撞 PR"。
+- dopilot 是 **greenfield** 项目，按 `apps/`（server/agent/web）+ `packages/`（protocol/client）的自有领域 structure-first 布局设计；scrapydweb 的目录结构/模块划分/命名/配置形态**不作为设计依据**。
+- `reference/scrapydweb/` 仅作**功能层行为参考**与**测试 oracle**，它**只读**、**绝不 git mv/修改**、**不进 Docker 构建上下文**、**不被 dopilot import**。
+- 因此不存在"全量改包 vs 仅改 UI""分两步改名""模板随 strangler 退场"等方案选择——这些都建立在已废弃的"dopilot = scrapydweb 改名"前提上。
 
----
-
-## 10. 推荐策略（结合阶段 0）
-
-对应 `10-roadmap.md:34` 的 🟡 任务，建议拆成两个子任务落 backlog：
-
-**阶段 0 早期 · 表层改名（低风险，先做）**
-1. entry_points 命令名 `scrapydweb → dopilot`（`setup.py:61`）+ `__version__.py:3` `__title__`。
-2. 引入 `BRAND_NAME` 注入变量（§6.2:286），替换 `base.html:7,57`、`base_mobileui.html:7`、`500.html` 的 `ScrapydWeb` 文案。
-3. 删除 check_update 埋点（`jobs*.html`、`servers.html`）+ 改 CLI banner（`run.py:29,30`）。
-4. **明确不动**：`SCRAPYDWEB_BIND/PORT`、`SCRAPYDWEB_VERSION`、`__version__`、static/v160、Metadata、库名。
-
-**阶段 0 末期 · 包目录改名（与执行器/前端大改不并行时单独 PR）**
-5. `git mv scrapydweb/ dopilot/`；改 `run.py:12-16`（5 行绝对 import）+ `__init__.py:70` 字符串。
-6. 改 `setup.py:12` version 路径 + `MANIFEST.in` 5 行前缀。
-7. 改配置文件名 `vars.py:29` → `dopilot_settings_v1.py`，同步 `08-docker-deployment.md`。
-8. （新部署）改库名常量 `setup_database.py:7-11`。
-9. logger name / 临时目录前缀 / demo 工程名跟随改（可选）。
-
-**留给后续阶段（不在改名任务内）**
-10. `templates/scrapydweb/` 子目录 + 29 处字符串：随前端 strangler 迁移自然退场（`06-frontend-rewrite.md`），不单独改。
-11. 解除 static 目录与 `__version__` 耦合：并入前端 Vite 构建指纹方案。
-12. dopilot 自有 `__version__` + Metadata 行迁移脚本：作为独立小任务。
+dopilot 的工作分解是：按权威布局**新建** `apps/server/dopilot_server`、`apps/agent`、`apps/web`、`packages/`、`configs/` 骨架，再**逐域以 scrapydweb 为行为参考重写**对应功能（配置加载、数据模型、调度、执行器、节点管理、日志聚合、前端 SPA）。
 
 ---
 
-## 11. 分步改名 checklist
+## 10. dopilot 移植 checklist（在新骨架中实现，核对 scrapydweb 行为）
 
-表层改名（子任务 1）：
+以下均是在 **dopilot 自有代码**（`apps/server/dopilot_server/...`、`apps/agent`、`apps/web`）中**新建/实现**，并以 scrapydweb 对应行为为 **oracle** 核对。**不含任何对 `reference/scrapydweb/` 的写操作。**
 
-- [ ] `setup.py:61` entry_points：`scrapydweb = scrapydweb.run:main` → `dopilot = dopilot.run:main`（包目录未改前可暂用 `dopilot = scrapydweb.run:main`）
-- [ ] `__version__.py:3` `__title__ = 'dopilot'`
-- [ ] `__init__.py` `inject_variable()` 注入 `BRAND_NAME='dopilot'`；模板 `base.html:7,57`、`base_mobileui.html:7`、`500.html` 改用 `{{ BRAND_NAME }}`
-- [ ] 删 `jobs.html/jobs_classic.html/jobs_mobileui.html/servers.html` 的 check_update `<script>` 与 `checkLatestVersion(...)`
-- [ ] `run.py:29,30` banner 文案改 dopilot
-- [ ] 自检：`grep -rn "ScrapydWeb" templates/`（应只剩待删的模板子目录路径，无 UI 文案）
+权威目录布局（新建骨架时使用，权威定义见 `05-dev-setup-and-known-issues.md` §1）：
 
-包目录改名（子任务 2）：
+```text
+dopilot/                                  # 仓库根 = Docker 构建上下文（origin: senjianlu/dopilot；镜像命名空间 rabbir）
+├── apps/
+│   ├── server/                           # 调度中心：API、DB、APScheduler、认证、节点管理、日志聚合
+│   │   ├── dopilot_server/
+│   │   │   ├── api/v1/                    # FastAPI /api/v1/* JSON + SSE 端点(server↔agent 走 HTTP pull,无 WebSocket)
+│   │   │   ├── auth/  scheduler/  nodes/  logs/  models/  repositories/  services/  config/
+│   │   │   ├── executors/                 # 缝① BaseExecutor + EXECUTOR_REGISTRY
+│   │   │   │   ├── base.py  scrapyd.py  script.py  docker.py
+│   │   │   └── app.py
+│   │   ├── migrations/  tests/  pyproject.toml
+│   ├── agent/                            # worker 执行节点：收 server push，实际跑 Scrapy/Python/Docker
+│   │   ├── dopilot_agent/
+│   │   │   ├── api/
+│   │   │   ├── runners/                   # base.py scrapyd.py script.py docker.py
+│   │   │   ├── logs/  workspace/  heartbeat/  config/  main.py
+│   │   ├── tests/  pyproject.toml
+│   └── web/                              # Vue3 + Element Plus + Vite + TS SPA（greenfield，直连 /api/v1）
+│       ├── src/{api,pages,components,layouts,stores,router,i18n}/  public/
+│       ├── package.json  vite.config.ts
+├── packages/
+│   ├── protocol/                         # server↔agent 共享协议 schema（protocol/python/；前端也消费可并列 protocol/typescript/）
+│   └── client/                           # 可选：server→agent 客户端 SDK
+├── deploy/{docker/{Dockerfile.server,Dockerfile.agent,docker-compose.yml},k8s/}
+├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置（经 DOPILOT_CONFIG 加载，不继承 scrapydweb 硬编码 settings）
+├── scripts/  docs/
+├── reference/scrapydweb/                 # 只读行为参考，绝不进构建上下文/不被 import/不改名
+├── README.md  pyproject.toml  pnpm-workspace.yaml  .dockerignore
+```
 
-- [ ] `git mv scrapydweb dopilot`
-- [ ] `run.py:12,13,14,15,16` 五行 `from scrapydweb` → `from dopilot`
-- [ ] `__init__.py:70` `'scrapydweb.default_settings'` → `'dopilot.default_settings'`
-- [ ] `setup.py:12` 路径 `'scrapydweb'` → `'dopilot'`
-- [ ] `MANIFEST.in` 5 行前缀 `scrapydweb/` → `dopilot/`
-- [ ] `vars.py:29` 配置文件名 → `dopilot_settings_v1.py`；同步 `vars.py:32` 导入逻辑无需改（依赖常量）
-- [ ] （新部署）`setup_database.py:7-10` 四个 `DB_*` 前缀 → `dopilot_*`
-- [ ] `poll.py:20`/`send_email.py:11` logger name、`deploy.py:357,361`/`scrapyd_deploy.py:67` 临时目录前缀（可选）
-- [ ] **验证 `__version__` 未改** → 确认 `VERSION` 仍 `'v160'`、static 目录无需动、Metadata 不新建行
-- [ ] 烟测：`pip install -e .` → `dopilot` 命令能起 → 首页 CSS/JS 200（验证 static）→ 登录态/pageview 保留（验证 Metadata）→ DB 连接正常
+移植核对项（在上述新骨架中实现）：
+
+- [ ] **配置加载**：在 `apps/server/dopilot_server/config/`（及 `apps/agent/.../config/`）实现 toml 加载器，从 `configs/` 经 `DOPILOT_CONFIG` 读取；核对覆盖 scrapydweb `SCRAPYDWEB_BIND/PORT` 等配置项的**语义**（§5/§7），**不**复刻 cwd importlib 文件名形态。
+- [ ] **数据模型**：在 `apps/server/dopilot_server/models/` 设计 dopilot 自有 schema；核对覆盖 scrapydweb apscheduler/timertasks/metadata/jobs 四类数据的**划分语义**（§7.1），库名/表名 dopilot 自定。
+- [ ] **平台单例状态**：以稳定主键存储等价"单例状态"，版本迁移用 UPDATE，规避 §6 的版本号绑定陷阱。
+- [ ] **调度**：在 `apps/server/dopilot_server/scheduler/` 实现，行为以 scrapydweb APScheduler 用法为参考（注意单实例无分布式锁的约束，见 CLAUDE.md）。
+- [ ] **执行器**：在 `apps/server/dopilot_server/executors/`（`base.py`/`scrapyd.py`/`script.py`/`docker.py`，缝① BaseExecutor + 注册表）与 `apps/agent/.../runners/` 实现；行为参考 scrapydweb 对应路径。
+- [ ] **静态资源/前端**：`apps/web` SPA 用 Vite 指纹解耦版本与物理目录（吸取 §3 教训）；无 Jinja，无埋点回传。
+- [ ] **进程托管**：若 agent runner 复刻 scrapydweb 子进程父死信号行为，基础镜像须 glibc（§8）。
+- [ ] **不移植**：check_update 版本统计回传（§7）、Jinja strangler 共存（§4）一律不实现。
 
 ---
 
-## 12. 开放问题
+## 11. 开放问题（功能层）
 
-1. **命令名是否保留 `scrapydweb` 别名过渡？** 单管理员私有平台倾向不保留；若有现成运维脚本依赖则保留一版。
-2. **`__version__` 何时切到 dopilot 自有版本号？** 一旦切，必须同步 static 目录重命名（§3）+ Metadata 行迁移脚本（§6），不能裸切。建议独立任务。
-3. **static 目录与版本号解耦的时机**：随前端 Vite 重构（`06`）一起做，还是改名时顺手做？倾向前者，避免改名 PR 膨胀。
-4. **模板子目录 `templates/scrapydweb/` 改不改**：若前端 strangler 周期较长，中间态保留 `scrapydweb` 模板目录名是否可接受？（本文倾向接受，不为将死代码改名。）
-5. **MySQL/PG 库名前缀**：若未来 dopilot 与其它系统共库，`dopilot_*` 前缀是否需要再加 schema 隔离？
-6. **`URL_SCRAPYDWEB` 等内部 RPC 键名**（poll/execute_task 跨进程传递）改名收益低、链路广，是否纳入包目录改名 PR，还是永久保留？建议保留（纯内部、改名无外部收益）。
+1. **平台单例状态的迁移语义**：dopilot 自有版本号演进时，等价 scrapydweb `Metadata` 单例的存储如何做版本迁移（UPDATE 既有单例而非新建），保证管理员凭据/调度器状态/分页偏好等不丢失？（参考 §6）
+2. **数据模型/共库 schema 隔离**：dopilot 沿用 scrapydweb"按 apscheduler/timertasks/metadata/jobs 四类划分数据"的语义时，若未来与其它系统共享数据库实例，是否需要在库名之外再加 schema/前缀隔离？（参考 §7.1）
+3. **跨进程数据流的等价表达**：scrapydweb 用 `URL_SCRAPYDWEB` 等键在 poll/execute_task 间传递；dopilot server↔agent 的对应数据流改由 `packages/protocol/` 的共享 schema 表达，需确认协议字段覆盖等价语义。
+4. **静态资源版本解耦的落地**：`apps/web` 的 Vite 构建指纹方案如何与后端版本/缓存策略协同（参考 §3、`06-frontend-rewrite.md`）。

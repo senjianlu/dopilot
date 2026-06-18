@@ -1,28 +1,48 @@
 # dopilot —— 开发环境搭建与已知问题
 
+> **【scrapydweb 参考边界】** scrapydweb 仅作**功能层/行为参考**与**测试 oracle**;其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 的设计依据**。dopilot 为 greenfield、按 `apps/`+`packages/` 自有领域 structure-first 设计(权威布局见 `05-dev-setup-and-known-issues.md` §1),**不对 scrapydweb 做改名/git mv**。详见 `00-requirements.md` 决策表。
+>
+> 本文为「开发环境搭建」入口文,最容易把 scrapydweb 的装机/配置/目录当成 dopilot 自身做法。请牢记:`reference/scrapydweb` 只读、不被 import、不参与 dopilot 构建、不改名;下文凡涉及 scrapydweb 安装/配置/目录之处,均为**参考观察用途**,不等于 dopilot 自身设计。
+
 > 记录本地导入、依赖安装、以及当前已发现的兼容性问题与修复方案。
 
 ## 1. 仓库与远程
 
 本仓库为 **monorepo**（`00-requirements.md` 决策 8）：server 与 agent 同仓开发，`reference/` 仅作基线参考、不参与构建。
 
+dopilot 自身代码按 **structure-first** 的 `apps/`+`packages/` monorepo 全新编写(各包均为 greenfield,以 scrapydweb 为行为参考逐域移植,**不对 scrapydweb 改名/git mv**)。权威布局:
+
+```text
+dopilot/                                  # 仓库根 = Docker 构建上下文(origin: senjianlu/dopilot;镜像命名空间 rabbir)
+├── apps/
+│   ├── server/                           # FastAPI 调度中心:API、PostgreSQL、APScheduler、认证、节点管理、日志聚合
+│   │   ├── dopilot_server/
+│   │   │   ├── api/v1/                    # FastAPI /api/v1/* JSON + SSE 端点(server↔agent 走 HTTP pull,无 WebSocket)
+│   │   │   ├── auth/  scheduler/  nodes/  logs/  models/  repositories/  services/  config/  db/
+│   │   │   ├── executors/                 # 缝① BaseExecutor + EXECUTOR_REGISTRY
+│   │   │   │   ├── base.py  scrapyd.py  script.py  docker.py
+│   │   │   └── app.py
+│   │   ├── migrations/  tests/  pyproject.toml
+│   ├── agent/                            # worker 执行节点:收 server push,实际跑 Scrapy/Python/Docker
+│   │   ├── dopilot_agent/
+│   │   │   ├── api/
+│   │   │   ├── runners/                   # base.py scrapyd.py script.py docker.py
+│   │   │   ├── logs/  workspace/  heartbeat/  config/  main.py
+│   │   ├── tests/  pyproject.toml
+│   └── web/                              # Vue3 + Element Plus + Vite + TS SPA(greenfield,直连 /api/v1)
+│       ├── src/{api,pages,components,layouts,stores,router,i18n}/  public/
+│       ├── package.json  vite.config.ts
+├── packages/
+│   ├── protocol/                         # server↔agent 共享协议 schema(protocol/python/;前端也消费可并列 protocol/typescript/)
+│   └── client/                           # 可选:server→agent 客户端 SDK
+├── deploy/{docker/{Dockerfile.server,Dockerfile.agent,docker-compose.yml},k8s/}
+├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置(经 DOPILOT_CONFIG 加载,不继承 scrapydweb 硬编码 settings)
+├── scripts/  docs/
+├── reference/scrapydweb/                 # 只读行为参考,绝不进构建上下文/不被 import/不改名
+├── README.md  pyproject.toml  pnpm-workspace.yaml  .dockerignore
 ```
-/workspaces/dopilot/            <- dopilot 仓库（origin: senjianlu/dopilot）
-├── reference/
-│   └── scrapydweb/             <- scrapydweb 1.6.0 本体（参考代码，保留上游目录结构，不参与构建）
-│       ├── scrapydweb/         <- 应用包
-│       ├── setup.py / requirements.txt / tests/ / screenshots/
-│       └── UPSTREAM_README.md / README_CN.md / LICENSE / MANIFEST.in
-├── README.md                   <- dopilot 自己的 README
-├── docs/                       <- 本套文档（architecture/ 现状 + dopilot/ 改造）
-│
-│   # —— 以下为阶段 0 起逐步落地的 dopilot 自身代码（monorepo，当前尚未创建）——
-├── dopilot/                    <- 应用包（scrapydweb 改名而来，见 09-package-rename.md）
-├── agent/                      <- worker 执行器（阶段 2 起，见 01-gap-executors.md）
-├── frontend/                   <- Vue3 + Element Plus + Vite SPA（见 06-frontend-rewrite.md）
-├── Dockerfile.server / Dockerfile.agent / .dockerignore   <- 镜像构建（见 08 §7）
-└── .github/workflows/docker.yml                           <- CI 推送 rabbir/dopilot:latest（见 08 §7.4）
-```
+
+> `09-package-rename.md` 不是「把 scrapydweb 改名」的指南,而是 scrapydweb 行为参考 + 逐域移植时的注意事项;dopilot 的 server/agent 包均为全新编写、以 scrapydweb 为行为参考,不做 git mv。
 
 > 镜像发布命名空间为 Docker Hub **`rabbir`**（与 git `origin` 的 `senjianlu` 互不等同），详见 `08-docker-deployment.md` §7。
 
@@ -42,17 +62,63 @@ Git 远程：
 
 ## 3. 搭建步骤
 
+dopilot 自身的开发搭建与「跑通 scrapydweb 基线做参考观察」是**两件不同的事**:dopilot 不依赖、不 import、不安装 `reference/scrapydweb`。
+
+### 3.a dopilot 自身开发搭建(按 apps/packages 布局)
+
 ```bash
-cd /workspaces/dopilot
+# 后端:server / agent 各自带 pyproject.toml,独立可编辑安装
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip wheel
-pip install -e reference/scrapydweb   # editable 安装 scrapydweb 及其依赖（代码现位于 reference/ 下）
+pip install -e apps/server          # FastAPI 调度中心包 dopilot_server(等价可用 uv pip install -e apps/server)
+pip install -e apps/agent           # worker 执行节点包 dopilot_agent
+
+# 前端:web 为 pnpm workspace(见仓库根 pnpm-workspace.yaml)
+pnpm install                        # 在仓库根安装,或 pnpm --filter web install
+```
+
+> 上述包/路径随阶段 0 起逐步落地;在对应包未创建前,这是目标搭建形态而非现状。
+
+### 3.b 本地开发容器策略
+
+日常开发默认只需要一个 PostgreSQL 容器；`server` / `web` / `agent` 都在宿主机运行，便于 Python editable install、Vite 热更新和调试。完整 Docker 闭环（`db + server + web + agent`）只用于集成验收、镜像验证或模拟部署。
+
+最小开发依赖：
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: dopilot
+      POSTGRES_USER: dopilot
+      POSTGRES_PASSWORD: dopilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - dopilot-db:/var/lib/postgresql/data
+
+volumes:
+  dopilot-db:
+```
+
+宿主机运行时，server 的日志正文路径仍按角色命名为 `/server-data/logs`；本地可通过配置把它映射到仓库外或 `.local/server-data/logs`，但不要把日志正文写入 PostgreSQL。
+
+### 3.c 可选:跑通 scrapydweb 基线以做行为参考观察
+
+仅用于**观察 scrapydweb 的参考行为**(功能层对照 + 测试 oracle),**不是 dopilot 自身的安装**,也不进入 dopilot 的运行/构建路径:
+
+```bash
+python3 -m venv .venv-ref
+source .venv-ref/bin/activate
+pip install -U pip wheel
+pip install -e reference/scrapydweb   # editable 安装 scrapydweb 本体,仅供参考观察
 # 关键修复（见下文「已知问题」）：
 pip install "setuptools<81"
 ```
 
-依赖均能在 Python 3.12 上正常编译安装（含旧版 SQLAlchemy 1.3.24、MarkupSafe 2.0.0、tzlocal 1.5.1 的 C 扩展 wheel 构建）。
+scrapydweb 的依赖均能在 Python 3.12 上正常编译安装（含旧版 SQLAlchemy 1.3.24、MarkupSafe 2.0.0、tzlocal 1.5.1 的 C 扩展 wheel 构建）——此为运行基线观察时的兼容性实测结论,**非 dopilot 自身依赖选型的直接依据**。
 
 ## 4. 已知问题
 
@@ -78,13 +144,27 @@ ModuleNotFoundError: No module named 'pkg_resources'
 
 > ⚠️ 当前状态：方案 A 的命令在本次会话中**被用户取消，尚未执行**。因此当前 `.venv` 里依赖已装好，但 `import scrapydweb` 仍会因本问题失败。需要跑通时执行方案 A 即可。
 
-建议后续把选定方案固化进 `requirements.txt`（例如 pin `setuptools<81`，或改 `APScheduler>=3.10,<4`）。
+reference 环境若需要长期复跑，可在 reference 专用约束中 pin `setuptools<81`；dopilot 自身依赖不继承该 pin，直接选 `APScheduler>=3.10,<4` 并写入 `apps/server/pyproject.toml`。
 
 ## 5. 首次运行（待补）
 
-scrapydweb 首次运行会在工作目录生成默认 `scrapydweb_settings_v11.py` 配置文件（文件名硬编码于 `scrapydweb/vars.py:29` `SCRAPYDWEB_SETTINGS_PY`），需在其中配置 `SCRAPYD_SERVERS` 等。完整启动步骤待依赖问题修复、跑通后补充到本文。
+dopilot 自身的首次运行基于其**自有 toml 配置**(不继承 scrapydweb 的硬编码 settings 形态):
 
-相关：配置加载顺序见 `docs/architecture/01-bootstrap-and-config.md`。
+```bash
+# server:复制示例配置 → 由 dopilot 自有 toml 加载器读取(经 DOPILOT_CONFIG 指定路径)
+cp configs/server.example.toml configs/server.toml   # 配置节点、PostgreSQL、认证、调度等
+DOPILOT_CONFIG=configs/server.toml dopilot-server     # 起 Web + scheduler hub
+
+# agent:同理
+cp configs/agent.example.toml configs/agent.toml      # 配置 server 地址、workspace、心跳等
+DOPILOT_CONFIG=configs/agent.toml dopilot-agent       # 起 worker 执行节点
+```
+
+> 完整命令名/参数随 apps/server、apps/agent 落地后补全;在此之前为目标运行形态。
+
+**移植/对照注意(功能参考,非 dopilot 设计)**:scrapydweb 首次运行会在工作目录生成默认 `scrapydweb_settings_v11.py`(文件名硬编码于 `vars.py:29` `SCRAPYDWEB_SETTINGS_PY`),且仅从 `os.getcwd()` 查找,在其中配置 `SCRAPYD_SERVERS` 等。dopilot **不沿用**这种「硬编码文件名 + 仅 cwd 查找」的加载方式——仅参考其配置键的**语义**,改用上述 toml + `DOPILOT_CONFIG` 显式路径加载。
+
+相关：scrapydweb 配置加载顺序(行为参考)见 `docs/architecture/01-bootstrap-and-config.md`。
 
 ## 6. 开发期工具链：MCP 与 Skills
 

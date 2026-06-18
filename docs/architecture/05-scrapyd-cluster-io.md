@@ -1,5 +1,7 @@
 # 05 · Scrapyd 集群通信
 
+> **【scrapydweb 行为参考·边界】** 本文描述 **scrapydweb 现状行为/语义**，作为 dopilot 的**功能层参考**；其代码写法、目录结构、模块划分**不得作为 dopilot 设计依据**。文中 `file:line` 路径均**相对 `reference/scrapydweb/`**（如 `scrapydweb/run.py` 即 `reference/scrapydweb/scrapydweb/run.py`；该目录只读、不被 import、不参与构建、不改名）。任何“改造切入点/复用/保留”类措辞，一律理解为“dopilot 需在 `apps/` 下**全新复刻其行为语义**”，而非改动或照搬 scrapydweb 文件。详见 `../dopilot/00-requirements.md` 决策表。
+>
 > 本文面向参与 dopilot 改造的工程师，剖析 scrapydweb 与多个 scrapyd 节点之间的通信层：节点寻址、单节点 JSON API 调用封装、多节点 fan-out 与响应聚合、超时/错误/认证处理，以及 logparser 日志解析与统计流程。最后说明这一层与 dopilot 新执行器（Docker 常驻爬虫 / Python3 脚本）的关系。
 >
 > 文中区分两类内容：
@@ -217,7 +219,7 @@ def make_request(self, url, data=None, auth=None, as_json=True,
 | 统一注入 | 往返回 dict 注入 `url/auth/status_code/when`，并 `setdefault('status', 'N/A')` | `baseview.py:334-335` |
 | 返回值 | `(status_code, dict)`（`as_json=True`）或 `(status_code, text)` | `baseview.py:346, 354` |
 
-> 这就是认证、超时、错误处理的**集中点**。dopilot 的新执行器若要复用上层逻辑（聚合/重试/告警/落库），最简单的方式是保持 `(status_code, dict)` 这个返回契约（见 §9.1）。
+> 这就是 scrapydweb 在认证、超时、错误处理上的**集中点**（行为参考）。dopilot 在 `apps/` 下全新复刻这一行为语义时，若希望上层逻辑（聚合/重试/告警/落库）保持一致，最简单的方式是沿用 `(status_code, dict)` 这个返回契约（见 §9.1）。
 
 ### 5.3【现状】调用契约的边界
 
@@ -333,9 +335,9 @@ multinode_results.html (一次性服务端渲染，得到 selected_nodes + url_x
 
 > Servers / Jobs / NodeReports / ClusterReports 等页面同理：服务端为每个节点生成一组 URL，前端用 Vue/JS 逐节点请求并展示。
 
-### 6.4【陷阱】别误以为有现成的服务端 fan-out 池
+### 6.4【陷阱】别误以为 scrapydweb 有现成的服务端 fan-out 池
 
-改造时不要假设存在可复用的「服务端多节点并发请求池」。唯一在服务端做多节点串行下发的是 `TaskExecutor`（§7.2）。如果 dopilot 需要服务端聚合（例如同步 API、命令行触发），需要**自己新建**这层。
+参考 scrapydweb 行为时不要假设它存在「服务端多节点并发请求池」。scrapydweb 唯一在服务端做多节点串行下发的是 `TaskExecutor`（§7.2）。如果 dopilot 需要服务端聚合（例如同步 API、命令行触发），需要在 `apps/` 下**全新实现**这层，而非套用 scrapydweb 结构。
 
 ---
 
@@ -470,10 +472,10 @@ dispatch ──┤─ type=docker  ─▶ DockerExecutor   → docker SDK / work
 
 | 触点 | 文件 | 现状 | 改造方向 |
 | --- | --- | --- | --- |
-| API 端点映射 | `scrapydweb/views/api.py`（`API_MAP`、`ApiView`） | 硬编码 scrapyd 端点 | 按 node.type 分派到不同 Executor |
-| HTTP 封装 | `scrapydweb/views/baseview.py`（`make_request`） | 只发 scrapyd HTTP | 新增 `DockerExecutor`/`ScriptExecutor`，**保持 `(status_code, dict)` 返回契约** |
+| API 端点映射 | 行为参考：`scrapydweb/views/api.py`（`API_MAP`、`ApiView`） | scrapydweb 硬编码 scrapyd 端点 | dopilot 全新实现：按 node.type 分派到不同 Executor |
+| HTTP 封装 | 行为参考：`scrapydweb/views/baseview.py`（`make_request`） | scrapydweb 只发 scrapyd HTTP | dopilot 全新实现 `ScrapydExecutor`/`DockerExecutor`/`ScriptExecutor`，**沿用 `(status_code, dict)` 返回契约** |
 
-**契约要求**：新 Executor 返回值要与 `make_request` 一致（`(status_code, dict)`，dict 至少含 `status`/`message`/`status_code`），这样上层的聚合（§6）、重试/落库（§7.2）、告警（§8.4）逻辑可原样复用。
+**契约要求**：dopilot 全新实现的各 Executor，其返回值建议与 scrapydweb `make_request` 的行为语义一致（`(status_code, dict)`，dict 至少含 `status`/`message`/`status_code`），这样上层的聚合（§6）、重试/落库（§7.2）、告警（§8.4）行为语义可一并对齐复刻。
 
 ### 9.2 节点选择策略：全部执行 vs 随机选一个
 
@@ -494,34 +496,34 @@ dispatch ──┤─ type=docker  ─▶ DockerExecutor   → docker SDK / work
 
 **现状**：push 实现是 APScheduler 线程里 `get_response_from_view` 进程内自调用 `/N/schedule/task/`（`execute_task.py:88`）。
 
-**建议**：保留这一入口模式，但对 docker/script 节点把「进程内自调用 scrapyd 视图」替换为「调用 worker agent 的下发 API」。外部触发（如 RemoteTrigger/PushNotification 一类机制）可统一挂到同一个 `TaskExecutor` 入口，复用其重试/落库逻辑。
+**建议**：dopilot 全新复刻这一入口模式的行为语义，但对 docker/script 节点把「进程内自调用 scrapyd 视图」改为「调用 worker agent 的下发 API」。外部触发（如 RemoteTrigger/PushNotification 一类机制）可统一挂到同一个 Executor 入口，沿用其重试/落库行为语义。
 
-| 触点 | 文件 | 说明 |
+| 触点（行为参考） | 文件 | 说明 |
 | --- | --- | --- |
-| 下发执行器 | `execute_task.py`（`TaskExecutor`） | 统一入口；按 node.type 选择下发协议 |
-| 进程内自调用 | `common.py:48-80`（`get_response_from_view`） | scrapyd 保留；docker/script 换成 agent API 调用 |
+| 下发执行器 | `execute_task.py`（`TaskExecutor`） | dopilot 全新实现统一入口；按 node.type 选择下发协议 |
+| 进程内自调用 | `common.py:48-80`（`get_response_from_view`） | scrapyd 走同语义自调用；docker/script 改为 agent API 调用 |
 
 ### 9.4 实时日志流
 
 **现状**：`utf8_realtime` / `url_refresh` 走 JS `location.reload`（`log.py:349-355, 370-376`）+ 后台 Poll 周期拉取，**非流式**。
 
-**建议**：为 docker/常驻进程接入真正的流式通道——SSE/WebSocket 或 `docker logs --follow`，新增一个流式 `LogView`/端点替代 reload 轮询；scrapy 部分仍可走现有 logparser 拉取。
+**建议**：为 docker/常驻进程接入真正的流式通道——新增 SSE 流式端点（dopilot v1 见决策#11；v1 不引入 WebSocket）或 `docker logs --follow`，新增一个流式 `LogView`/端点替代 reload 轮询；scrapy 部分仍可走现有 logparser 拉取。
 
 | 触点 | 文件 | 说明 |
 | --- | --- | --- |
 | 日志视图 | `scrapydweb/views/files/log.py`（`utf8_realtime`/`url_refresh`） | 新增流式端点 |
-| 后台拉取 | `scrapydweb/utils/poll.py` | docker/script 任务无 scrapy 日志格式，需另设解析/统计路径（不能复用 logparser，§8.5） |
+| 后台拉取 | 行为参考：`scrapydweb/utils/poll.py` | docker/script 任务无 scrapy 日志格式，dopilot 需另设解析/统计路径（logparser 行为不适用于此，§8.5） |
 
 ### 9.5 节点配置结构扩展（类型/能力/凭证）
 
 **现状**：节点元数据被拆成 4 个等长 list，用 `node-1` 索引访问（`check_app_config.py:392-395`、`baseview.py:193-197`），且 node 编号随排序漂移（§3.3）。
 
-**建议**：把 4 个并行 list 重构成 `list[dict]`（每节点一个对象）或 DB 表，每节点对象携带 `type` / `labels` / `docker-endpoint` / `agent-url` / 凭证等字段，再改 `BaseView.__init__` 的取值方式。否则字段越加越难维护，且寻址脆弱性会随节点种类增多而放大。
+**建议**：dopilot 不沿用 scrapydweb 的「4 个并行 list + `node-1` 下标」结构，而在 `apps/` 下全新设计为 `list[dict]`（每节点一个对象）或 DB 表，每节点对象携带 `type` / `labels` / `docker-endpoint` / `agent-url` / 凭证等字段。否则字段越加越难维护，且寻址脆弱性会随节点种类增多而放大。
 
-| 触点 | 文件:位置 | 说明 |
+| 触点（行为参考） | 文件:位置 | 说明 |
 | --- | --- | --- |
-| 配置解析 | `check_app_config.py:360-395`（`check_scrapyd_servers`） | 输出结构从 4 list → list[dict] / DB |
-| 取值 | `baseview.py:189-197`（`__init__`） | 从对象/表取值，建议改用稳定主键替代整数下标 |
+| 配置解析 | `check_app_config.py:360-395`（`check_scrapyd_servers`） | dopilot 全新实现：输出结构从 4 list → list[dict] / DB |
+| 取值 | `baseview.py:189-197`（`__init__`） | dopilot 全新实现：从对象/表取值，建议用稳定主键替代整数下标 |
 
 ### 9.6 i18n（中文）
 
@@ -531,7 +533,7 @@ dispatch ──┤─ type=docker  ─▶ DockerExecutor   → docker SDK / work
 - `LogView` 的各处 `flash()`（`log.py` 多处，如 `log.py:90, 200-204, 247`）；
 - `schedule.py` 的 `flash`/alert/postfix 文案（如 `schedule.py:470-475, 582-585`）。
 
-**建议**：引入 Flask-Babel，用 `gettext`/`_()` 包裹文案，提供 `zh_CN` 翻译目录；`handle_result` 与 `LogView` 的 tip/flash 是文案最密集处，优先改造。当前阶段只需中文，但应**预留多语言框架**而非硬编码中文。
+**行为参考**：`handle_result` 与 `LogView` 的 tip/flash 是 scrapydweb 文案最密集处。dopilot 的 i18n 走**前端 vue-i18n**(`apps/web`,见 `../dopilot/04-gap-i18n.md`)——后端 `/api/v1` 只回结构化数据/错误码,**不引入 Flask-Babel/后端 gettext**;此处仅作 scrapydweb 文案分布的行为参考。
 
 ---
 

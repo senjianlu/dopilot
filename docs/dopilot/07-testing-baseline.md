@@ -1,9 +1,12 @@
-# dopilot —— 测试与回归基线
+# dopilot —— 测试基线：reference 行为 oracle + dopilot 自有测试
 
-> 这是 dopilot 多篇 gap 文档（`01`/`02`/`06`/`10`）反复承诺"零回归 / strangler 渐进重构"却一直缺失的那份**护栏文档**。
-> `10-roadmap.md:39` 把本文件列为"一切改造的前置安全网"，`10-roadmap.md:73` 写明"测试基线(07) ──► 一切改造的前置安全网"，`01-gap-executors.md:263` 把 `ScrapydExecutor` 迁移定性为"行为不变，可立即合入"——能不能"立即合入"取决于有没有一条能复跑、能判绿的回归线。本文负责把这条线讲清楚。
+> **【scrapydweb 参考边界】** scrapydweb 仅作**功能层/行为参考**与**测试 oracle**；其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 的设计依据**。dopilot 为 greenfield、按 `apps/`+`packages/` 自有领域 structure-first 设计（权威布局见 `05-dev-setup-and-known-issues.md` §1），**不对 scrapydweb 做改名/git mv**。详见 `00-requirements.md` 决策表。
+
+> 本文有两个清晰层次，**不要混淆**：
+> - **(A) scrapydweb 测试 = reference 基线行为的 oracle / 行为预期对照**。scrapydweb 的 `tests/` 验证的是 reference 自身的基线行为；dopilot 移植某个域（executors / logs / scheduler / API）时，读它、提取其"输入→输出语义"作为对照清单，用来校验 dopilot 全新实现的行为语义是否与 reference 等价。它**不是** dopilot 的回归网，也不是任何"立即合入"的门禁。
+> - **(B) dopilot 自有测试基线**。dopilot 从第一天起就在 `apps/server/tests/`、`apps/agent/tests/`、`apps/web`（vitest/e2e）、`packages/protocol`（schema 校验）中写自己的测试，绑定 dopilot CI 门禁。这才是 dopilot 的回归网。
 >
-> 本文严格区分【现状事实】（已 Read/Grep 核实，引用 `file:line`）与【改造建议 / 开放问题】（待决策）。
+> 本文严格区分【reference 行为事实】（已 Read/Grep 核实，引用 `file:line`，路径相对 `reference/scrapydweb/`）与【dopilot 测试设计 / 开放问题】（待决策）。
 
 ---
 
@@ -14,11 +17,13 @@
 | 测试是否存在 | 是。`tests/` 下 20 个 `test_*.py`，共 **146 个 `test_` 函数**（`grep -rh "^def test_" tests/test_*.py \| wc -l`）。 |
 | 是不是真单测 | 不是。**绝大多数是集成测试**，依赖一个真实运行的 Scrapyd（`127.0.0.1:6800`，账号 `admin/12345`）。 |
 | 当前能否在 Python 3.12 跑通 | **不能，开箱即挂**。`import scrapydweb` 因 `pkg_resources` 缺失直接抛 `ModuleNotFoundError`（已复现，见 §3）。且当前 `.venv` 未装测试依赖（无 pytest/scrapy/scrapyd）。 |
-| 作为零回归安全网够不够 | 方向够（覆盖了部署/调度/API/日志/告警/任务全链路），但**有结构性缺口**：强依赖外部 Scrapyd、依赖外网（QQ/Slack/Telegram）、断言绑死 HTML 文案、无独立的 executor 层单测。详见 §4–§5。 |
+| 作为 reference 行为 oracle 的覆盖面 | 方向够：覆盖了 reference 的部署/调度/API/日志/告警/任务全链路行为语义，便于 dopilot 各域移植时对照。但作为 oracle 有局限：强依赖外部 Scrapyd、依赖外网（QQ/Slack/Telegram）、断言绑死 HTML 文案、无 executor 层语义单测——因此只能对照 reference 的**黑盒行为**，无法给出内部契约。dopilot 自己的回归由 `apps/*/tests/` 承担，详见 §4–§5。 |
 
 ---
 
-## 1. 现有 `tests/` 覆盖范围（逐文件）
+## 1. scrapydweb `tests/` 覆盖了哪些 reference 行为语义（逐文件 oracle 清单）
+
+> 本节逐文件梳理 scrapydweb 测试**锁定了 reference 的哪些行为语义**，作为 dopilot 各域移植时的"行为预期对照清单"。这些是对 `reference/scrapydweb/` 的只读观测，**不是 dopilot 的用例**——dopilot 在 `apps/*/tests/` 中针对相应语义点编写自己的测试。
 
 ### 1.1 目录与支撑文件
 
@@ -64,13 +69,15 @@
 | `test_z_cleantest.py` | 1 | **收尾清场**。`test_cleantest` 遍历所有测试项目名（`:5-24`），forcestop 运行中作业 + delproject，把 Scrapyd 恢复干净（`:27-35`）。文件名 `z` → **最后跑**，同时被 `test_a_factory.py:9` 复用作前置清场。 |
 
 > **关键机制：`req()` 断言器（`utils.py:102-192`）**。几乎所有用例都通过它发请求并断言。它支持 `ins`（响应文本须包含）、`nos`（须不含）、`jskws`（JSON 键值匹配）、`jskeys`（JSON 须含键）、`location`（重定向目标）、`mobileui` 等。**断言失败时会把响应 dump 到 `response.html`**（`utils.py:188`）便于排错。
-> 含义：**这是一套"文案级 + JSON 契约级"的黑盒断言**。后端逻辑等价但 HTML 文案/结构一变，测试就红——这对 strangler 重构既是护栏也是摩擦（见 §4.3）。
+> 含义：**这是一套"文案级 + JSON 契约级"的黑盒断言**。其中只有 **JSON / 重定向 / Scrapyd 应答**这部分语义对 dopilot 有参考价值（可作为 `/api/v1` 契约 oracle）；**HTML 文案级 `ins=`/`nos=` 断言对 dopilot 无意义**——dopilot 前端是 SPA（`apps/web`），不复用任何 scrapydweb Jinja 模板/HTML 文案（见 §4.3）。
 
 ---
 
-## 2. 如何运行
+## 2. 如何在 `reference/scrapydweb/` 下复跑其自带测试
 
-### 2.1 硬前置（现状事实）
+> 本节描述的是**在 reference 包内复跑 scrapydweb 自带测试**所需的前置与命令（用于观测 reference 基线行为）。这些 `requirements-tests.txt`、CircleCI 命令、`~/logs` 前置等都是 **scrapydweb 自身的测试形态**（路径相对 `reference/scrapydweb/`），**不构成 dopilot 的测试/CI 设计依据**——dopilot 的测试与 CI 见 §5。
+
+### 2.1 硬前置（reference 行为事实）
 
 | 前置 | 来源 | 说明 |
 |------|------|------|
@@ -129,12 +136,16 @@ include = scrapydweb/*
 
 `.codecov.yml`（已 Read）：覆盖率展示区间 `70...100`（`.codecov.yml:8`），`require_changes: no`、`require_ci_to_pass: yes`——即覆盖率本身不卡门禁，但 CI 必须先绿。
 
-### 2.3 本地最小复跑步骤（建议，基于上面的事实）
+### 2.3 在 `reference/scrapydweb/` 下复跑其自带测试以观测基线行为
+
+> ⚠️ 这**不是 dopilot 的测试入口**。下面步骤仅用于在 `reference/scrapydweb/` 内复跑 scrapydweb 自带测试，目的是**读懂/对照 reference 的基线行为**（提取行为预期作 oracle）。
+> dopilot 自己的测试入口是 `apps/server/tests`（pytest）、`apps/agent/tests`（pytest）、`apps/web`（vitest/e2e）、`packages/protocol`（schema 校验），见 §5。
 
 ```bash
-cd /workspaces/dopilot
-source .venv/bin/activate
-pip install -r requirements.txt
+# 注意工作目录是 reference 包，而非仓库根
+cd /home/rabbir/dopilot/reference/scrapydweb
+source /home/rabbir/dopilot/.venv/bin/activate
+pip install -e .
 pip install -r requirements-tests.txt
 pip install "setuptools<81"        # 关键：修 pkg_resources，见 §3 / docs/05 §4.1
 mkdir -p ~/logs                    # 否则 setup_env() 会 sys.exit
@@ -142,7 +153,7 @@ mkdir -p ~/logs                    # 否则 setup_env() 会 sys.exit
 # 起本地 Scrapyd（另一个终端，账号必须与 conftest.py 一致）
 cd ~ && printf "[scrapyd]\nusername = admin\npassword = 12345\n" > scrapyd.conf && scrapyd
 
-# 回到仓库跑测试
+# 在 reference/scrapydweb/ 下跑其自带测试，观测基线行为
 coverage run --source=scrapydweb -m pytest -s -vv -l --disable-warnings tests
 ```
 
@@ -150,9 +161,9 @@ coverage run --source=scrapydweb -m pytest -s -vv -l --disable-warnings tests
 
 ---
 
-## 3. 当前在 Python 3.12 能否跑通？
+## 3. 在 Python 3.12 下复跑 scrapydweb 测试的两道坎（功能层实现注意事项）
 
-**结论：不能开箱跑通。已实测复现两道坎。**
+**结论：scrapydweb 测试不能开箱跑通。已实测复现两道坎——这两道坎也是 dopilot 移植 scheduler 依赖时必须知道的功能层约束（与 CLAUDE.md 已锁的 `pkg_resources` 坑一致）。**
 
 ### 3.1 坎 1：`pkg_resources` 缺失（致命，import 即挂）
 
@@ -183,75 +194,80 @@ ModuleNotFoundError: No module named 'pkg_resources'
 | CircleCI 有 `py312` / `py312-scrapyd-v143` / `py313` job | `.circleci/config.yml:358-369, 395-398` |
 | CI 没有 pin `setuptools<81` | `.circleci/config.yml:139-149` 只 `pip install -r requirements*.txt` |
 
-【开放问题 ❓】CI 的 py312 job 是否真能绿？两种可能：(a) CI 镜像 `cimg/python:3.12` 自带的 setuptools 仍 < 81，碰巧避开了；(b) 该 job 实际是红的或被忽略。**dopilot 要把 py312 当作支持基线，就必须把 `setuptools<81`（方案 A）或 `APScheduler>=3.10,<4`（方案 B，docs/05 推荐的长期解）固化进 `requirements.txt`**，否则"本地按文档装 = 必挂"。
+【开放问题 ❓】scrapydweb 的 py312 job 是否真能绿？两种可能：(a) CI 镜像 `cimg/python:3.12` 自带的 setuptools 仍 < 81，碰巧避开了；(b) 该 job 实际是红的或被忽略。
+
+> **dopilot 的实现注意事项（功能层约束，保留）**：dopilot scheduler 域移植 APScheduler 时，应**选 `APScheduler>=3.10,<4`**（去 `pkg_resources` 历史包袱，docs/05 推荐的长期解），把该依赖约束写进 **`apps/server/pyproject.toml`**（scheduler 依赖处），而非任何单一根级扁平依赖文件——dopilot 依赖按 `apps/*/pyproject.toml` + `packages/*/pyproject.toml` 的 monorepo 组织。`setuptools<81`（方案 A）仅作复跑 scrapydweb 时的临时保命手段，不进 dopilot 依赖。
 
 ---
 
-## 4. 作为 strangler 重构 + 执行器抽象迁移的"零回归"安全网
+## 4. 以 scrapydweb 测试为行为 oracle：dopilot executors 域移植的语义对照
 
-### 4.1 它为什么是 dopilot 的关键护栏
+### 4.1 为什么 reference 测试是 executors 域移植的好 oracle
 
-`10-roadmap.md` 与 `01-gap-executors.md` 的整套叙事建立在一个假设上：**把现网 scrapyd 下发链路收敛进 `BaseExecutor`/`ScrapydExecutor` 时"行为不变"**（`01-gap-executors.md:263`、`10-roadmap.md:46`）。"行为不变"不能靠人眼承诺，只能靠**一条能复跑、能判绿的回归线**来证伪。本套 `tests/` 就是这条线：它从 HTTP 入口到 Scrapyd 应答做了端到端黑盒断言，恰好覆盖了执行器抽象要包裹的那条链路。
+`10-roadmap.md` 与 `01-gap-executors.md` 的执行器抽象（缝① `BaseExecutor`）规划了"部署 + 下发 + 取状态 + 取日志 + 停止"这条链路。dopilot 在 `apps/server/dopilot_server/executors/`（`base.py` / `scrapyd.py` / `script.py` / `docker.py`）**全新实现** `BaseExecutor`/`ScrapydExecutor`，需要保证其行为语义与 reference 等价。scrapydweb 的 `tests/` 恰好从 HTTP 入口到 Scrapyd 应答对这条链路做了端到端黑盒断言——它锁定的"输入→输出语义"正好可作为 dopilot 新实现的**对照清单 / 语义验收点**。
 
-### 4.2 执行器抽象迁移：改造前后**必须复跑**的用例（最高优先级）
+> 注意定位：reference 测试是 **oracle**，不是 dopilot 的回归网。dopilot 的实际回归由 `apps/server/tests` 下**自写**的测试承担（见 §5）。
 
-`01-gap-executors.md` 计划把"部署 + 下发 + 取状态 + 取日志 + 停止"收敛进执行器层。这条链路在测试里对应（视图侧入口见 `scrapydweb/views/api.py`、`views/operations/deploy.py`、`scrapyd_deploy.py`、`execute_task.py`、`schedule.py`）：
+### 4.2 executors 域移植的行为对照清单（reference 锁定了哪些语义）
 
-| 链路环节 | 必复跑的测试文件 | 为什么是它 |
+reference 中下列测试文件分别锁定了执行器链路各环节的行为语义（reference 视图侧入口见 `scrapydweb/views/api.py`、`views/operations/deploy.py`、`scrapyd_deploy.py`、`execute_task.py`、`schedule.py`，仅作行为参考引用）。dopilot 在 `apps/server/tests` 中针对这些语义点编写**自己的**测试：
+
+| 链路环节 | 参考 reference 测试 | 锁定的行为语义（dopilot 验收点） |
 |----------|------------------|------------|
-| Scrapyd API 透传（daemonstatus/start/stop/forcestop/list*/del*） | `test_api.py`（10）、`test_z_cleantest.py`（1） | 执行器要替换的就是这层 HTTP 调用，JSON 契约一变即红。 |
-| 部署/打包/上传 egg | `test_deploy.py`（9）、`test_deploy_single_scrapyd.py`（7）、`test_projects.py`（3） | `ScrapydExecutor` 的"部署"能力，含多节点/单节点/各平台包。 |
-| 调度下发（立即运行 + 取 stats + pending） | `test_schedule.py`（7）、`test_schedule_single_scrapyd.py`（6） | 执行器"运行 spider"能力，telnet/pending 等运行态。 |
-| 定时任务执行（fire→execute→记录结果） | `test_tasks.py`（9）、`test_tasks_single_scrapyd.py`（27） | `execute_task.py` 经执行器下发；**这是用例最密集的护栏（36 例）**。 |
-| 运行态日志/统计 | `test_log.py`（10）、`test_aa_logparser.py`（4）、`test_reports.py`（3） | 执行器"取日志/取统计"能力 + LogParser 集成。 |
+| Scrapyd API 透传（daemonstatus/start/stop/forcestop/list*/del*） | `test_api.py`（10）、`test_z_cleantest.py`（1） | 透传层的 JSON 契约：`status=='ok'` 与各操作的关键键。dopilot `ScrapydExecutor` 对 Scrapyd 的请求构造与响应解析应保持同一契约。 |
+| 部署/打包/上传 egg | `test_deploy.py`（9）、`test_deploy_single_scrapyd.py`（7）、`test_projects.py`（3） | 部署语义：多节点/单节点/各平台包、Unicode 项目名、坏 egg / 残缺 `scrapy.cfg` 的报错与降级。 |
+| 调度下发（立即运行 + 取 stats + pending） | `test_schedule.py`（7）、`test_schedule_single_scrapyd.py`（6） | "运行 spider"语义：下发、telnet 取 stats、pending jobs、失败分支。 |
+| 定时任务执行（fire→execute→记录结果） | `test_tasks.py`（9）、`test_tasks_single_scrapyd.py`（27） | 定时任务语义：`fire→execute→记录结果`、孤儿 job 清理、运行中删除等（reference 用例最密集，36 例，对应语义点也最细）。 |
+| 运行态日志/统计 | `test_log.py`（10）、`test_aa_logparser.py`（4）、`test_reports.py`（3） | "取日志/取统计"语义 + LogParser 集成（含未完成态日志、节点/集群报表）。 |
 
-→ **执行器迁移的最小回归集 = 上述 9 个文件，约 96 个用例。** 改造分支与 master 在**同一 Scrapyd 环境**各跑一遍，结果必须逐字一致（含 dump 出的 `response.html` 不应出现新差异）。
+→ 上述 9 个文件构成 **executors/logs/scheduler 域移植的语义验收点清单**（约 96 个 reference 用例所覆盖的语义）。dopilot 不复跑这些 scrapydweb 用例作为门禁，而是在 `apps/server/tests` 中按这些语义点写 dopilot 自己的契约级测试，必要时用临时 Scrapyd 容器或 mock 做集成校验，把 reference 的行为预期当 oracle 对照。
 
-### 4.3 strangler 各阶段的复跑映射
+### 4.3 各域移植对照 reference 时的注意事项（前端无 Jinja 共存）
 
-| 改造动作（来自 gap 文档） | 改造后必复跑 | 备注 |
+| dopilot 移植动作（来自 gap 文档） | 可对照的 reference 行为 | 备注 |
 |---------------------------|--------------|------|
-| 引入 `BaseExecutor` + `ScrapydExecutor`（`01` §6.4，"行为不变"） | §4.2 全部 96 例 | 这是"零回归"成立与否的判定线。 |
-| 调度/节点策略/推模式（`02-gap-scheduling-nodes-push.md`） | `test_schedule*`、`test_tasks*`、`test_metadata.py`（调度器状态机 `:82`）、`test_reports.py` | 节点选择与推送会改下发路径。 |
-| 前端重写 M1~M3（`06-frontend-rewrite.md`） | ⚠️ `test_page*`、`test_metadata.py`、`test_mobileui.py`、`test_send_text.py` 的 `ins=` HTML 断言**会大面积失效** | 见下方【开放问题】。 |
-| i18n（`04-gap-i18n.md`） | 同上：所有基于英文文案的 `ins=`/`nos=` 断言 | 文案一改即红。 |
-| 数据库后端切换（sqlite/pg/mysql） | `test_system.py`（2） + 全量在对应后端各跑一遍 | CI 已有矩阵（`.circleci/config.yml:316-353`）。 |
+| 全新实现 `BaseExecutor` + `ScrapydExecutor`（缝①，`01` §6.4） | §4.2 的 API/部署/下发/日志语义 | dopilot 在 `apps/server/executors/` 新写，行为语义对照 reference。 |
+| 调度/节点策略/推模式（`02-gap-scheduling-nodes-push.md`） | `test_schedule*`、`test_tasks*`、`test_metadata.py`（调度器状态机 `:82`）、`test_reports.py` 锁定的下发/状态机语义 | dopilot 在 `apps/server/scheduler/`+`nodes/` 新写，节点选择与推送语义可对照。 |
+| 前端 SPA 分阶段交付（`06-frontend-rewrite.md`） | 仅 reference 的 **JSON / 重定向 / Scrapyd 应答** 语义可作 `/api/v1` 契约 oracle | dopilot 前端是 **greenfield SPA**（`apps/web`），**不存在** Jinja↔Vue 共存或按页 strangler；reference 的 HTML 文案级 `ins=`/`nos=` 断言对 dopilot **无意义**，`test_mobileui.py` 这类移动端 Jinja 模板测试 dopilot 无对应物（响应式由 Element Plus 处理）。 |
+| i18n（`04-gap-i18n.md`） | reference 文案断言**不可参考**；dopilot i18n 由前端 `apps/web/src/i18n` 承担，测组件渲染 | dopilot 不继承英文 HTML 文案断言。 |
+| 数据库后端（PostgreSQL） | `test_system.py`（2）锁定的 `DATA_PATH`/`DATABASE_URL`→连接串映射语义 | dopilot 在 `apps/server/config/` 新写配置层，并固定 PostgreSQL 为唯一数据库；reference 的 sqlite/pg/mysql 映射只作为历史行为参考。 |
 
-【开放问题 ❓ —— 安全网与重构的根本张力】：`req()` 是**文案级黑盒断言**（`utils.py:129-186` 按子串匹配 HTML）。`06`/`04` 的前端重写与 i18n 一旦动 HTML 结构/英文文案，`test_page*`、`test_mobileui.py`、`test_metadata.py` 等就会**因为"对的改动"而变红**，安全网反过来阻碍重构。
-建议拆成两层（见 §5）：把"后端契约层"（JSON / 重定向 / Scrapyd 应答）与"前端表现层"（HTML 文案）分离断言；执行器迁移阶段**只依赖契约层**，前端层在重写阶段单独维护。
-
----
-
-## 5. 建议的回归流程与 CI（改造建议）
-
-### 5.1 立即要做的（让安全网先能用）
-
-1. **修复 Py3.12 跑通**（前置中的前置）：把 docs/05 §4.1 方案落到 `requirements.txt`——优先方案 B（`APScheduler>=3.10,<4`，去历史包袱）；若怕回归，先方案 A（`setuptools<81`）保命。**做完后必须复跑 §4.2 全集验证 APScheduler 升级本身没引入回归**（尤其 `test_tasks*` 与 `test_metadata.py:82` 调度器状态机）。
-2. **打基线快照**：在 master + 修好的环境上，把 §4.2 的 96 例跑绿一次，记录覆盖率数字（`coverage report`）作为 dopilot 的 0 号基线。**这是"零回归"的参照物**——之前从没存在过，这正是本文要补的护栏。
-3. **CI 平台决策**：现仓库是 CircleCI（`.circleci/config.yml`）。dopilot 远程在 GitHub（docs/05 §1），`.github/` 已存在（git status 显示 `?? .github/`）。【开放问题 ❓】确认 CircleCI 是否还接 dopilot 仓库；若要迁 GitHub Actions，需要把"起 Scrapyd + mkdir ~/logs + setuptools pin + coverage 驱动 pytest"这套步骤照搬过去。
-
-### 5.2 推荐的回归分级
-
-| 级别 | 范围 | 触发时机 | 是否需要 Scrapyd |
-|------|------|----------|------------------|
-| L0 冒烟 | `test_a_factory.py` + `test_system.py` + `flake8 E9,F63,F7,F82` | 每次 commit / PR | 否（factory 的 check_app_config 会试连，但能容错） |
-| L1 契约回归 | §4.2 的 96 例（执行器链路） | 每个 executor/scheduling PR | **是**（CI 内起本地 Scrapyd） |
-| L2 全量 | `tests` 全部 146 例 × 后端矩阵 | 合并到 master / 发版 | 是 |
-| L3 外网告警 | `test_send_text.py` pass 分支 | 手动 / 配了 secrets 时 | 是 + 外网凭据 |
-
-### 5.3 中期：把安全网做"抗重构"
-
-- **拆契约层 vs 表现层断言**（针对 §4.3 张力）：给 `req()` 增加"只断言 JSON / 重定向 / status_code"的模式，执行器迁移只跑契约层；HTML 文案断言归入单独的前端测试集，随 `06` 重写演进。
-- **降低对真实 Scrapyd 的硬依赖**：当前几乎全集成。建议为 `ScrapydExecutor` 单独写**可 mock 的执行器层单测**（不经 HTTP、直接断言执行器对 Scrapyd HTTP 的请求构造与响应解析），这样执行器逻辑能脱离外部 Scrapyd 独立回归——这是现 `tests/` 的最大结构缺口（**0 个纯 executor 单测**，因为 executor 抽象还不存在）。
-- **`docker` 阶段（roadmap 阶段 3）的执行器**：现 `tests/` 完全不覆盖 docker 长连接执行器。新执行器类型必须自带与 `ScrapydExecutor` 对等的回归集，且复用 §5.3 的可 mock 执行器单测框架。
-
-### 5.4 一句话给改造工程师
-
-> 动 executor / scheduling 之前：先 `pip install "setuptools<81"` + 起本地 Scrapyd，把 §4.2 的 96 例在 master 跑绿存为基线；改完在同环境再跑一遍，**逐字 diff 必须为空**。HTML 文案类红灯先判断是不是 `06`/`04` 预期内的表现层变化——是就更新断言，不是就回退。这就是"零回归"的全部含义。
+> **要点**：dopilot 后端测 `/api/v1` JSON 契约（`apps/server/tests`），前端测组件/页面（`apps/web` vitest/e2e）。reference 的 HTML 文案级断言不进入 dopilot 任何层——dopilot 没有继承来的 Jinja 页，只有全新 SPA。
 
 ---
 
-## 附录 A：用例分布速查
+## 5. dopilot 自有测试基线与 CI（dopilot 测试设计）
+
+### 5.1 立即要做的
+
+1. **观测并记录 reference 基线行为（oracle 快照）**：按 §2.3 在 `reference/scrapydweb/` 下复跑其测试套（先 `setuptools<81` 或在装好的环境里），把 §4.2 各语义点的行为预期记录下来，作为 dopilot 各域移植时的对照 oracle。这是**对 reference 的观测**，不是 dopilot 回归基线。
+2. **建立 dopilot 自有 0 号基线**：从第一个移植的功能（`ScrapydExecutor`）起，就在 `apps/server/tests` 与 `apps/agent/tests` 中写 dopilot 自己的测试，覆盖 §4.2 的语义验收点（契约级，非 HTML 文案级）。dopilot 的回归基线就此建立、随 dopilot 代码演进。scheduler 域移植 APScheduler 时选 `3.10.x` 避开 `pkg_resources` 坑（见 §3.3）。
+3. **dopilot CI**：在 `.github/workflows/` 下运行 **dopilot 自有测试矩阵**——`apps/server`（pytest，需要时用 fixture/mock 或临时 Scrapyd 容器）、`apps/agent`（pytest）、`apps/web`（vitest + 构建）、`packages/protocol`（schema 校验）。**不照搬** scrapydweb 的 CircleCI 步骤（`coverage --source=scrapydweb` / `mkdir ~/logs` / 起本地 Scrapyd 跑 scrapydweb tests）；scrapydweb 的 CI 仅在需要观测 reference 行为时单独在 `reference/` 内运行，与 dopilot CI 完全解耦。
+
+### 5.2 dopilot 回归分级（基于 dopilot 自有测试）
+
+| 级别 | 范围（dopilot 自有测试） | 触发时机 | 是否需要 Scrapyd | 可对照的 reference oracle |
+|------|------|----------|------------------|------|
+| L0 冒烟 | `apps/server` config/app 工厂单测 + `packages/protocol` schema 校验 + lint | 每次 commit / PR | 否 | `test_a_factory.py`、`test_system.py` 锁定的配置语义 |
+| L1 契约回归 | `apps/server/tests` 的 executors/scheduler 契约测试（Scrapyd 用容器或 mock） | 每个 executor/scheduling PR | 否（mock）/ 可选容器 | §4.2 的 API/部署/下发/日志语义 |
+| L2 全量 | dopilot 全量：`apps/server` + `apps/agent` + `apps/web`（vitest/e2e）× 后端矩阵 | 合并到 master / 发版 | 视集成测试而定 | §4.2 全部语义点 |
+| L3 外部告警通道 | dopilot 告警通道测试（pass 分支） | 手动 / 配了凭据时 | 否 | `test_send_text.py` 的通道语义 |
+
+> 表中"可对照的 reference oracle"列仅供编写 dopilot 测试时参考行为预期；触发门禁绑定的始终是 **dopilot 自己的测试**。
+
+### 5.3 dopilot 测试设计原则
+
+- **后端测契约，不测文案**：dopilot 后端用标准 pytest + FastAPI TestClient/httpx 直接断言 `/api/v1` 的 JSON 契约 / 重定向 / status_code，**不引入** HTML 文案级黑盒断言（scrapydweb 的 `req()` 文案匹配器只读、不继承）。前端的页面/组件断言归 `apps/web`（vitest/e2e）。
+- **executor 可 mock、不依赖外部 Scrapyd**：dopilot 为各执行器写**可 mock 的执行器层单测**（不经 HTTP、直接断言执行器对 Scrapyd 的请求构造与响应解析），使执行器逻辑能脱离外部 Scrapyd 独立回归。这是合理的工程主张，落点是 `apps/server/tests`（而非改 scrapydweb；scrapydweb 缺这层单测，正好是 dopilot 要补齐的）。
+- **`docker` 执行器（roadmap 阶段 3）**：docker 长连容器执行器是 **dopilot 独有域**，scrapydweb 无对应行为可参考。其测试从一开始就在 `apps/server/tests` + `apps/agent/tests` 中自写，与 `script`/`scrapyd` 执行器共用 dopilot 自有的可 mock 执行器测试基座，不引用 scrapydweb tests 作为基准。
+
+### 5.4 一句话给实现工程师
+
+> 实现某域（如 `ScrapydExecutor`）前：先读 reference 对应测试，提取其行为预期（输入→输出语义）作为验收清单；在 `apps/server/tests` 写 dopilot 自己的测试覆盖这些语义（JSON 契约级，非 HTML 文案级）；必要时起 Scrapyd 容器或 mock 做集成校验。reference 是行为 oracle，dopilot 的回归网始终是 `apps/*/tests`。
+
+---
+
+## 附录 A：scrapydweb 用例分布速查（reference oracle 清单，非 dopilot 用例）
 
 | 文件 | 用例数 | 需真实 Scrapyd | 顺序敏感 |
 |------|:---:|:---:|------|
