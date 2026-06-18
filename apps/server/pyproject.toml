@@ -13,8 +13,13 @@ dependencies = [
     "pydantic>=2.6,<3",
     "sqlalchemy>=2.0,<2.1",
     "alembic>=1.13",
-    "psycopg[binary]>=3.1",
+    # Pinned exactly: an open `psycopg[binary]>=3.1` makes pip backtrack across
+    # the whole psycopg range during the Docker `pip wheel` build and can hit
+    # ResolutionImpossible. Pin to the validated version for a reproducible
+    # image build (bump deliberately).
+    "psycopg[binary]==3.3.4",
     "httpx>=0.27",
+    "python-multipart>=0.0.9",
     "APScheduler>=3.10,<4",
     "dopilot-protocol",
 ]

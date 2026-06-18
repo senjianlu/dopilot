@@ -21,9 +21,30 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config.settings import Settings
+from ..errors import ApiError
 from ..models.node import Node
+from .strategy import NodeStrategy, reduce_nodes
 
 _HTTP_TIMEOUT = httpx.Timeout(5.0, connect=2.0)
+
+
+def _to_strategy(strategy: str) -> NodeStrategy:
+    """Map the web ``node_strategy`` string onto :class:`NodeStrategy`.
+
+    The web uses ``selected``; the seam enum calls it ``specified``.
+    """
+    if strategy in ("selected", "specified"):
+        return NodeStrategy.SPECIFIED
+    if strategy == "random":
+        return NodeStrategy.RANDOM
+    if strategy == "all":
+        return NodeStrategy.ALL
+    raise ApiError(
+        400,
+        "execution.invalid_node_strategy",
+        "errors.invalidNodeStrategy",
+        {"node_strategy": strategy},
+    )
 
 
 def _normalize_endpoint(endpoint: str) -> str:
@@ -68,6 +89,7 @@ def _node_to_dict(node: Node) -> dict[str, Any]:
         "endpoint": node.endpoint,
         "status": node.status,
         "capabilities": node.capabilities or {},
+        "health": node.health or {},
         "last_seen_at": (
             node.last_seen_at.isoformat() if node.last_seen_at else None
         ),
@@ -89,6 +111,7 @@ async def refresh_nodes(
             base = _normalize_endpoint(endpoint)
             agent_id: str | None = None
             capabilities: dict[str, Any] = {}
+            health: dict[str, Any] = {}
             status = "unhealthy"
             try:
                 resp = await http.get(f"{base}/health", headers=headers)
@@ -96,6 +119,8 @@ async def refresh_nodes(
                     data = resp.json()
                     agent_id = data.get("agent_id")
                     capabilities = data.get("capabilities") or {}
+                    # agent health detail (phase 1: scrapyd subprocess status)
+                    health = data.get("detail") or {}
                     status = "healthy"
             except Exception:  # noqa: BLE001 - any failure => unhealthy
                 status = "unhealthy"
@@ -110,6 +135,7 @@ async def refresh_nodes(
             if status == "healthy":
                 node.agent_id = agent_id
                 node.capabilities = capabilities
+                node.health = health
         await session.commit()
 
     result = await session.execute(select(Node))
@@ -137,7 +163,61 @@ async def list_nodes(
                     "endpoint": endpoint,
                     "status": "unknown",
                     "capabilities": {},
+                    "health": {},
                     "last_seen_at": None,
                 }
             )
     return out
+
+
+async def _healthy_capable_nodes(
+    session: AsyncSession, capability: str
+) -> list[Node]:
+    result = await session.execute(
+        select(Node).where(Node.status == "healthy")
+    )
+    nodes = list(result.scalars().all())
+    return [n for n in nodes if (n.capabilities or {}).get(capability)]
+
+
+async def select_target_nodes(
+    session: AsyncSession,
+    strategy: str,
+    node_ids: list[str] | None = None,
+    *,
+    capability: str = "scrapy",
+) -> list[Node]:
+    """Pick target nodes for an execution: only ``healthy`` + ``capability``.
+
+    Applies the node strategy (all/random/selected) over the healthy set.
+    Raises a structured 409 when no usable node exists so the caller never
+    creates a half-baked running execution.
+    """
+    candidates = await _healthy_capable_nodes(session, capability)
+    selected = reduce_nodes(_to_strategy(strategy), candidates, node_ids)
+    if not selected:
+        raise ApiError(
+            409,
+            "execution.no_healthy_nodes",
+            "errors.noHealthyNodes",
+            {
+                "node_strategy": strategy,
+                "node_ids": node_ids or [],
+                "healthy_count": len(candidates),
+            },
+        )
+    return selected
+
+
+async def pick_deploy_node(
+    session: AsyncSession,
+    node_ids: list[str] | None = None,
+    *,
+    capability: str = "scrapy",
+) -> Node:
+    """Pick a single agent to deploy an egg to (specified first, else any)."""
+    strategy = "selected" if node_ids else "all"
+    nodes = await select_target_nodes(
+        session, strategy, node_ids, capability=capability
+    )
+    return nodes[0]

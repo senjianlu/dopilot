@@ -34,6 +34,13 @@ class Node(Base):
         nullable=False,
         default=dict,
     )
+    # Extra health detail reported by the agent /health (phase 1: scrapyd
+    # subprocess status). Empty until first healthy refresh.
+    health: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"),
+        nullable=False,
+        default=dict,
+    )
     last_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

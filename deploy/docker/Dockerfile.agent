@@ -11,7 +11,19 @@ FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
+# Resilience to transient PyPI / pythonhosted hiccups for a reproducible build.
+ENV PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=10
+
 RUN pip install --no-cache-dir wheel
+
+# Scrapy/scrapyd runtime: the agent spawns the `scrapyd` binary as a child
+# process (see [scrapyd].start = true) and deploys eggs into it, so both must be
+# importable AND scrapyd's console script must be on PATH. Pinned to the same
+# ranges the demo egg + tests are built against (scrapy 2.11..2.x, scrapyd 1.4+).
+# These are NOT declared in apps/agent/pyproject.toml: scrapyd is a managed
+# subprocess dependency of the agent IMAGE, not an import dependency of the
+# agent PACKAGE (unit tests run with a fake scrapyd).
+RUN pip install --no-cache-dir 'scrapy>=2.11,<3' 'scrapyd>=1.4,<2'
 
 # Only the protocol package + agent package.
 COPY packages/protocol ./packages/protocol
@@ -19,10 +31,17 @@ COPY apps/agent ./apps/agent
 
 RUN pip install --no-cache-dir ./packages/protocol ./apps/agent
 
+# Fail the build early if the scrapyd console script did not land on PATH (the
+# agent execs it by name). `command -v` is cheap and makes a broken pin loud.
+RUN command -v scrapyd >/dev/null || (echo "scrapyd console script missing from PATH" >&2; exit 1)
+
 ENV DOPILOT_CONFIG=/app/configs/agent.toml
 ENV AGENT_WORKDIR=/agent-data
 
-# Agent working tree (eggs, scratch, per-execution dirs) lives here.
+# Agent working tree (scrapyd eggs/logs/dbs/items + per-attempt state) lives
+# here. Create it up front so the dir is writable even before the named volume
+# is attached (and on `[scrapyd].start=true` the agent populates the subtree).
+RUN mkdir -p /agent-data
 VOLUME ["/agent-data"]
 
 EXPOSE 6800

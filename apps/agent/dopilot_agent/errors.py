@@ -41,3 +41,21 @@ def not_implemented(
 ) -> AgentError:
     """Build a 501 ``AgentError`` for endpoints that are phase-1+ stubs."""
     return AgentError(501, code, message_key, detail)
+
+
+def not_found(
+    code: str,
+    message_key: str = "errors.notFound",
+    detail: dict[str, Any] | None = None,
+) -> AgentError:
+    """Build a 404 ``AgentError`` (e.g. no state mapping for an attempt)."""
+    return AgentError(404, code, message_key, detail)
+
+
+def upstream_error(
+    code: str,
+    message_key: str = "errors.upstream",
+    detail: dict[str, Any] | None = None,
+) -> AgentError:
+    """Build a 502 ``AgentError`` for a failed local-scrapyd call."""
+    return AgentError(502, code, message_key, detail)

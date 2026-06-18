@@ -1,19 +1,29 @@
-"""Agent status endpoint (phase-1+ stub).
+"""Agent status endpoint.
 
-Will report live executor/runner state once runners exist. For now it returns
-a 501 envelope behind the shared-token guard.
+``GET /status?execution_id&attempt_id`` resolves the attempt's current state
+from its state file + local scrapyd (see
+:meth:`~dopilot_agent.runners.scrapyd.ScrapyRunner.status`). A missing state
+mapping returns ``status=unknown`` with HTTP 200 (not 404) so the server can
+mark the attempt lost rather than retry forever.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from dopilot_protocol import AgentStatusResponse
+from fastapi import APIRouter, Depends, Query
 
 from ..auth.dependencies import require_agent_token
-from ..errors import not_implemented
+from ..deps import get_scrapy_runner
+from ..runners.scrapyd import ScrapyRunner
 
 router = APIRouter()
 
 
-@router.get("/status")
-def status(_: None = Depends(require_agent_token)) -> None:
-    raise not_implemented("status.not_implemented", "errors.notImplemented", {"phase": 1})
+@router.get("/status", response_model=AgentStatusResponse)
+async def status(
+    execution_id: str = Query(...),
+    attempt_id: str = Query(...),
+    runner: ScrapyRunner = Depends(get_scrapy_runner),
+    _: None = Depends(require_agent_token),
+) -> AgentStatusResponse:
+    return await runner.status(attempt_id, execution_id)

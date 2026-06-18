@@ -12,6 +12,8 @@ from abc import ABC, abstractmethod
 
 from dopilot_protocol import TailRequest, TailResponse
 
+from ..clients.agent import AgentClient
+
 
 class LogSource(ABC):
     """Abstract source of incremental log content for one execution stream."""
@@ -20,3 +22,18 @@ class LogSource(ABC):
     async def tail(self, req: TailRequest) -> TailResponse:
         """Return the byte range described by ``req`` plus EOF/finished flags."""
         raise NotImplementedError
+
+
+class AgentTailLogSource(LogSource):
+    """Concrete :class:`LogSource` that pulls a byte range from an agent.
+
+    The transport is server-driven pull (decision #11): ``tail`` simply
+    forwards the request to the agent's ``GET /logs/tail`` for one ``endpoint``.
+    """
+
+    def __init__(self, agent_client: AgentClient, endpoint: str) -> None:
+        self._client = agent_client
+        self._endpoint = endpoint
+
+    async def tail(self, req: TailRequest) -> TailResponse:
+        return await self._client.tail(self._endpoint, req)

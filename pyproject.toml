@@ -61,4 +61,6 @@ extend-immutable-calls = [
     "fastapi.Path",
     "fastapi.Header",
     "fastapi.Body",
+    "fastapi.Form",
+    "fastapi.File",
 ]

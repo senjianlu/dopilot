@@ -60,10 +60,19 @@ class LogsSettings(BaseModel):
     root_dir: str = "/server-data/logs"
     background_drain_interval_seconds: int = 30
     realtime_drain_interval_seconds: int = 1
+    # How often the reconcile loop polls each active attempt's agent /status.
+    status_poll_interval_seconds: int = 5
     max_tail_bytes_per_pull: int = 262144
     eof_stable_seconds: int = 5
     final_drain_hard_timeout_seconds: int = 60
+    # How long an attempt may stay unreachable (agent down) before it is
+    # declared "lost" rather than left running forever.
+    unreachable_lost_seconds: int = 120
     retention_days: int = 14
+    # First-screen tail when a web log window opens: last N lines or M bytes,
+    # whichever boundary is reached first.
+    first_screen_max_lines: int = 2000
+    first_screen_max_bytes: int = 1048576
 
 
 class I18nSettings(BaseModel):

@@ -1,0 +1,92 @@
+"""Unit tests for the atomic per-attempt state store."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from dopilot_agent.state.store import AttemptState, StateStore
+
+
+def _state(attempt_id: str = "a1", job_id: str = "job-1") -> AttemptState:
+    return AttemptState(
+        execution_id="exec-1",
+        attempt_id=attempt_id,
+        scrapyd_job_id=job_id,
+        project="demo",
+        version="1",
+        spider="phase1",
+        log_path="/agent-data/scrapyd/logs/demo/phase1/job-1.log",
+    )
+
+
+def test_write_then_read_roundtrip(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state")
+    store.write(_state())
+
+    got = store.read("a1")
+    assert got is not None
+    assert got.execution_id == "exec-1"
+    assert got.scrapyd_job_id == "job-1"
+    assert got.spider == "phase1"
+    assert got.canceled is False
+    # Timestamps are populated.
+    assert got.created_at
+    assert got.updated_at
+
+
+def test_write_is_atomic_no_tmp_left(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state")
+    store.write(_state())
+    leftovers = list((tmp_path / "state").glob("*.tmp"))
+    assert leftovers == []
+    assert store.path_for("a1").exists()
+
+
+def test_read_missing_returns_none(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state")
+    assert store.read("nope") is None
+
+
+def test_read_corrupt_half_json_returns_none(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state")
+    store.dir.mkdir(parents=True, exist_ok=True)
+    # Simulate a crash mid-write: truncated JSON.
+    store.path_for("a1").write_text('{"execution_id": "exec-1", "att', encoding="utf-8")
+    assert store.read("a1") is None
+
+
+def test_read_valid_json_wrong_shape_returns_none(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state")
+    store.dir.mkdir(parents=True, exist_ok=True)
+    # Valid JSON but missing required fields.
+    store.path_for("a1").write_text('{"foo": "bar"}', encoding="utf-8")
+    assert store.read("a1") is None
+
+
+def test_delete_idempotent(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state")
+    store.write(_state())
+    assert store.delete("a1") is True
+    assert store.delete("a1") is False
+    assert store.read("a1") is None
+
+
+def test_list_attempt_ids(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state")
+    assert store.list_attempt_ids() == []
+    store.write(_state(attempt_id="a1"))
+    store.write(_state(attempt_id="a2"))
+    assert store.list_attempt_ids() == ["a1", "a2"]
+
+
+def test_updated_at_refreshed_on_rewrite(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state")
+    s = store.write(_state())
+    first = s.updated_at
+    s.canceled = True
+    # Force a distinct timestamp; isoformat has microsecond resolution.
+    store.write(s)
+    again = store.read("a1")
+    assert again is not None
+    assert again.canceled is True
+    assert again.updated_at >= first

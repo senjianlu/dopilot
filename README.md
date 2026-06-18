@@ -91,6 +91,81 @@ runs separately via Vite. server is single-replica only (`uvicorn workers=1`).
 cd deploy/docker && docker compose up -d --build     # db -> migrate -> agent -> server
 ```
 
+The `agent` image bundles `scrapy` + `scrapyd`; the agent process spawns a local
+`scrapyd` child (config `[scrapyd].start = true`) listening on container-internal
+`127.0.0.1:6801`. Only the agent HTTP API (`6800`) is published — `6801` is never
+exposed to the host. Both `agent` and `server` declare healthchecks, so
+`server` only starts once `agent` is `service_healthy` (and the scrapyd
+subprocess is up).
+
+## Phase 1: Scrapy chain
+
+Phase 1 runs the first real execution loop: upload a built Scrapy egg, run a
+spider on an agent's in-process scrapyd, pull the job log back to the server, and
+land it under `/server-data/logs` with the offset/status index in PostgreSQL.
+
+Fixed names used below come from the demo fixture
+(`tests/fixtures/scrapy_demo/`): Scrapy project `demo`, spider `phase1`,
+committed egg `tests/fixtures/scrapy_demo/eggs/demo_phase1.egg`. The spider is
+offline and deterministic — it logs `phase1 demo spider started` /
+`phase1 demo spider done` and scrapes 2 items.
+
+### Compose smoke (recommended)
+
+One repeatable, clean-volume end-to-end check that builds the images and drives
+the whole chain (clean volumes -> migrate -> agent+scrapyd -> upload egg -> run
+spider -> assert log markers -> assert `complete` -> tear down):
+
+```bash
+make compose-smoke           # == scripts/smoke-phase1.sh
+```
+
+It tears the stack down (`docker compose down -v`) on exit. Set `KEEP_UP=1` to
+leave a passing stack running for inspection. It needs `docker`, `curl` and
+`python3` on the host (no venv). If the committed egg is absent it is rebuilt
+inside the agent container via `python3 setup.py bdist_egg`.
+
+### Local dev (host processes + db container)
+
+Run the db in Docker and the server+agent on the host. The agent spawns its own
+scrapyd child, so it needs `scrapy` + `scrapyd` importable in the same env:
+
+```bash
+# 0. install deps (server + agent need scrapy/scrapyd for the local agent run)
+pip install -e packages/protocol -e "apps/server[dev]" -e "apps/agent[dev]"
+pip install 'scrapy>=2.11,<3' 'scrapyd>=1.4,<2'
+
+# 1. db + migrations
+scripts/dev-db.sh up                                          # PostgreSQL on :5432
+(cd apps/server && DOPILOT_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot \
+   alembic upgrade head)
+
+# 2. run agent + server (separate terminals)
+DOPILOT_CONFIG=configs/agent.example.toml  dopilot-agent      # :6800 (+ internal scrapyd :6801)
+DOPILOT_CONFIG=configs/server.example.toml dopilot-server     # :5000
+
+# 3. (re)build the demo egg only if you changed the fixture source
+tests/fixtures/scrapy_demo/build_egg.sh                       # -> eggs/demo_phase1.egg
+
+# 4. upload the egg, run the spider, watch the logs (web auth off in the
+#    *.example.toml configs -> no token needed locally)
+curl -fsS -X POST http://localhost:5000/api/v1/artifacts/scrapy/egg \
+  -F project=demo -F version=$(date +%s) \
+  -F file=@tests/fixtures/scrapy_demo/eggs/demo_phase1.egg
+
+curl -fsS -X POST http://localhost:5000/api/v1/executions/run \
+  -H 'Content-Type: application/json' \
+  -d '{"task_type":"scrapy","target":"demo:phase1","node_strategy":"all","params":{"project":"demo","spider":"phase1"}}'
+# -> {"execution_id": "..."}; then poll status / read logs:
+curl -fsS http://localhost:5000/api/v1/executions/<id>
+curl -fsS http://localhost:5000/api/v1/executions/<id>/logs
+```
+
+> The compose configs (`configs/server.docker.toml`) set `[auth]`, so web auth is
+> **ON** there and API calls need a bearer token from `POST /api/v1/auth/login`
+> (`admin` / `change-me`); the smoke script handles this. The local
+> `*.example.toml` configs leave auth off, so the curl calls above need no token.
+
 ## Troubleshooting
 
 - **`python3 -m venv` fails with "ensurepip is not available"** — install

@@ -9,6 +9,9 @@ import MainLayout from "@/layouts/MainLayout.vue";
 import LoginPage from "@/pages/LoginPage.vue";
 import DashboardPage from "@/pages/DashboardPage.vue";
 import NodesPage from "@/pages/NodesPage.vue";
+import ScrapyRunPage from "@/pages/ScrapyRunPage.vue";
+import ExecutionsPage from "@/pages/ExecutionsPage.vue";
+import ExecutionDetailPage from "@/pages/ExecutionDetailPage.vue";
 import PlaceholderPage from "@/pages/PlaceholderPage.vue";
 import NotFound from "@/pages/NotFound.vue";
 
@@ -21,6 +24,13 @@ const routes: RouteRecordRaw[] = [
       { path: "", redirect: "/dashboard" },
       { path: "dashboard", name: "dashboard", component: DashboardPage },
       { path: "nodes", name: "nodes", component: NodesPage },
+      { path: "run", name: "run", component: ScrapyRunPage },
+      { path: "executions", name: "executions", component: ExecutionsPage },
+      {
+        path: "executions/:id",
+        name: "execution-detail",
+        component: ExecutionDetailPage,
+      },
       { path: "placeholder", name: "placeholder", component: PlaceholderPage },
     ],
   },

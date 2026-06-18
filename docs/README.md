@@ -51,6 +51,9 @@
 |------|------|
 | [`phase-0/00-brief.md`](phases/phase-0/00-brief.md) | 阶段 0 实现任务书 |
 | [`phase-0/01-review.md`](phases/phase-0/01-review.md) | 阶段 0 review 与返工清单 |
+| [`phase-0/02-review-response.md`](phases/phase-0/02-review-response.md) | 阶段 0 返工响应 |
+| [`phase-0/03-acceptance.md`](phases/phase-0/03-acceptance.md) | 阶段 0 验收记录 |
+| [`phase-1/00-brief.md`](phases/phase-1/00-brief.md) | 阶段 1 实现任务书 |
 
 ## 决策速查
 

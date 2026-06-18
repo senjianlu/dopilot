@@ -13,7 +13,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .settings import AgentSettings, AuthSettings, Capabilities, Settings
+from .settings import (
+    AgentSettings,
+    AuthSettings,
+    Capabilities,
+    ScrapydSettings,
+    Settings,
+)
 
 
 class ConfigError(Exception):
@@ -49,6 +55,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
     agent_section: dict[str, Any] = dict(data.get("agent") or {})
     auth_section: dict[str, Any] = dict(data.get("auth") or {})
     cap_section: dict[str, Any] = dict(data.get("capabilities") or {})
+    scrapyd_section: dict[str, Any] = dict(data.get("scrapyd") or {})
 
     env_agent_id = os.environ.get("AGENT_ID")
     if env_agent_id:
@@ -64,6 +71,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         agent=AgentSettings(**agent_section),
         auth=AuthSettings(**auth_section),
         capabilities=Capabilities(**cap_section),
+        scrapyd=ScrapydSettings(**scrapyd_section),
     )
 
 
