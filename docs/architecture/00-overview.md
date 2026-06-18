@@ -1,11 +1,13 @@
 # scrapydweb 架构总览
 
-> 本文是 dopilot 改造的**起点文档**，面向后续接手改造的工程师。内容基于对当前代码库（scrapydweb 1.6.0）的逐文件核实。
+> 本文是 dopilot 的**行为参考起点文档**，面向后续在 dopilot 全新复刻这些行为语义的工程师。内容基于对 scrapydweb 1.6.0 参考代码的逐文件核实。
 >
 > 阅读约定：
 > - **现状事实**：当前代码确实如此（已标注 `file:line`，可自行复核）。
-> - **改造建议 / 开放问题**：dopilot 的方向性意见，尚未落地，可讨论推翻。
-> - 所有路径均为仓库内绝对路径（以 `/workspaces/dopilot/` 为根）。
+> - **行为参考 / 开放问题**：dopilot 全新复刻其行为语义时的方向性意见，尚未落地，可讨论推翻。
+> - 所有 `file:line` 路径均**相对 `reference/scrapydweb/`**（如 `scrapydweb/run.py` 即 `reference/scrapydweb/scrapydweb/run.py`）。
+
+> **【scrapydweb 参考边界】** 整个 `docs/architecture/` 树是 **scrapydweb 现状的功能层 / 行为参考**与**测试 oracle**；其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 的设计依据**。本树中任何指向 scrapydweb 源文件的「改造建议」（如「在 `scrapydweb/...` 下新建 / 改 `models.py` / 改 `default_settings.py`」），都应理解为「dopilot 在 `apps/server/dopilot_server/...`（或 `apps/agent`）下**全新实现**该行为」，而**不是**去改 scrapydweb 文件、也不照搬其结构；保留的 `file:line` 仅作行为参考引用。dopilot 为 greenfield、按 `apps/`+`packages/` 自有领域 structure-first 设计（权威布局见 [`docs/dopilot/05-dev-setup-and-known-issues.md`](../dopilot/05-dev-setup-and-known-issues.md) §1），**不对 scrapydweb 做改名 / git mv**。详见 [`docs/dopilot/00-requirements.md`](../dopilot/00-requirements.md) 决策表。
 
 ---
 
@@ -26,7 +28,7 @@ dopilot 的目标是在这套现成框架上扩展出三类被调度对象（Scr
 | 前端 | Jinja2 SSR + 原生 JS/jQuery + Vue2/Element-UI 混用 | 多页应用（MPA），静态资源按版本目录 `static/v160/`。无 i18n。 |
 | 其他依赖 | Flask-Compress、requests（全局连接池 1000） | — |
 
-> **改造建议**：`setup.py` 把所有依赖版本严格钉死（Flask==2.0.0、Werkzeug==2.0.0、SQLAlchemy==1.3.24、APScheduler==3.6.0…）。引入 Flask-Babel / Docker SDK 等新依赖时务必验证与这些旧版本的兼容性，尤其 Flask 2.0 / Werkzeug 2.0 与较新扩展易冲突。
+> **行为参考**：`setup.py` 把所有依赖版本严格钉死（Flask==2.0.0、Werkzeug==2.0.0、SQLAlchemy==1.3.24、APScheduler==3.6.0…）。引入 Flask-Babel / Docker SDK 等新依赖时务必验证与这些旧版本的兼容性，尤其 Flask 2.0 / Werkzeug 2.0 与较新扩展易冲突。
 
 ---
 
@@ -114,7 +116,7 @@ dopilot 的目标是在这套现成框架上扩展出三类被调度对象（Scr
 
 > **开放问题**：`DATA_PATH`/`DATABASE_URL` 有**两条独立读取路径**（导入期 vars.py 直读自定义文件 + app.config 链）。改这两个键必须同时照顾两处，否则数据目录/库位置与预期不一致。
 
-### 3.3 定时任务生命周期（dopilot 的核心可复用框架）
+### 3.3 定时任务生命周期（dopilot 需复刻其行为语义的核心面）
 
 ```
 创建: Schedule 表单 → ScheduleCheckView(/schedule/check, pickle 暂存)
@@ -168,16 +170,16 @@ dopilot 的目标是在这套现成框架上扩展出三类被调度对象（Scr
 | 7 | **前端模板与静态资源**（frontend） | Jinja2 SSR MPA、布局/导航/菜单、Vue2+Element-UI、静态资源版本目录 | `scrapydweb/templates/`、`scrapydweb/static/v160/`、`__init__.py:handle_template_context` |
 | 8 | **认证、安全与跨切面工具**（auth） | 全局 Basic Auth、后台子进程、邮件/IM 告警、共享 helper | `run.py:require_login`、`scrapydweb/common.py`、`utils/sub_process.py`、`utils/send_email.py`、`views/files/log.py` |
 
-### dopilot 改造主切入面一览
+### dopilot 需复刻的行为面一览
 
-| 需求 | 现状（事实） | 主切入文件（改造建议） |
+| 需求 | 现状（事实） | 对应行为所在的 scrapydweb 参考文件（dopilot 在 apps/ 全新复刻） |
 | --- | --- | --- |
 | 三类被调度对象 | 全部硬编码假定下游是 scrapyd `*.json` | `views/api.py`、`baseview.make_request`、`execute_task.py`（抽象 Executor 接口：Scrapyd/Docker/Script） |
-| 实时日志流 | **非真流式**：整段抓取 + 前端定时 reload | `views/files/log.py`（新增 SSE/WebSocket 端点） |
+| 实时日志流 | **非真流式**：整段抓取 + 前端定时 reload | `views/files/log.py`（新增 SSE 流式端点（dopilot v1 见决策#11；v1 不引入 WebSocket）） |
 | 定时 cron/interval | APScheduler 原生支持，但 UI/后端**硬编码 cron** | `schedule.py`（`update_data_for_timer_task`/`update_kwargs`）+ `Task` 模型 + 表单 |
 | 节点选择策略 | 已有"指定节点全部执行"；**无"随机一个"** | `baseview.get_selected_nodes`、`execute_task.TaskExecutor.main`、`Task` 加 `node_strategy` 字段 |
 | 推模式下发 | 已有雏形（定时器进程内自调用），但**是本机代理转发**非真分布式 | `execute_task.TaskExecutor.schedule_task`（替换为对远程 worker agent 的真实下发） |
-| i18n（中文） | **完全缺失**：无 Flask-Babel，文案硬编码英文（模板 + JS） | `create_app()` 接 Flask-Babel；模板/JS 文案抽 gettext |
+| i18n（中文） | **完全缺失**：无 Flask-Babel，文案硬编码英文（模板 + JS） | dopilot i18n 走**前端 vue-i18n**(`apps/web`,见 `../dopilot/04-gap-i18n.md`),**不接 Flask-Babel/后端 gettext** |
 | 真实用户体系 | 单账号全有/全无，无 session/角色，账号明文存 Metadata | `run.py:require_login` + `common.authenticate`，需同步内部互调凭证 |
 
 ---
@@ -210,13 +212,13 @@ dopilot 的目标是在这套现成框架上扩展出三类被调度对象（Scr
 
 ---
 
-## 6. 全局注意事项（改造前必读的 gotchas）
+## 6. 全局注意事项（dopilot 复刻行为前必读的 gotchas）
 
-> 这些是会让改造者"踩坑"的现状事实，集中前置。
+> 这些是 dopilot 复刻其行为语义时容易"踩坑"的 scrapydweb 现状事实，集中前置。
 
-1. **生产服务器**：`app.run()`（`run.py:119`）用的是 werkzeug 开发服务器，`use_reloader=False` 写死。dopilot 生产化要换 gunicorn/uwsgi，但 **BackgroundScheduler 与 poll/logparser 子进程在多 worker 下会被重复启动**，必须保证单 worker 或把调度器外置。
+1. **生产服务器**：`app.run()`（`run.py:119`）用的是 werkzeug 开发服务器，`use_reloader=False` 写死。dopilot 生产化使用 FastAPI/uvicorn 且固定 `workers=1`；**BackgroundScheduler 在多 worker 下会被重复启动**，所以 dopilot 明确不支持多 worker/多副本。
 2. **调度器 import 时启动**：`utils/scheduler.py:90` 模块级 `scheduler.start(paused=True)`。只要 import 了 scheduler（baseview/execute_task/check_app_config 都 import）调度器就已运行，`check_app_config` 仅 resume。别误以为能在 `main()` 控制其生命周期。
-3. **强制 scrapyd 连通性断言**：`check_app_config.py:429` `assert any(results)`，所有 `SCRAPYD_SERVERS` 都连不上 → `sys.exit`。dopilot 支持非 scrapyd 对象时，无 scrapyd 环境会直接启动失败，需 `-dc/--disable_check_scrapyd` 或改造该断言。
+3. **强制 scrapyd 连通性断言**：`check_app_config.py:429` `assert any(results)`，所有 `SCRAPYD_SERVERS` 都连不上 → `sys.exit`。dopilot 支持非 scrapyd 对象时，无 scrapyd 环境会直接启动失败，需 `-dc/--disable_check_scrapyd` 或在复刻该行为时去掉这一硬断言。
 4. **首次运行强制退出**：`load_custom_settings` 找不到 cwd 下 `scrapydweb_settings_v11.py` 会拷模板并 `sys.exit`，首次跑不会真起服务。
 5. **import 期重副作用**：`vars.py` 在 import 阶段就 mkdir、`setup_database()`、清理 PARSE/DEPLOY/SCHEDULE 目录、建历史日志。二次封装/单测 import 即触发文件系统与 DB 操作，难以纯函数化。
 6. **节点编号会漂移**：`check_scrapyd_servers` 对 `SCRAPYD_SERVERS` 做 `sorted(set(...))` 重排，`node` 是 1-based 索引（排序后顺序），增删节点会导致编号漂移，已存任务的 `selected_nodes` 可能指向错节点。

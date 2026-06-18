@@ -1,18 +1,20 @@
-# dopilot 改造文档
+# dopilot 文档
 
-本目录沉淀 dopilot（基于 [scrapydweb](https://github.com/my8100/scrapydweb) 改造的私有调度平台）的**现状架构**与**改造方案**。所有文档为简体中文，关键断言均对照源码标注 `file:line`，并经多轮代码校验。
+本目录沉淀 dopilot（私有调度平台）的**设计与实现方案**,以及 scrapydweb 的**现状行为参考**。所有文档为简体中文，关键断言均对照源码标注 `file:line`，并经多轮代码校验。
 
-> 📁 **现状代码（scrapydweb 本体）位于 `reference/scrapydweb/`**。本套文档中的 `scrapydweb/…`、`setup.py`、`tests/` 等路径均相对该目录（完整路径 = `reference/scrapydweb/<路径>`）。
+> **【scrapydweb 参考边界】** dopilot 为 **greenfield**(全新编写,按 `apps/`+`packages/` 自有领域 structure-first 设计;权威布局见 [`dopilot/05-dev-setup-and-known-issues.md`](dopilot/05-dev-setup-and-known-issues.md) §1)。scrapydweb（[原项目](https://github.com/my8100/scrapydweb)）仅作**功能层/行为参考**与**测试 oracle**;其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 设计依据**,也**不做改名/git mv**。详见 [`dopilot/00-requirements.md`](dopilot/00-requirements.md) 决策表。
+
+> 📁 **scrapydweb 本体(只读行为参考)位于 `reference/scrapydweb/`**。本套文档中的 `scrapydweb/…`、`setup.py`、`tests/` 等路径均相对该目录（完整路径 = `reference/scrapydweb/<路径>`）;它不参与 dopilot 构建、不被 import、不改名。
 
 ## 推荐阅读顺序
 
 1. **先看目标**：[`dopilot/00-requirements.md`](dopilot/00-requirements.md) —— 需求、已确认决策、四阶段路线、server/agent 部署。
-2. **再看总纲**：[`dopilot/10-roadmap.md`](dopilot/10-roadmap.md) —— 综合改造路线图，串联现状+gap+决策。
-3. **按需深入**：现状看 `architecture/`，改造看 `dopilot/0x-gap-*`。
+2. **再看总纲**：[`dopilot/10-roadmap.md`](dopilot/10-roadmap.md) —— 综合 greenfield 构建/移植路线图，串联 scrapydweb 行为参考+gap+决策。
+3. **按需深入**：scrapydweb 行为参考看 `architecture/`，dopilot 设计/实现看 `dopilot/0x-gap-*`。
 
-## 一、现状架构（`architecture/`）
+## 一、scrapydweb 现状行为参考（`architecture/`）
 
-> scrapydweb 的工作原理，作为改造基线。
+> scrapydweb 的工作原理,作为 dopilot 的**功能层/行为参考**(非待改文件、非结构模板);dopilot 在 `apps/` 下全新复刻所需行为。
 
 | 文档 | 内容 |
 |------|------|
@@ -24,21 +26,21 @@
 | [`05-scrapyd-cluster-io.md`](architecture/05-scrapyd-cluster-io.md) | 多节点通信、scrapyd API 封装、logparser |
 | [`06-auth-and-utils.md`](architecture/06-auth-and-utils.md) | HTTP Basic Auth、三个后台子进程、邮件告警 |
 
-## 二、改造方案（`dopilot/`）
+## 二、dopilot 设计与实现方案（`dopilot/`）
 
 | 文档 | 内容 |
 |------|------|
 | [`00-requirements.md`](dopilot/00-requirements.md) | **北极星**：需求、决策表、四阶段路线、部署图 |
 | [`01-gap-executors.md`](dopilot/01-gap-executors.md) | 多类型执行器抽象（Scrapy/脚本/Docker）—— 方案 A |
 | [`02-gap-scheduling-nodes-push.md`](dopilot/02-gap-scheduling-nodes-push.md) | 定时 + 节点策略(指定/全部/随机) + 推模式 |
-| [`03-gap-realtime-logs.md`](dopilot/03-gap-realtime-logs.md) | 实时日志 —— SSE + LogSource 抽象 |
-| [`04-gap-i18n.md`](dopilot/04-gap-i18n.md) | 国际化（默认中文）—— Flask-Babel + vue-i18n |
+| [`03-gap-realtime-logs.md`](dopilot/03-gap-realtime-logs.md) | 实时日志 —— server 按需 pull agent tail API（开窗高频/后台低频/结束 final drain）+ server→web SSE，正文落 /server-data/logs、索引/offset/状态落 PostgreSQL；第一版无 WebSocket |
+| [`04-gap-i18n.md`](dopilot/04-gap-i18n.md) | 国际化（默认中文）—— 前端 vue-i18n（greenfield，不用 Flask-Babel） |
 | [`05-dev-setup-and-known-issues.md`](dopilot/05-dev-setup-and-known-issues.md) | 环境搭建 + `pkg_resources` 等已知坑 |
-| [`06-frontend-rewrite.md`](dopilot/06-frontend-rewrite.md) | 前端整体重构（Vue 3 + Element Plus + 渐进式） |
-| [`07-testing-baseline.md`](dopilot/07-testing-baseline.md) | 测试与回归基线（零回归安全网） |
+| [`06-frontend-rewrite.md`](dopilot/06-frontend-rewrite.md) | 前端整体构建（Vue 3 + Element Plus，greenfield SPA，分阶段交付） |
+| [`07-testing-baseline.md`](dopilot/07-testing-baseline.md) | 测试基线（scrapydweb 测试=reference 行为 oracle；dopilot 自有测试在 apps/*/tests） |
 | [`08-docker-deployment.md`](dopilot/08-docker-deployment.md) | server/agent Docker 化 + 数据持久化 |
-| [`09-package-rename.md`](dopilot/09-package-rename.md) | scrapydweb→dopilot 改名影响面 |
-| [`10-roadmap.md`](dopilot/10-roadmap.md) | **综合改造路线图（总纲）** |
+| [`09-package-rename.md`](dopilot/09-package-rename.md) | scrapydweb 行为/契约移植注意事项（非改名；保留耦合点分析供移植参考） |
+| [`10-roadmap.md`](dopilot/10-roadmap.md) | **综合 greenfield 构建/移植路线图（总纲）** |
 
 ## 决策速查
 
@@ -46,7 +48,9 @@
 - **部署**：server（调度中心+Web）/ agent（worker 节点），均 Docker
 - **推模式**：主动下发到指定 worker 立即执行
 - **认证**：单用户唯一管理员
-- **前端**：Vue 3 + Element Plus + Vite + TS，前后端分离，渐进式 strangler
-- **实时日志**：SSE（单向流，纯 WSGI 可跑）
+- **后端**：FastAPI + Pydantic + ASGI（`apps/server`），提供 `/api/v1/*` JSON/SSE API
+- **前端**：Vue 3 + Element Plus + Vite + TS（`apps/web`），前后端分离，**greenfield SPA** 直连 `/api/v1`、分阶段交付页面（无 Jinja 共存/strangler）
+- **数据库**：PostgreSQL 唯一数据库，SQLAlchemy + 裸 Alembic（FastAPI 无 Flask，不用 Flask-Migrate）；PG 存业务数据 + 日志索引/offset/状态（表 `execution_log_files`），**日志正文不进 PG，落 server 本地卷 `/server-data/logs`**
+- **实时日志**：server 按需从 agent tail API（HTTP `GET /logs/tail`）拉取日志增量 —— 打开 Web 日志窗口高频拉取（1s）、后台 reconcile loop 低频 drain active execution（30s）、任务结束后 final drain；正文写入 `/server-data/logs`，索引/offset/状态写入 PostgreSQL，并通过 SSE 单向推给 Vue。**第一版完全不使用 WebSocket、agent 不主动推**
 - **镜像发布**：构建推送到 Docker Hub `rabbir/dopilot:latest`（agent 为 `rabbir/dopilot-agent:latest`）；镜像命名空间 `rabbir` ≠ git origin `senjianlu`
-- **仓库结构**：monorepo —— server + agent 同仓开发，`reference/scrapydweb/` 仅基线参考、不参与构建
+- **仓库结构**：monorepo（`apps/{server,agent,web}` + `packages/{protocol,client}`，权威布局见 `dopilot/05-dev-setup-and-known-issues.md` §1）—— 全新编写，`reference/scrapydweb/` 仅行为参考、不参与构建/不被 import/不改名

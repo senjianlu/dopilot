@@ -1,9 +1,11 @@
 # 数据模型与持久化
 
+> **【scrapydweb 行为参考·边界】** 本文描述 **scrapydweb 现状行为/语义**，作为 dopilot 的**功能层参考**；其代码写法、目录结构、模块划分**不得作为 dopilot 设计依据**。文中 `file:line` 路径均**相对 `reference/scrapydweb/`**（如 `scrapydweb/run.py` 即 `reference/scrapydweb/scrapydweb/run.py`；该目录只读、不被 import、不参与构建、不改名）。任何"改造切入点/复用/保留"类措辞，一律理解为"dopilot 需在 `apps/` 下**全新复刻其行为语义**"，而非改动或照搬 scrapydweb 文件。详见 `../dopilot/00-requirements.md` 决策表。
+
 > 适用版本：scrapydweb `__version__ = '1.6.0'`（见 `scrapydweb/__version__.py:4`）
-> 本文面向后续把 scrapydweb 改造为 dopilot 的工程师，分两条线索叙述：
-> - **现状事实**：当前代码就是这么写的，标注 `file:line`。
-> - **改造建议 / 开放问题**：dopilot 需要扩展的方向，明确标记为「建议」「开放问题」，不要与现状混淆。
+> 本文面向 dopilot 工程师，将 scrapydweb 持久化行为作为功能层参考，分两条线索叙述：
+> - **现状事实**：scrapydweb 当前代码就是这么写的，标注 `file:line`。
+> - **dopilot 复刻建议 / 开放问题**：dopilot 在 `apps/` 下全新复刻其行为语义时需要扩展的方向，明确标记为「建议」「开放问题」，不要与现状混淆。
 
 ---
 
@@ -61,7 +63,7 @@ scrapydweb 的持久化层 = **Flask-SQLAlchemy（单一 `db` 实例，多 bind 
 
 ## 2. 全部表 / 模型字段表
 
-> 类型一栏使用 SQLAlchemy 列类型；「约定」一栏标注实际存储的隐式约定（重要，dopilot 改造时易踩坑）。
+> 类型一栏使用 SQLAlchemy 列类型；「约定」一栏标注实际存储的隐式约定（重要，dopilot 实现自有数据模型时易踩坑）。
 
 ### 2.1 `Metadata` 表（应用级元数据 / 配置，单行表）
 
@@ -118,7 +120,7 @@ scrapydweb 的持久化层 = **Flask-SQLAlchemy（单一 `db` 实例，多 bind 
 
 > 注意：`Job` 表与 `Task` / `TaskResult` 体系**无外键关联**，是另一条独立数据线，由 `jobs_snapshot` 周期任务填充（见 4.5）。
 
-### 2.3 `Task` 表（定时任务定义）—— **dopilot 重点扩展对象**
+### 2.3 `Task` 表（定时任务定义）—— **dopilot 全新复刻时的重点参考对象**
 
 - 定义：`models.py:89-128`
 - `__tablename__='task'`，**无 `__bind_key__`** → 落默认 URI（**timertasks 库**）
@@ -321,23 +323,23 @@ check_app_config(config)
 
 ## 5. 迁移现状与局限（gotchas，dopilot 必读）
 
-| # | 现状事实 | 影响 / 改造注意 |
+| # | 现状事实 | 影响 / dopilot 复刻注意 |
 |---|---|---|
-| G1 | **无任何数据库迁移机制**。`models.py:14` 顶部就是 `# TODO: Database Migrations`，没有 Alembic / Flask-Migrate。 | 建表全靠 `db.create_all()`（只 CREATE IF NOT EXISTS，绝不 ALTER）。给现有模型加/改列，旧库**不会自动升级**，必须手动迁移或删库重建。dopilot 扩展 `Task` 几乎必踩此坑。 |
+| G1 | **scrapydweb 无任何数据库迁移机制**。`models.py:14` 顶部就是 `# TODO: Database Migrations`，没有 Alembic / Flask-Migrate。 | **现状（reference）**：建表全靠 `db.create_all()`（只 CREATE IF NOT EXISTS，绝不 ALTER）；给现有模型加/改列，旧库不会自动升级，scrapydweb 只能**手动迁移或删库重建**——这是 scrapydweb reference 行为，**不是 dopilot 策略**。**dopilot**：从阶段 0 起就以**裸 Alembic**（FastAPI 无 Flask app，不能用 Flask-Migrate）做版本化迁移，扩展 `Task` 走 revision，不删库（见 §7.1）。 |
 | G2 | **两套互不相通的持久化**：ORM（`Metadata`/`Task`/`TaskResult`/`TaskJobResult`/`Job`）与 APScheduler `SQLAlchemyJobStore`（`apscheduler_jobs`）。 | 仅 `job.id == str(Task.id)` 软关联，无外键。删 Task 不会删 apscheduler job（靠 `execute_task.py:155` 兜底）。 |
 | G3 | **多库多 bind**：`metadata` / `jobs` bind 路由到独立库；`Task`/`TaskResult`/`TaskJobResult` 落默认 timertasks 库。 | 跨 bind 不能 JOIN / 外键。SQLite 下 4 个 `.db` 文件，MySQL/PG 下 4 个数据库。 |
 | G4 | `Job` 表**运行时按节点动态建表**，表名 = server 名经 `STRICT_NAME_PATTERN`（`vars.py:81`，非 `[0-9A-Za-z_]` 替换为 `_`），如 `127.0.0.1:6800` → `127_0_0_1_6800`。 | 同名 `Job` 类反复定义会触发 `SAWarning`（`models.py:74` 注释），靠 `jobs_table_map` 缓存避免。**新增/删除 scrapyd 节点只会新增表、不会删旧表**。 |
 | G5 | `Metadata` 是**单行配置表**，用 `version`(=`__version__`) 唯一键过滤。 | 升级 `__version__` 会**插入新行而非更新旧行**，旧配置不自动迁移（`__init__.py:135-138`）。 |
 | G6 | 字段类型有隐式约定：`coalesce` 存字符串 `'True'/'False'`（`schedule.py:443`）；`selected_nodes` 存 `str(list)` **repr** 写、`json.loads` 读（`schedule.py:424` vs `:99`）；`start_date`/`end_date` 是 `String(19)` **文本**非 DateTime。 | `selected_nodes` 是 int 列表时 `str([1,2])=='[1, 2]'` 恰好是合法 JSON，故现状能跑；一旦存非数字内容（如节点名字符串），repr 的单引号会让 `json.loads` 失败——**dopilot 应改为统一 `json.dumps`/`json.loads`**。 |
-| G7 | `SQLALCHEMY_ECHO=True` **硬编码开启**（`__init__.py:115`）。 | 生产环境会把所有 SQL 打到日志，量大且泄露细节。改造时应关掉或改为可配置。 |
-| G8 | `Metadata.password` 明文存储（`models.py:32`）。 | 安全隐患，dopilot 改造时建议加密或外置密钥管理（开放问题）。 |
+| G7 | `SQLALCHEMY_ECHO=True` **硬编码开启**（`__init__.py:115`）。 | 生产环境会把所有 SQL 打到日志，量大且泄露细节。dopilot 复刻时应关掉或改为可配置。 |
+| G8 | `Metadata.password` 明文存储（`models.py:32`）。 | 安全隐患，dopilot 实现自有数据模型时建议加密或外置密钥管理（开放问题）。 |
 | G9 | `create_table` 的 `db.create_all(bind='jobs')` 与启动建表在 SQLite 下可能报 `table already exists`。 | 靠 `IF NOT EXISTS` 与 try/except 容错（`jobs.py:182` 注释已说明），现状无功能影响。 |
 
 ---
 
-## 6. 改造定制点（针对 dopilot 三类被调度对象）
+## 6. dopilot 复刻定制点（针对 dopilot 三类被调度对象）
 
-> 全部为**改造建议 / 开放问题**，不是现状。
+> 全部为**dopilot 复刻建议 / 开放问题**，不是 scrapydweb 现状；指 dopilot 在 `apps/` 下全新复刻其行为语义时的取舍。
 
 ### 6.1 新增被调度对象类型（Docker 常驻爬虫、Python 一次性脚本）
 
@@ -347,11 +349,11 @@ check_app_config(config)
 
 | 方案 | 做法 | 代价 |
 |---|---|---|
-| A. 加 `task_type` 列 + 放宽 nullable | 给 `Task` 加 `task_type`（`scrapy`/`docker`/`script`），把 `project`/`version`/`spider`/`jobid` 改 nullable，按类型存不同语义字段 | 改动集中但语义混杂；需迁移（G1） |
+| A. 加 `task_type` 列 + 放宽 nullable | 给 `Task` 加 `task_type`（`scrapy`/`docker`/`script`），把 `project`/`version`/`spider`/`jobid` 改 nullable，按类型存不同语义字段 | 改动集中但语义混杂；需迁移——dopilot 走 Alembic revision（G1，非删库重建） |
 | B. 新建独立模型 | `Task` 保留 scrapyd 专用，另建 `DockerTask` / `ScriptTask`（同库或同表继承） | 模型清晰但 `execute_task` 分派逻辑需重写 |
 | C. 单表继承（STI） | 共用 `task` 表 + `task_type` 区分子类 | SQLAlchemy 原生支持，但列冗余 |
 
-**节点策略（开放问题）**：当前**没有「指定全部 / 随机选一个」的字段**。`selected_nodes` 只存「选中哪些节点」，下发逻辑见 `execute_task.py:53` 对 `nodes` 循环。dopilot 需新增字段（建议 `node_strategy`：`all` / `random` / `specified`），并在 `TaskExecutor` 里据此挑节点；「推模式指定执行」可复用既有「向指定 node 的 scrapyd 下发」路径（`execute_task.py:75-103` 的 `schedule_task(node)`）。
+**节点策略（开放问题）**：当前**没有「指定全部 / 随机选一个」的字段**。`selected_nodes` 只存「选中哪些节点」，下发逻辑见 `execute_task.py:53` 对 `nodes` 循环。dopilot 需新增字段（建议 `node_strategy`：`all` / `random` / `specified`），并在执行器里据此挑节点；「推模式指定执行」可参考 scrapydweb「向指定 node 的 scrapyd 下发」的行为语义（`execute_task.py:75-103` 的 `schedule_task(node)`），由 dopilot 在 `apps/` 下全新复刻。
 
 ### 6.2 cron / interval / date 触发参数扩展
 
@@ -366,7 +368,7 @@ check_app_config(config)
 ### 6.4 每节点作业表结构扩展
 
 - 改 `create_jobs_table` 工厂（`models.py:43`），bind=`jobs`。
-- 新增列需同时考虑历史表迁移（G1，无自动迁移）。
+- 新增列需同时考虑历史表迁移——dopilot 通过 Alembic revision 升级（G1），不沿用 scrapydweb 的删库重建。
 
 ### 6.5 国际化 i18n（中文）
 
@@ -377,9 +379,10 @@ check_app_config(config)
 
 ## 7. 给 dopilot 的落地清单（建议）
 
-1. **先解决 G1（迁移）**：引入 Flask-Migrate / Alembic，否则任何 `Task` 扩展都得删库重建。
+1. **先解决 G1（迁移）**：dopilot 从**阶段 0** 起就走 **裸 Alembic** 版本化迁移（**不是 Flask-Migrate**——dopilot 是 FastAPI，无 Flask app，`flask db` CLI 无从挂载，故不能用 Flask-Migrate；直接用 Alembic 的 `env.py` + `alembic.ini` 管 migration）。**「删库重建」只是 scrapydweb reference 的现状行为，不作为 dopilot 的迁移策略**；任何 `Task` 扩展都通过 Alembic revision 升级，不删库。
 2. **统一序列化**：把 `selected_nodes` 从 `str(list)` 改为 `json.dumps`（修 G6）。
 3. **去掉硬编码 `SQLALCHEMY_ECHO=True`**（修 G7），改为读配置。
 4. **抽象 `Task` 的对象类型**：加 `task_type` + `node_strategy`，并放宽 scrapyd 专用列的 nullable（6.1）。
-5. **明确两套持久化边界**（G2）：若 dopilot 引入新调度后端（如 Docker exec / 子进程），仍可复用 APScheduler jobstore；新对象类型的执行逻辑在 `execute_task` 分派。
-6. **口令安全**（G8）：`Metadata.password` 改加密 / 外置。
+5. **明确两套持久化边界**（G2）：若 dopilot 引入新调度后端（如 Docker exec / 子进程），仍可沿用 APScheduler jobstore 这一行为模式（在 dopilot 自有实现中）；新对象类型的执行逻辑参考 scrapydweb `execute_task` 的分派语义、由 dopilot 全新复刻。
+6. **APScheduler jobstore 落 PostgreSQL**：dopilot 唯一库即 PostgreSQL，APScheduler 的 `SQLAlchemyJobStore` 直接指向同一 PostgreSQL（`apscheduler_jobs` 表），不再像 scrapydweb 那样另起一个独立 `apscheduler` 库 / SQLite 文件。注意单实例硬约束——server = 单容器 + uvicorn workers=1 + 单 APScheduler 实例，jobstore 落 PG 仅为持久化，**不引入任何分布式锁 / 多副本 fan-out**。
+7. **口令安全**（G8）：`Metadata.password` 改加密 / 外置。
