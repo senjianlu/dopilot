@@ -283,15 +283,15 @@ executor.run()                                     # 执行编排（遍历节点
 ③ Task 模型 (apps/server/dopilot_server/models/) 自带 task_type/node_strategy + 三类对象字段
    + PostgreSQL + SQLAlchemy + 裸 Alembic 迁移 (apps/server/migrations/)
         ↓
-④ 日志 pull 链路：server 从 agent GET /logs/tail 拉增量 → 写 /server-data/logs 正文 + PG execution_log_files 索引
-   → SSE 推前端（第一版无 WebSocket）。详见 03-gap-realtime-logs
+④ 节点模型 + 健康发现：Node 实体 (apps/server/dopilot_server/nodes/ + models/) 承载 stable agent_id/type/endpoint(agent 地址)/token/能力；
+   第一版 [nodes].agents 仅作初始发现，server 轮询 agent /health 后 upsert nodes 表，调度只选健康 agent
         ↓
-⑤ DockerExecutor (经 agent；agent 内部用 docker SDK 起停常驻容器、采集健康/退出码)
+⑤ 日志 pull 链路：server 从 agent GET /logs/tail 拉增量 → 写 /server-data/logs 正文 + PG execution_log_files 索引
+   → SSE 推前端（第一版无 WebSocket）。详见 03-gap-realtime-logs
         ↓
 ⑥ ScriptExecutor (经 agent；agent 内部用 subprocess，参考 sub_process.py 子进程生命周期范式 R9)
         ↓
-⑦ 节点模型：Node 实体 (apps/server/dopilot_server/nodes/ + models/) 承载 stable agent_id/type/endpoint(agent 地址)/token/能力，
-   支持 all/random 策略；第一版 [nodes].agents 仅作初始发现，server 轮询 agent /health 后 upsert nodes 表
+⑦ DockerExecutor (经 agent；agent 内部用 docker SDK 起停常驻容器、采集健康/退出码)
         ↓
 ⑧ docker/script 的 /api/v1 JSON 端点 + apps/web SPA 页面/路由 + i18n 接入
 ```

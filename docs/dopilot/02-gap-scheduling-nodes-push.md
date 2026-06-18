@@ -222,7 +222,7 @@ execute_task(): candidates = json.loads(task.selected_nodes)   (execute_task.py:
 ```
   ┌─ 定时路径 ────────┐        ┌─ 推模式路径（新增）──────────────┐
   │ APScheduler 线程  │        │ 用户点「立即推送」按钮            │
-  │   execute_task()  │        │   POST /push  (新 XHR 端点)      │
+  │   execute_task()  │        │   POST /api/v1/executions/run     │
   └─────────┬─────────┘        │   body: {task_type, nodes,       │
             │                  │          node_strategy, payload} │
             │                  └──────────────┬──────────────────┘
@@ -252,7 +252,7 @@ execute_task(): candidates = json.loads(task.selected_nodes)   (execute_task.py:
 - 对 **Docker/脚本**，server→agent 同样走 `packages/protocol` 定义的网络协议（HTTP），由 `apps/server/.../executors/{docker,script}.py` 调用、`apps/agent` runners 实际执行。三类 Executor 的 `apps/server/.../executors/{scrapyd,docker,script}.py` 都是「向 agent 发网络请求」，差异在 agent 侧 runner。
 - dopilot **不存在**进程内 `test_client` 自调用层可复用（scrapydweb 平台内部 fan-out 是进程内自调用而非远程推送，见 `common.py:48-80`，仅作行为对照）。
 - **agent 注册（v1）**：`[nodes].agents=["agent:6800"]` 作为 server 初始发现地址（指向 agent API，非裸 scrapyd）；agent 启动时携带稳定 `agent_id`，server 通过 `GET agent /health` 读取并 upsert `nodes` 表，调度只选健康 agent。agent 主动 heartbeat 留后续。`execution_id`/`attempt_id` 由 server 生成下发 agent。
-- 新增「立即推送」端点（`/api/v1` JSON）：可**临时指定节点+策略**，服务端受控并发执行；与 B-3 共用同一「选节点+策略+下发」入口（行为参考 `fire_task` 的即时触发思路）。
+- 新增「立即推送」端点：`POST /api/v1/executions/run`，可**临时指定节点+策略**，服务端受控并发执行；与 B-3 共用同一「选节点+策略+下发」入口（行为参考 `fire_task` 的即时触发思路）。
 
 ### 4.4 候选方案对比（推模式相关）
 
@@ -263,7 +263,7 @@ execute_task(): candidates = json.loads(task.selected_nodes)   (execute_task.py:
 
 ### 4.5 推荐（B-4）
 
-**采用方案D，与 A-2/A-3 三类对象一起做（第二步）**：dopilot 在 `apps/server/dopilot_server/executors/` 建立 `BaseExecutor` + `Scrapyd/Script/Docker` 实现（`base.py`/`scrapyd.py`/`script.py`/`docker.py`），按 `task_type` 分派；新增 `/api/v1` 立即推送端点（JSON）做服务端受控并发 push；**三类下发一律经 dopilot-agent（`apps/agent` runners + `packages/protocol`）执行——scrapy 类经 agent 调本机 scrapyd（addversion/schedule），Docker/脚本经 agent runner，server 不直连裸 scrapyd**。重试与 TaskResult/TaskJobResult 入库语义全程复用。
+**采用方案D，与 A-2/A-3 三类对象一起做（第二步）**：dopilot 在 `apps/server/dopilot_server/executors/` 建立 `BaseExecutor` + `Scrapyd/Script/Docker` 实现（`base.py`/`scrapyd.py`/`script.py`/`docker.py`），按 `task_type` 分派；新增 `POST /api/v1/executions/run` 立即推送端点（JSON）做服务端受控并发 push；**三类下发一律经 dopilot-agent（`apps/agent` runners + `packages/protocol`）执行——scrapy 类经 agent 调本机 scrapyd（addversion/schedule），Docker/脚本经 agent runner，server 不直连裸 scrapyd**。重试与 TaskResult/TaskJobResult 入库语义全程复用。
 
 > dopilot-agent 在阶段1 即落地（非阶段2）；阶段1 先做 scrapy/scrapyd，但其下发也已经过 agent。Docker/脚本 runner 在后续阶段补，但走的是同一条 server→agent 通道。
 
@@ -357,7 +357,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 8. 节点选择默认过滤健康状态；第一版健康条件来自 server 轮询 agent `/health`，暂不引入复杂负载权重。
 9. 稳定节点标识采用独立 `nodes` 表主键/唯一 `agent_id`；agent 启动传入容器重启不变的 `agent_id`。
 10. B-4 推模式对 Docker/脚本的 agent 侧 runner：脚本用 agent subprocess；Docker/K3s SDK 归 agent 侧，阶段 3 实作。server→agent 通道已锁定为 HTTP。
-11. B-4「推模式」与 B-3「随机」共用同一 `/api/v1` 即时推送端点：请求中传 `task_type`、候选节点、`node_strategy`，server 归约后下发。
+11. B-4「推模式」与 B-3「随机」共用同一 `POST /api/v1/executions/run` 即时推送端点：请求中传 `task_type`、候选节点、`node_strategy`，server 归约后下发。
 12. 多节点「全部执行」采用 server 侧受控并发下发；并发上限做成配置项，避免大集群时压垮 agent 或 PostgreSQL。
 
 ---
