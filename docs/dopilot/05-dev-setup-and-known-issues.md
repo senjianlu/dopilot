@@ -85,3 +85,56 @@ ModuleNotFoundError: No module named 'pkg_resources'
 scrapydweb 首次运行会在工作目录生成默认 `scrapydweb_settings_v11.py` 配置文件（文件名硬编码于 `scrapydweb/vars.py:29` `SCRAPYDWEB_SETTINGS_PY`），需在其中配置 `SCRAPYD_SERVERS` 等。完整启动步骤待依赖问题修复、跑通后补充到本文。
 
 相关：配置加载顺序见 `docs/architecture/01-bootstrap-and-config.md`。
+
+## 6. 开发期工具链：MCP 与 Skills
+
+记录 Claude Code 在 dopilot 开发中用到的 MCP server 与 skills，以及它们各自服务的目标。原则：**能用内置 skill / Bash 解决的就不引入多余 MCP**，当前只新增一个浏览器驱动 MCP。
+
+### 6.1 两个开发目标 → 工具映射
+
+| 目标 | 需要的能力 | 用什么 |
+|------|-----------|--------|
+| ① 开发中自己开页面、测前端功能点 | 浏览器导航 / 点击 / 填表 / 截图 / 读控制台·网络 | **Playwright MCP**(唯一需新增的 MCP)+ 内置 `run` / `verify` skill |
+| ② 构建镜像、本地起 server+agent 双端、跑爬虫验收 | Docker 构建与编排 | **Bash + Docker CLI**(不需要 MCP)+ 内置 `verify` skill |
+
+### 6.2 MCP server
+
+| 名称 | 配置位置 | 作用 | 备注 |
+|------|---------|------|------|
+| `playwright` | 仓库根 `.mcp.json`(项目级、已签入 git) | 驱动浏览器测试 Vue3 + Element Plus 前端功能点 | 靠 `npx -y @playwright/mcp@latest` 拉起,需先装 Node |
+
+> 选型：相比 chrome-devtools MCP,Playwright MCP 更通用、可自带下载 Chromium,适合常规页面功能点测试。后续若需深挖 SSE 实时日志的 EventStream/网络面板,可再叠加 chrome-devtools MCP。
+> Docker 侧刻意**不引入 Docker MCP**——目标 ② 全程用 Bash 调 Docker CLI 即可,且 `08-docker-deployment.md` 已规划好 `Dockerfile.server` / `Dockerfile.agent` / compose。
+
+### 6.3 Skills(均为内置,零新增)
+
+| skill | 用途 |
+|-------|------|
+| `run` | 拉起 dopilot 前端/后端 app |
+| `verify` | 跑起来观察行为做验收(功能点测试 + 双端爬虫端到端) |
+| `code-review` / `security-review` | 改动的质量与安全把关 |
+
+### 6.4 前置系统依赖(已就绪,实测于 2026-06-18)
+
+| 依赖 | 实测版本 | 状态 | 备注 |
+|------|---------|------|------|
+| Node / npx | v22.22.3 / npx 10.9.8 | ✅ | Playwright MCP 经 npx 拉起 |
+| Docker | 29.5.3 | ✅ | daemon 免 sudo 可达(已在 docker 组) |
+| Docker Compose | v5.1.4 | ✅ | 目标 ② 编排用 |
+| `@playwright/mcp` | v0.0.76 | ✅ | npx 缓存已预热 |
+| Playwright Chromium | revision **1228**(Chrome 149) | ✅ | 与 MCP 捆绑的 playwright-core 所需 revision **精确匹配**;已实测无头启动 + 截图成功,系统库齐全 |
+
+> Playwright MCP 配置在仓库根 `.mcp.json`,需在 Claude Code **下次会话 / 重连 MCP** 时才被拉起,可用 `/mcp` 查看状态。
+
+**重新置备时的参考命令**(换机/重装环境时用):
+
+```bash
+# Node(经 npx 拉起 Playwright MCP)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs
+# Playwright 浏览器:务必与 @playwright/mcp 捆绑的 playwright-core revision 对齐
+npx playwright install chromium               # 仅缺系统库时再加: sudo npx playwright install-deps chromium
+# Docker
+curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER   # 重登生效
+```
+
+> ⚠️ Chromium revision 必须和 `@playwright/mcp` 内置的 playwright-core 一致(本次均为 1228)。若 MCP 报 "browser not found",多半是 MCP 版本变动带来的 revision 漂移——重跑一次 `npx playwright install chromium` 即可。
