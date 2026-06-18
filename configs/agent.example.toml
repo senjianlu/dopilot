@@ -1,0 +1,19 @@
+# dopilot agent example config.
+#
+# Copy to configs/agent.toml (or point DOPILOT_CONFIG at your own file) and edit.
+# WARNING: the "change-me" shared_token below is a placeholder and is NOT production-safe.
+# It MUST match the server's [agent_auth].shared_token. Replace before any real deployment.
+
+[agent]
+agent_id = "scrapy-agent-1"
+host = "0.0.0.0"
+port = 6800
+workdir = "/agent-data"
+
+[auth]
+shared_token = "change-me-agent-token"
+
+[capabilities]
+scrapy = true
+script = false
+docker = false

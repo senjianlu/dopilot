@@ -1,0 +1,91 @@
+# dopilot backend execution loop: db + server + agent.
+#
+# This compose file lives in deploy/docker, so build contexts point at the repo
+# ROOT via context: ../.. (Dockerfiles expect the repo root as their context).
+#
+# The web SPA is NOT part of compose: it runs via Vite during development
+# (see Makefile `web` target). Single server replica only (hard constraint:
+# in-process scheduler + in-memory pull/SSE tables cannot be replicated).
+#
+# Image namespace is rabbir (Docker Hub); unrelated to the git origin senjianlu.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: dopilot
+      POSTGRES_USER: dopilot
+      POSTGRES_PASSWORD: dopilot
+    volumes:
+      - dopilot-db:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dopilot -d dopilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # One-shot migration step: brings an empty database up to head before the
+  # server starts. Reuses the server image (same build + tag, built once) and
+  # overrides its entrypoint. Keeps migrations an explicit, observable step;
+  # the server process never runs create_all().
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.server
+    image: rabbir/dopilot:latest
+    entrypoint: ["alembic", "upgrade", "head"]
+    environment:
+      DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  agent:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.agent
+    image: rabbir/dopilot-agent:latest
+    init: true
+    environment:
+      DOPILOT_CONFIG: /app/configs/agent.toml
+      AGENT_ID: scrapy-agent-1
+      AGENT_WORKDIR: /agent-data
+    volumes:
+      - dopilot-agent-data:/agent-data
+      - ../../configs/agent.example.toml:/app/configs/agent.toml:ro
+    ports:
+      - "6800:6800"
+    restart: unless-stopped
+
+  server:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.server
+    image: rabbir/dopilot:latest
+    init: true
+    environment:
+      DOPILOT_CONFIG: /app/configs/server.toml
+      DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
+    volumes:
+      - dopilot-server-data:/server-data
+      # compose-network config: db/agent reached by service name (not localhost)
+      - ../../configs/server.docker.toml:/app/configs/server.toml:ro
+    ports:
+      - "5000:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      agent:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  dopilot-db:
+  dopilot-server-data:
+  dopilot-agent-data:

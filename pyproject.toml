@@ -1,0 +1,64 @@
+# Repo-root DEV TOOLING config only — this is NOT an installable package
+# (there is intentionally no [project] / [build-system] table here).
+#
+# The actual distributions live under their own pyproject.toml files:
+#   packages/protocol  -> dopilot-protocol  (import: dopilot_protocol)
+#   apps/server        -> dopilot-server     (import: dopilot_server)
+#   apps/agent         -> dopilot-agent      (import: dopilot_agent)
+# The web SPA lives under apps/web (pnpm workspace, see pnpm-workspace.yaml).
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# importlib mode: each test package keeps its own namespace, so the identically
+# named `tests` packages (apps/server/tests, apps/agent/tests) and their
+# same-named modules (test_config.py, conftest.py) don't collide in one run.
+addopts = ["--import-mode=importlib"]
+testpaths = [
+    "apps/server/tests",
+    "apps/agent/tests",
+    "packages/protocol/tests",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# reference/ is a read-only scrapydweb snapshot; never lint or format it.
+extend-exclude = [
+    "reference",
+    ".venv",
+    ".venv-ref",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "W",   # pycodestyle warnings
+]
+ignore = [
+    # Keep the explicit `class X(str, Enum)` form: it is pydantic-friendly and
+    # frozen in the protocol contract (the wire value is the member string).
+    "UP042",
+    # Keep classic TypeVar generics over PEP 695 `def f[T]()` for readability.
+    "UP047",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom puts Depends()/Query()/... in parameter
+# defaults on purpose; these are not the mutable-default trap B008 targets.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Header",
+    "fastapi.Body",
+]

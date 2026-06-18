@@ -1,0 +1,48 @@
+# dopilot server config for the docker-compose backend loop.
+#
+# Same as server.example.toml but tuned for the compose network: the database
+# and agent are reached by SERVICE NAME (db / agent), not localhost — inside the
+# server container "localhost" is the server itself. See docs/dopilot/08 §2.5.
+#
+# change-me* values are NOT production-safe; this file is a local/dev compose
+# convenience, not a secret store.
+
+[server]
+host = "0.0.0.0"
+port = 5000
+public_url = "http://localhost:5000"
+
+[database]
+url = "postgresql+psycopg://dopilot:dopilot@db:5432/dopilot"
+
+[auth]
+admin_username = "admin"
+admin_password = "change-me"
+token_secret = "change-me"
+access_token_ttl_minutes = 720
+stream_token_ttl_seconds = 60
+
+[agent_auth]
+# Must match [auth].shared_token in the agent config (agent.example.toml).
+shared_token = "change-me-agent-token"
+
+[nodes]
+# Reach the agent by its compose service name, not localhost.
+agents = ["agent:6800"]
+
+[scheduler]
+enabled = true
+timezone = "Asia/Shanghai"
+
+[logs]
+root_dir = "/server-data/logs"
+background_drain_interval_seconds = 30
+realtime_drain_interval_seconds = 1
+max_tail_bytes_per_pull = 262144
+eof_stable_seconds = 3
+final_drain_hard_timeout_seconds = 30
+retention_days = 30
+
+[i18n]
+locale = "zh"
+timezone = "Asia/Shanghai"

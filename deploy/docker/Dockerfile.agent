@@ -1,0 +1,31 @@
+# dopilot agent image (worker executor).
+#
+# Build context = repo ROOT (compose passes context: ../..).
+# Base image is glibc (python:3.12-slim), never Alpine: parent-death subprocess
+# signaling relies on glibc libc.so.6 prctl.
+#
+# The agent has NO database: do NOT install SQLAlchemy/Alembic here.
+# This image MUST NOT contain reference/ or apps/web.
+
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir wheel
+
+# Only the protocol package + agent package.
+COPY packages/protocol ./packages/protocol
+COPY apps/agent ./apps/agent
+
+RUN pip install --no-cache-dir ./packages/protocol ./apps/agent
+
+ENV DOPILOT_CONFIG=/app/configs/agent.toml
+ENV AGENT_WORKDIR=/agent-data
+
+# Agent working tree (eggs, scratch, per-execution dirs) lives here.
+VOLUME ["/agent-data"]
+
+EXPOSE 6800
+
+# uvicorn runs workers=1 (single-instance hard constraint) inside main().
+ENTRYPOINT ["python", "-m", "dopilot_agent.main"]

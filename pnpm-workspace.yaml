@@ -1,0 +1,9 @@
+packages:
+  - "apps/web"
+# pnpm blocks dependency build scripts by default. esbuild needs its build step
+# to wire up the platform binary that vite/vitest use; vue-demi runs a small
+# post-install. Approve both so a fresh `pnpm install` runs them non-interactively
+# (this is the pnpm v10+/v11 `allowBuilds` map; the value must be true to allow).
+allowBuilds:
+  esbuild: true
+  vue-demi: true

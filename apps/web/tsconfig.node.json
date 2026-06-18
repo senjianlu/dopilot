@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    // A referenced (composite) project must emit, so redirect its output and
+    // build-info into node_modules/.tmp (gitignored) instead of the source tree.
+    "outDir": "./node_modules/.tmp/tsconfig-node",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "types": ["node"]
+  },
+  "include": ["vite.config.ts"]
+}
