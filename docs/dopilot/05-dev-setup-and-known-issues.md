@@ -39,7 +39,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 ├── packages/
 │   ├── protocol/                         # server↔agent 共享协议 schema(含 dopilot_protocol/streams.py:AgentCommand/AgentEvent/AgentLogEvent/AgentHeartbeat*;前端也消费可并列 protocol/typescript/)
 │   └── client/                           # 可选:server→agent 客户端 SDK
-├── deploy/{docker/{Dockerfile,docker-compose.yml},k8s/}
+├── deploy/{docker/{Dockerfile.base,Dockerfile,docker-compose.yml},k8s/}
 ├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置(经 DOPILOT_CONFIG 加载,不继承 scrapydweb 硬编码 settings)
 ├── scripts/  docs/
 ├── reference/scrapydweb/                 # 只读行为参考,绝不进构建上下文/不被 import/不改名

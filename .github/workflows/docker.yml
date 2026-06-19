@@ -1,0 +1,211 @@
+name: docker
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+  DOCKER_PLATFORMS: ${{ vars.DOCKER_PLATFORMS || 'linux/amd64' }}
+
+jobs:
+  deps:
+    name: Compute Docker dependency hash
+    runs-on: ubuntu-latest
+    outputs:
+      deps_hash: ${{ steps.hash.outputs.deps_hash }}
+      app_tags: ${{ steps.tags.outputs.app_tags }}
+      py_base_tags: ${{ steps.tags.outputs.py_base_tags }}
+      web_base_tags: ${{ steps.tags.outputs.web_base_tags }}
+      push_latest: ${{ steps.tags.outputs.push_latest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: hash
+        name: Compute deps hash
+        shell: bash
+        run: |
+          DEPS_HASH="$(scripts/docker-deps-hash.sh)"
+          echo "deps_hash=${DEPS_HASH}" >> "${GITHUB_OUTPUT}"
+
+      - id: tags
+        name: Compute image tags
+        shell: bash
+        env:
+          DEPS_HASH: ${{ steps.hash.outputs.deps_hash }}
+        run: |
+          set -euo pipefail
+
+          app_image="${DOCKERHUB_USERNAME}/dopilot"
+          py_base_image="${DOCKERHUB_USERNAME}/dopilot-py-base"
+          web_base_image="${DOCKERHUB_USERNAME}/dopilot-web-base"
+          short_sha="${GITHUB_SHA::12}"
+
+          push_latest="false"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            app_tags="${app_image}:${short_sha}"$'\n'"${app_image}:${GITHUB_REF_NAME}"$'\n'"${app_image}:latest"
+            push_latest="true"
+          elif [[ "${GITHUB_REF}" == "refs/heads/main" || "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            app_tags="${app_image}:${short_sha}"$'\n'"${app_image}:latest"
+            push_latest="true"
+          else
+            app_tags="${app_image}:${short_sha}"
+          fi
+
+          py_base_tags="${py_base_image}:${DEPS_HASH}"
+          web_base_tags="${web_base_image}:${DEPS_HASH}"
+          if [[ "${push_latest}" == "true" ]]; then
+            py_base_tags="${py_base_tags}"$'\n'"${py_base_image}:latest"
+            web_base_tags="${web_base_tags}"$'\n'"${web_base_image}:latest"
+          fi
+
+          {
+            echo "app_tags<<EOF"
+            echo "${app_tags}"
+            echo "EOF"
+            echo "py_base_tags<<EOF"
+            echo "${py_base_tags}"
+            echo "EOF"
+            echo "web_base_tags<<EOF"
+            echo "${web_base_tags}"
+            echo "EOF"
+            echo "push_latest=${push_latest}"
+          } >> "${GITHUB_OUTPUT}"
+
+  base:
+    name: Ensure Docker base images
+    runs-on: ubuntu-latest
+    needs: deps
+    concurrency:
+      group: docker-base-${{ needs.deps.outputs.deps_hash }}-${{ vars.DOCKER_PLATFORMS || 'linux/amd64' }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - id: check-py
+        name: Check Python base manifest
+        shell: bash
+        env:
+          IMAGE: ${{ env.DOCKERHUB_USERNAME }}/dopilot-py-base:${{ needs.deps.outputs.deps_hash }}
+        run: |
+          set -euo pipefail
+          if ! docker buildx imagetools inspect "${IMAGE}" >/tmp/py-base-manifest.txt 2>/dev/null; then
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          for platform in ${DOCKER_PLATFORMS//,/ }; do
+            if ! grep -Eq "Platform:[[:space:]]+${platform}([[:space:]]|$)" /tmp/py-base-manifest.txt; then
+              echo "exists=false" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+          done
+
+          echo "exists=true" >> "${GITHUB_OUTPUT}"
+
+      - id: check-web
+        name: Check Web base manifest
+        shell: bash
+        env:
+          IMAGE: ${{ env.DOCKERHUB_USERNAME }}/dopilot-web-base:${{ needs.deps.outputs.deps_hash }}
+        run: |
+          set -euo pipefail
+          if ! docker buildx imagetools inspect "${IMAGE}" >/tmp/web-base-manifest.txt 2>/dev/null; then
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          for platform in ${DOCKER_PLATFORMS//,/ }; do
+            if ! grep -Eq "Platform:[[:space:]]+${platform}([[:space:]]|$)" /tmp/web-base-manifest.txt; then
+              echo "exists=false" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+          done
+
+          echo "exists=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and push Python base
+        if: steps.check-py.outputs.exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.base
+          target: py-runtime
+          platforms: ${{ env.DOCKER_PLATFORMS }}
+          push: true
+          tags: ${{ needs.deps.outputs.py_base_tags }}
+          cache-from: type=gha,scope=dopilot-py-base
+          cache-to: type=gha,mode=max,scope=dopilot-py-base
+
+      - name: Build and push Web base
+        if: steps.check-web.outputs.exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.base
+          target: web-deps
+          platforms: ${{ env.DOCKER_PLATFORMS }}
+          push: true
+          tags: ${{ needs.deps.outputs.web_base_tags }}
+          cache-from: type=gha,scope=dopilot-web-base
+          cache-to: type=gha,mode=max,scope=dopilot-web-base
+
+  app:
+    name: Build and push dopilot image
+    runs-on: ubuntu-latest
+    needs:
+      - deps
+      - base
+    concurrency:
+      group: docker-app-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          platforms: ${{ env.DOCKER_PLATFORMS }}
+          push: true
+          build-args: |
+            DOPILOT_PY_BASE_IMAGE=${{ env.DOCKERHUB_USERNAME }}/dopilot-py-base:${{ needs.deps.outputs.deps_hash }}
+            DOPILOT_WEB_BASE_IMAGE=${{ env.DOCKERHUB_USERNAME }}/dopilot-web-base:${{ needs.deps.outputs.deps_hash }}
+          tags: ${{ needs.deps.outputs.app_tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.base.deps-hash=${{ needs.deps.outputs.deps_hash }}
+          cache-from: type=gha,scope=dopilot-app
+          cache-to: type=gha,mode=max,scope=dopilot-app

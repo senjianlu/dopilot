@@ -10,6 +10,13 @@
 # Image namespace is rabbir (Docker Hub); unrelated to the git origin senjianlu.
 # server, agent, and migrate all use the same image; command selects the role.
 
+x-dopilot-build: &dopilot-build
+  context: ../..
+  dockerfile: deploy/docker/Dockerfile
+  args:
+    DOPILOT_PY_BASE_IMAGE: ${DOPILOT_PY_BASE_IMAGE:-rabbir/dopilot-py-base:local}
+    DOPILOT_WEB_BASE_IMAGE: ${DOPILOT_WEB_BASE_IMAGE:-rabbir/dopilot-web-base:local}
+
 services:
   db:
     image: postgres:16
@@ -60,9 +67,7 @@ services:
   # overrides its entrypoint. Keeps migrations an explicit, observable step;
   # the server process never runs create_all().
   migrate:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
+    build: *dopilot-build
     image: rabbir/dopilot:latest
     command: ["alembic", "upgrade", "head"]
     environment:
@@ -73,9 +78,7 @@ services:
     restart: "no"
 
   agent:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
+    build: *dopilot-build
     image: rabbir/dopilot:latest
     command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
     init: true
@@ -114,9 +117,7 @@ services:
     restart: unless-stopped
 
   server:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
+    build: *dopilot-build
     image: rabbir/dopilot:latest
     command: ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
     init: true

@@ -69,7 +69,7 @@ async function connect(): Promise<void> {
   // When web auth is on, EventSource cannot send the bearer header, so fetch a
   // short-lived stream token and pass it as a query param.
   let streamToken: string | undefined;
-  if (!auth.isAuthOff) {
+  if (auth.isAuthenticated) {
     try {
       const res = await fetchStreamToken(props.executionId);
       streamToken = res.stream_token;
