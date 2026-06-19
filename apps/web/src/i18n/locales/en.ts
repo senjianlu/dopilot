@@ -7,7 +7,7 @@ export default {
   nav: {
     dashboard: "Dashboard",
     nodes: "Nodes",
-    run: "Run Scrapy",
+    crawlers: "Crawlers",
     executions: "Executions",
   },
   login: {
@@ -49,6 +49,19 @@ export default {
     addRow: "Add row",
     submit: "Run",
     submitError: "Run failed",
+  },
+  crawlers: {
+    title: "Crawlers",
+    upload: "Upload Egg",
+    filename: "Filename",
+    spiders: "Spiders",
+    hash: "Hash",
+    uploadedAt: "Uploaded",
+    sizeBytes: "Size",
+    status: "Status",
+    actions: "Actions",
+    run: "Run",
+    empty: "No crawlers yet",
   },
   executions: {
     title: "Executions",
@@ -96,7 +109,9 @@ export default {
   health: {
     title: "Service health",
     status: "Status",
-    version: "Version",
+    nodesOnline: "Online nodes",
+    postgresql: "PostgreSQL",
+    redis: "Redis",
     database: "Database",
   },
   errors: {

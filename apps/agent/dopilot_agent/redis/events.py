@@ -32,6 +32,7 @@ from dopilot_protocol import (
 
 from ..runners.scrapyd import ScrapyRunner
 from ..state.store import StateStore
+from .status import RedisRuntimeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ class EventPublisher:
         store: StateStore,
         maxlen_events: int = 100000,
         outbox_dir: str | os.PathLike[str] | None = None,
+        status: RedisRuntimeStatus | None = None,
     ) -> None:
         self._redis = redis
         self._agent_id = agent_id
@@ -74,6 +76,16 @@ class EventPublisher:
         self._store = store
         self._maxlen = maxlen_events
         self._outbox_dir = Path(outbox_dir) if outbox_dir else None
+        self._status = status
+
+    def _pending_outbox_count(self) -> int:
+        if self._outbox_dir is None or not self._outbox_dir.is_dir():
+            return 0
+        return sum(1 for _ in self._outbox_dir.glob("*.json"))
+
+    def _record_outbox_pending(self) -> None:
+        if self._status is not None:
+            self._status.mark_event_outbox_pending(self._pending_outbox_count())
 
     # --- durable emit (at-least-once via on-disk outbox) -------------------
     def _persist(self, event: AgentEvent) -> Path | None:
@@ -99,16 +111,22 @@ class EventPublisher:
                 EVENT_STREAM, to_stream_entry(event),
                 maxlen=self._maxlen, approximate=True,
             )
-        except Exception:  # noqa: BLE001 - Redis unavailable
+        except Exception as exc:  # noqa: BLE001 - Redis unavailable
+            if self._status is not None:
+                self._status.mark_error(exc)
             if path is None:
                 raise
             logger.warning("event XADD failed; queued in outbox: %s", event.event_id)
+            self._record_outbox_pending()
             return
+        if self._status is not None:
+            self._status.mark_ok()
         if path is not None:
             try:
                 path.unlink()
             except FileNotFoundError:
                 pass
+        self._record_outbox_pending()
 
     async def replay_outbox(self) -> int:
         """Re-publish any durably-queued events (server dedups/monotonic-applies).
@@ -131,10 +149,15 @@ class EventPublisher:
                     EVENT_STREAM, to_stream_entry(event),
                     maxlen=self._maxlen, approximate=True,
                 )
-            except Exception:  # noqa: BLE001 - still down, leave for next pass
+            except Exception as exc:  # noqa: BLE001 - still down, leave for next pass
+                if self._status is not None:
+                    self._status.mark_error(exc)
                 break
             entry.unlink(missing_ok=True)
             replayed += 1
+            if self._status is not None:
+                self._status.mark_ok()
+        self._record_outbox_pending()
         return replayed
 
     def _event(

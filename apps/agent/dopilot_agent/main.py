@@ -51,8 +51,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         s = runtime.settings
         if runtime.process is not None:
             runtime.process.start()
-        if runtime.heartbeat is not None:
-            runtime.heartbeat.start()
 
         # Redis-backed command consumer + event publisher are built HERE (not in
         # build_runtime) so the test ASGI path never constructs a real client.
@@ -67,6 +65,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 runner=runtime.runner,
                 store=runtime.store,
                 outbox_dir=s.redis.event_outbox_dir or None,
+                status=runtime.redis_status,
             )
             consumer = CommandConsumer(
                 redis=redis_client,
@@ -76,16 +75,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 events=publisher,
                 pending_idle_ms=s.redis.pending_idle_ms,
                 command_block_ms=s.redis.command_block_ms,
+                status=runtime.redis_status,
+                artifact_cache=runtime.artifact_cache,
             )
             log_publisher = LogPublisher(
                 redis=redis_client,
                 agent_id=s.agent.agent_id,
                 store=runtime.store,
                 cursor_dir=str(runtime.store.dir / "logpos"),
+                status=runtime.redis_status,
             )
             consumer.start()
             log_publisher.start()
             app.state.command_consumer = consumer
+        if runtime.heartbeat is not None:
+            runtime.heartbeat.start()
         try:
             yield
         finally:

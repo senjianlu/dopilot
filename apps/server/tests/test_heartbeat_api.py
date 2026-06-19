@@ -22,7 +22,13 @@ def _heartbeat_body(agent_id: str = "agent-1") -> dict:
         "version": "0.1.0",
         "capabilities": {"scrapy": True, "script": False, "docker": False},
         "load": {"running_attempts": 2},
-        "detail": {"scrapyd": {"port": 6801, "managed": True}},
+        "detail": {
+            "scrapyd": {"port": 6801, "managed": True},
+            "redis": {
+                "connected": True,
+                "command_consumer": {"running": True},
+            },
+        },
         "endpoint": "agent:6800",
         "reported_at": "2026-06-19T00:00:00Z",
     }
@@ -42,7 +48,25 @@ async def test_heartbeat_upserts_node(client, db_session):
     assert node.last_seen_at is not None
     assert node.capabilities["scrapy"] is True
     assert node.endpoint == "agent:6800"
-    assert node.health == {"scrapyd": {"port": 6801, "managed": True}}
+    assert node.health == {
+        "scrapyd": {"port": 6801, "managed": True},
+        "redis": {
+            "connected": True,
+            "command_consumer": {"running": True},
+        },
+    }
+
+
+async def test_heartbeat_without_redis_detail_marks_degraded(client, db_session):
+    body = _heartbeat_body("agent-1")
+    body["detail"] = {"scrapyd": {"port": 6801, "managed": True}}
+    resp = await client.post("/api/v1/agents/agent-1/heartbeat", json=body)
+    assert resp.status_code == 200
+
+    node = (
+        await db_session.execute(select(Node).where(Node.agent_id == "agent-1"))
+    ).scalar_one()
+    assert node.status == "degraded"
 
 
 async def test_heartbeat_second_call_refreshes(client, db_session):

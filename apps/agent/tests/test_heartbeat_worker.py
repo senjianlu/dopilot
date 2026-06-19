@@ -13,6 +13,7 @@ from dopilot_agent.config.settings import (
 )
 from dopilot_agent.deps import state_dir
 from dopilot_agent.redis.heartbeat import HeartbeatWorker
+from dopilot_agent.redis.status import RedisRuntimeStatus
 from dopilot_agent.state.store import AttemptState, StateStore
 
 
@@ -57,6 +58,25 @@ def test_build_request_reflects_settings_and_load(workdir: Path) -> None:
     assert req.load == {"running_attempts": 2}
     assert req.detail["scrapyd"]["port"] == 6801
     assert req.endpoint == "agent:6800"
+
+
+def test_build_request_includes_redis_status(workdir: Path) -> None:
+    store = _store_with_attempts(workdir, 0)
+    redis_status = RedisRuntimeStatus()
+    redis_status.mark_command_running(True)
+    redis_status.mark_ok()
+    worker = HeartbeatWorker(
+        settings=_settings(workdir),
+        store=store,
+        version="9.9.9",
+        redis_status=redis_status,
+    )
+
+    req = worker.build_request()
+
+    assert req.detail["redis"]["connected"] is True
+    assert req.detail["redis"]["command_consumer"]["running"] is True
+    assert req.detail["redis"]["event_outbox"]["pending"] == 0
 
 
 async def test_send_once_posts_with_token(workdir: Path) -> None:

@@ -52,6 +52,34 @@ async def test_run_dispatches_command_execution_queued(
     assert attempt["agent_id"] == "agent-1"
 
 
+async def test_run_with_artifact_uses_artifact_project_and_payload(
+    exec_client, exec_redis, seeder
+):
+    await seeder.healthy_node()
+    artifact = {
+        "hash": "a" * 64,
+        "filename": "demo.egg",
+        "project": "demo",
+        "version": "sha256-aaaaaaaaaaaa",
+        "size_bytes": 123,
+        "fetch_path": "/api/v1/artifacts/scrapy/" + "a" * 64 + "/egg",
+    }
+    body = {
+        "task_type": "scrapy",
+        "target": "demo:phase1",
+        "node_strategy": "all",
+        "params": {"spider": "phase1", "artifact": artifact},
+    }
+
+    r = await exec_client.post("/api/v1/executions/run", json=body)
+
+    assert r.status_code == 200, r.text
+    cmds = await _commands(exec_redis)
+    assert cmds[0].payload["project"] == "demo"
+    assert cmds[0].payload["version"] == "sha256-aaaaaaaaaaaa"
+    assert cmds[0].payload["artifact"] == artifact
+
+
 async def test_run_missing_params_400(exec_client, seeder):
     await seeder.healthy_node()
     r = await exec_client.post(

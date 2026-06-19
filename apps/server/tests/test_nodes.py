@@ -7,6 +7,7 @@ a server-driven ``/health`` poll, so the old ``refresh_nodes`` is gone.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from dopilot_server.config.settings import Settings
 from dopilot_server.models.node import Node
@@ -26,7 +27,13 @@ async def test_list_nodes_shows_persisted_and_unknown(db_session):
             endpoint="agent-a:9100",
             status="healthy",
             capabilities={"scrapy": True},
-            health={},
+            health={
+                "redis": {
+                    "connected": True,
+                    "command_consumer": {"running": True},
+                }
+            },
+            last_seen_at=datetime.now(UTC),
         )
     )
     await db_session.commit()
@@ -39,6 +46,24 @@ async def test_list_nodes_shows_persisted_and_unknown(db_session):
     assert by_endpoint["agent-a:9100"]["capabilities"]["scrapy"] is True
     assert by_endpoint["agent-never-seen:9100"]["status"] == "unknown"
     assert by_endpoint["agent-never-seen:9100"]["capabilities"] == {}
+
+
+async def test_list_nodes_marks_missing_redis_detail_degraded(db_session):
+    db_session.add(
+        Node(
+            id=uuid.uuid4(),
+            agent_id="agent-a",
+            endpoint="agent-a:9100",
+            status="healthy",
+            capabilities={"scrapy": True},
+            health={},
+            last_seen_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+
+    listed = await list_nodes(db_session, _settings_with_agents([]))
+    assert listed[0]["status"] == "degraded"
 
 
 async def test_list_nodes_empty(db_session):

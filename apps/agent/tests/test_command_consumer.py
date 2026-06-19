@@ -6,6 +6,7 @@ import asyncio
 import uuid
 from pathlib import Path
 
+from dopilot_agent.artifacts.cache import ArtifactCacheError
 from dopilot_agent.deps import scrapyd_logs_dir, state_dir
 from dopilot_agent.redis.commands import CommandConsumer
 from dopilot_agent.redis.events import EventPublisher
@@ -31,7 +32,25 @@ AGENT_ID = "agent-x"
 STREAM = command_stream(AGENT_ID)
 
 
-def _build(workdir: Path, fake_scrapyd: FakeScrapyd, redis, *, pending_idle_ms=0):
+class FakeArtifactCache:
+    def __init__(self) -> None:
+        self.calls: list[tuple[dict, str]] = []
+        self.error: ArtifactCacheError | None = None
+
+    async def ensure(self, artifact: dict, *, attempt_id: str) -> None:
+        self.calls.append((artifact, attempt_id))
+        if self.error is not None:
+            raise self.error
+
+
+def _build(
+    workdir: Path,
+    fake_scrapyd: FakeScrapyd,
+    redis,
+    *,
+    pending_idle_ms=0,
+    artifact_cache=None,
+):
     client = ScrapydClient(
         base_url="http://scrapyd.test", transport=fake_scrapyd.transport()
     )
@@ -49,6 +68,7 @@ def _build(workdir: Path, fake_scrapyd: FakeScrapyd, redis, *, pending_idle_ms=0
         store=store,
         events=publisher,
         pending_idle_ms=pending_idle_ms,
+        artifact_cache=artifact_cache,
     )
     return store, runner, consumer
 
@@ -63,6 +83,20 @@ def _run_cmd(attempt_id="a1", execution_id="e1") -> AgentCommand:
         payload={"project": "demo", "spider": "phase1"},
         created_at="t",
     )
+
+
+def _artifact_run_cmd(attempt_id="a1", execution_id="e1") -> AgentCommand:
+    cmd = _run_cmd(attempt_id=attempt_id, execution_id=execution_id)
+    cmd.payload = {
+        "spider": "phase1",
+        "artifact": {
+            "hash": "a" * 64,
+            "project": "demo",
+            "version": "sha256-aaaaaaaaaaaa",
+            "fetch_path": "/api/v1/artifacts/scrapy/" + "a" * 64 + "/egg",
+        },
+    }
+    return cmd
 
 
 def _stop_cmd(intent: StopIntent, attempt_id="a1", execution_id="e1") -> AgentCommand:
@@ -106,6 +140,46 @@ async def test_run_command_starts_and_emits(workdir, fake_redis):
     assert await fake.pending_count(STREAM, COMMAND_GROUP) == 0
 
 
+async def test_run_with_artifact_ensures_cache_before_schedule(workdir, fake_redis):
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    artifact_cache = FakeArtifactCache()
+    _store, _runner, consumer = _build(
+        workdir, scrapyd, fake, artifact_cache=artifact_cache
+    )
+    await consumer.setup()
+
+    await fake.xadd(STREAM, to_stream_entry(_artifact_run_cmd()))
+    await consumer.drain_once()
+
+    assert len(artifact_cache.calls) == 1
+    assert artifact_cache.calls[0][1] == "a1"
+    assert scrapyd.running[0]["project"] == "demo"
+    assert await _event_types(fake) == [AgentEventType.accepted, AgentEventType.running]
+
+
+async def test_run_with_artifact_cache_failure_emits_failed(workdir, fake_redis):
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    artifact_cache = FakeArtifactCache()
+    artifact_cache.error = ArtifactCacheError(
+        "fetch failed", detail={"hash": "a" * 64}
+    )
+    store, _runner, consumer = _build(
+        workdir, scrapyd, fake, artifact_cache=artifact_cache
+    )
+    await consumer.setup()
+
+    await fake.xadd(STREAM, to_stream_entry(_artifact_run_cmd()))
+    await consumer.drain_once()
+
+    assert scrapyd._counter == 0
+    assert store.read("a1").result == "failed"
+    events = await _events(fake)
+    assert [e.type for e in events] == [AgentEventType.accepted, AgentEventType.failed]
+    assert events[-1].error_code == "artifact_error"
+
+
 async def test_duplicate_attempt_id_does_not_restart(workdir, fake_redis):
     fake = fake_redis()
     scrapyd = FakeScrapyd()
@@ -122,6 +196,29 @@ async def test_duplicate_attempt_id_does_not_restart(workdir, fake_redis):
     types = await _event_types(fake)
     assert types.count(AgentEventType.running) == 2  # initial + republish
     assert AgentEventType.accepted in types
+
+
+async def test_reconcile_started_attempts_emits_finished(workdir, fake_redis):
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    store, _runner, consumer = _build(workdir, scrapyd, fake)
+    await consumer.setup()
+
+    await fake.xadd(STREAM, to_stream_entry(_run_cmd()))
+    await consumer.drain_once()
+    job_id = store.read("a1").scrapyd_job_id
+    scrapyd.move_to_finished(job_id)
+
+    reconciled = await consumer.reconcile_started_attempts()
+
+    assert reconciled == 1
+    assert store.read("a1").phase == "done"
+    assert store.read("a1").result == "finished"
+    assert await _event_types(fake) == [
+        AgentEventType.accepted,
+        AgentEventType.running,
+        AgentEventType.finished,
+    ]
 
 
 async def test_concurrent_same_attempt_one_start(workdir, fake_redis):

@@ -22,6 +22,7 @@ from pathlib import Path
 from dopilot_protocol import LOG_STREAM, AgentLogEvent, to_stream_entry
 
 from ..state.store import StateStore
+from .status import RedisRuntimeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class LogPublisher:
         maxlen_logs: int = 1000000,
         max_bytes: int = 262144,
         interval_seconds: float = 1.0,
+        status: RedisRuntimeStatus | None = None,
     ) -> None:
         self._redis = redis
         self._agent_id = agent_id
@@ -54,6 +56,7 @@ class LogPublisher:
         self._eof_sent: set[str] = set()
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
+        self._status = status
 
     # --- cursor persistence ------------------------------------------------
     def _cursor_path(self, attempt_id: str) -> Path:
@@ -111,9 +114,13 @@ class LogPublisher:
                     LOG_STREAM, to_stream_entry(event),
                     maxlen=self._maxlen, approximate=True,
                 )
-            except Exception:  # noqa: BLE001 - leave cursor; retry next pass
+            except Exception as exc:  # noqa: BLE001 - leave cursor; retry next pass
+                if self._status is not None:
+                    self._status.mark_error(exc)
                 logger.warning("log XADD failed for %s @ %d", attempt_id, cursor)
                 return total
+            if self._status is not None:
+                self._status.mark_log_publish()
             cursor += len(raw)
             self._write_cursor(attempt_id, cursor)
             total += len(raw)
@@ -138,7 +145,9 @@ class LogPublisher:
                     maxlen=self._maxlen, approximate=True,
                 )
                 self._eof_sent.add(attempt_id)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                if self._status is not None:
+                    self._status.mark_error(exc)
                 pass
         return total
 
@@ -154,15 +163,23 @@ class LogPublisher:
 
     # --- background loop ---------------------------------------------------
     async def _run(self) -> None:
-        while not self._stop.is_set():
-            try:
-                await self.publish_once()
-            except Exception:  # noqa: BLE001 - never let the loop die
-                logger.warning("log publisher tick failed", exc_info=True)
-            try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
-            except TimeoutError:
-                pass
+        if self._status is not None:
+            self._status.mark_log_running(True)
+        try:
+            while not self._stop.is_set():
+                try:
+                    await self.publish_once()
+                except Exception as exc:  # noqa: BLE001 - never let the loop die
+                    if self._status is not None:
+                        self._status.mark_error(exc)
+                    logger.warning("log publisher tick failed", exc_info=True)
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=self._interval)
+                except TimeoutError:
+                    pass
+        finally:
+            if self._status is not None:
+                self._status.mark_log_running(False)
 
     def start(self) -> None:
         if self._task is None:

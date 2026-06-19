@@ -23,6 +23,7 @@ from dopilot_protocol import (
     AgentLogEvent,
     from_stream_entry,
 )
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config.settings import Settings
@@ -110,6 +111,8 @@ class EventConsumer:
         while not self._stop.is_set():
             try:
                 await self.drain_once(block=self._block_ms)
+            except RedisTimeoutError:
+                pass
             except Exception:  # noqa: BLE001 - never let the loop die
                 logger.warning("event consumer drain failed", exc_info=True)
                 await asyncio.sleep(0.5)
@@ -213,6 +216,8 @@ class LogConsumer:
         while not self._stop.is_set():
             try:
                 await self.drain_once(block=self._block_ms)
+            except RedisTimeoutError:
+                pass
             except Exception:  # noqa: BLE001 - never let the loop die
                 logger.warning("log consumer drain failed", exc_info=True)
                 await asyncio.sleep(0.5)

@@ -22,8 +22,10 @@ from pathlib import Path
 from fastapi import Request
 
 from . import __version__
+from .artifacts.cache import ScrapyArtifactCache
 from .config.settings import Settings
 from .redis.heartbeat import HeartbeatWorker
+from .redis.status import RedisRuntimeStatus
 from .runners.scrapyd import ScrapyRunner
 from .scrapyd.client import ScrapydClient
 from .scrapyd.process import ScrapydProcess
@@ -39,6 +41,8 @@ class AgentRuntime:
     client: ScrapydClient
     store: StateStore
     runner: ScrapyRunner
+    redis_status: RedisRuntimeStatus | None = None
+    artifact_cache: ScrapyArtifactCache | None = None
     heartbeat: HeartbeatWorker | None = None
 
 
@@ -77,12 +81,24 @@ def build_runtime(settings: Settings) -> AgentRuntime:
         store=store,
         logs_dir=scrapyd_logs_dir(workdir),
     )
+    redis_status = RedisRuntimeStatus() if settings.redis.url else None
+    artifact_cache: ScrapyArtifactCache | None = None
+    if settings.agent.server_url:
+        artifact_cache = ScrapyArtifactCache(
+            root_dir=Path(workdir) / "artifacts",
+            server_url=settings.agent.server_url,
+            server_shared_token=settings.agent.server_shared_token,
+            scrapyd=client,
+        )
     # Heartbeat worker is built only when a server_url is configured; the task
     # itself is started by the lifespan (not under the test ASGI transport).
     heartbeat: HeartbeatWorker | None = None
     if settings.agent.server_url:
         heartbeat = HeartbeatWorker(
-            settings=settings, store=store, version=__version__
+            settings=settings,
+            store=store,
+            version=__version__,
+            redis_status=redis_status,
         )
     return AgentRuntime(
         settings=settings,
@@ -90,6 +106,8 @@ def build_runtime(settings: Settings) -> AgentRuntime:
         client=client,
         store=store,
         runner=runner,
+        redis_status=redis_status,
+        artifact_cache=artifact_cache,
         heartbeat=heartbeat,
     )
 

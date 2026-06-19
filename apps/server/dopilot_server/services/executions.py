@@ -40,7 +40,8 @@ def parse_scrapy_params(request: ExecutionRunRequest) -> dict[str, Any]:
     Raises a 400 ``ApiError`` when project or spider is missing.
     """
     params = request.params or {}
-    project = params.get("project")
+    artifact = params.get("artifact") if isinstance(params.get("artifact"), dict) else None
+    project = params.get("project") or (artifact or {}).get("project")
     spider = params.get("spider")
     missing = [k for k, v in (("project", project), ("spider", spider)) if not v]
     if missing:
@@ -53,9 +54,14 @@ def parse_scrapy_params(request: ExecutionRunRequest) -> dict[str, Any]:
     return {
         "project": str(project),
         "spider": str(spider),
-        "version": (str(params["version"]) if params.get("version") else None),
+        "version": (
+            str(params["version"])
+            if params.get("version")
+            else (str(artifact["version"]) if (artifact or {}).get("version") else None)
+        ),
         "settings": {str(k): str(v) for k, v in (params.get("settings") or {}).items()},
         "args": {str(k): str(v) for k, v in (params.get("args") or {}).items()},
+        "artifact": dict(artifact or {}),
     }
 
 

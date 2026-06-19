@@ -47,7 +47,11 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 
 
-def make_settings(auth_on: bool = False, logs_root: str | None = None) -> Settings:
+def make_settings(
+    auth_on: bool = False,
+    logs_root: str | None = None,
+    artifacts_root: str | None = None,
+) -> Settings:
     """Build a test :class:`Settings` (auth on/off variants)."""
     data: dict = {
         "database": {"url": "sqlite+aiosqlite:///:memory:"},
@@ -69,6 +73,8 @@ def make_settings(auth_on: bool = False, logs_root: str | None = None) -> Settin
             "final_drain_hard_timeout_seconds": 1,
             "realtime_drain_interval_seconds": 1,
         }
+    if artifacts_root is not None:
+        data["artifacts"] = {"root_dir": artifacts_root}
     return Settings.model_validate(data)
 
 
@@ -248,13 +254,22 @@ def logs_root(tmp_path) -> str:
 
 
 @pytest.fixture
-def exec_settings(logs_root: str) -> Settings:
-    return make_settings(auth_on=False, logs_root=logs_root)
+def artifacts_root(tmp_path) -> str:
+    return str(tmp_path / "server-artifacts")
 
 
 @pytest.fixture
-def exec_settings_auth_on(logs_root: str) -> Settings:
-    return make_settings(auth_on=True, logs_root=logs_root)
+def exec_settings(logs_root: str, artifacts_root: str) -> Settings:
+    return make_settings(
+        auth_on=False, logs_root=logs_root, artifacts_root=artifacts_root
+    )
+
+
+@pytest.fixture
+def exec_settings_auth_on(logs_root: str, artifacts_root: str) -> Settings:
+    return make_settings(
+        auth_on=True, logs_root=logs_root, artifacts_root=artifacts_root
+    )
 
 
 @pytest.fixture
@@ -292,7 +307,13 @@ class Seeder:
             endpoint=endpoint,
             status=status,
             capabilities={"scrapy": scrapy},
-            health={"scrapyd": {"running": True, "port": 6801}},
+            health={
+                "scrapyd": {"running": True, "port": 6801},
+                "redis": {
+                    "connected": True,
+                    "command_consumer": {"running": True},
+                },
+            },
             last_seen_at=last_seen,
         )
         self.session.add(node)

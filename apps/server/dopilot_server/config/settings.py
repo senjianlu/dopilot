@@ -122,6 +122,10 @@ class LogsSettings(BaseModel):
     first_screen_max_bytes: int = 1048576
 
 
+class ArtifactsSettings(BaseModel):
+    root_dir: str = "/server-data/artifacts"
+
+
 class I18nSettings(BaseModel):
     locale: str = "en"
     timezone: str = "UTC"
@@ -139,4 +143,5 @@ class Settings(BaseModel):
     nodes: NodesSettings = Field(default_factory=NodesSettings)
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     logs: LogsSettings = Field(default_factory=LogsSettings)
+    artifacts: ArtifactsSettings = Field(default_factory=ArtifactsSettings)
     i18n: I18nSettings = Field(default_factory=I18nSettings)

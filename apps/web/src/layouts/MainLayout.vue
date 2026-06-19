@@ -24,11 +24,8 @@ function onLogout(): void {
       <el-menu :default-active="activeMenu" router>
         <el-menu-item index="/dashboard">{{ t("nav.dashboard") }}</el-menu-item>
         <el-menu-item index="/nodes">{{ t("nav.nodes") }}</el-menu-item>
-        <el-menu-item index="/run">{{ t("nav.run") }}</el-menu-item>
+        <el-menu-item index="/crawlers">{{ t("nav.crawlers") }}</el-menu-item>
         <el-menu-item index="/executions">{{ t("nav.executions") }}</el-menu-item>
-        <el-menu-item index="/placeholder" disabled>
-          {{ t("errors.notImplemented") }}
-        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>

@@ -44,6 +44,42 @@ def _to_strategy(strategy: str) -> NodeStrategy:
     )
 
 
+def _as_aware(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
+def _heartbeat_fresh(
+    node: Node, *, now: datetime, timeout_seconds: int
+) -> bool:
+    if node.last_seen_at is None:
+        return False
+    return _as_aware(node.last_seen_at) >= now - timedelta(seconds=timeout_seconds)
+
+
+def _redis_transport_healthy(health: dict[str, Any] | None) -> bool:
+    redis = (health or {}).get("redis")
+    if not isinstance(redis, dict):
+        return False
+    command = redis.get("command_consumer")
+    return (
+        redis.get("connected") is True
+        and isinstance(command, dict)
+        and command.get("running") is True
+    )
+
+
+def _aggregate_node_status(
+    node: Node, *, now: datetime, timeout_seconds: int
+) -> str:
+    if not _heartbeat_fresh(node, now=now, timeout_seconds=timeout_seconds):
+        return "unknown" if node.last_seen_at is None else "unhealthy"
+    if not _redis_transport_healthy(node.health):
+        return "degraded"
+    return "healthy"
+
+
 async def _get_node_by_endpoint(
     session: AsyncSession, endpoint: str
 ) -> Node | None:
@@ -53,13 +89,17 @@ async def _get_node_by_endpoint(
     return result.scalar_one_or_none()
 
 
-def _node_to_dict(node: Node) -> dict[str, Any]:
+def _node_to_dict(
+    node: Node, *, now: datetime, timeout_seconds: int
+) -> dict[str, Any]:
     """Render a :class:`Node` as the frozen ``node`` JSON shape."""
     return {
         "id": str(node.id),
         "agent_id": node.agent_id,
         "endpoint": node.endpoint,
-        "status": node.status,
+        "status": _aggregate_node_status(
+            node, now=now, timeout_seconds=timeout_seconds
+        ),
         "capabilities": node.capabilities or {},
         "health": node.health or {},
         "last_seen_at": (
@@ -99,10 +139,12 @@ async def upsert_node_heartbeat(
     node.agent_id = agent_id
     if hb.endpoint:
         node.endpoint = hb.endpoint
-    node.status = "healthy"
     node.last_seen_at = now
     node.capabilities = hb.capabilities.model_dump()
     node.health = dict(hb.detail or {})
+    node.status = _aggregate_node_status(
+        node, now=now, timeout_seconds=DEFAULT_HEARTBEAT_TIMEOUT_SECONDS
+    )
     return node
 
 
@@ -117,7 +159,12 @@ async def list_nodes(
     rows = list(result.scalars().all())
     by_endpoint = {row.endpoint: row for row in rows}
 
-    out: list[dict[str, Any]] = [_node_to_dict(row) for row in rows]
+    now = datetime.now(UTC)
+    timeout_seconds = settings.agents.heartbeat_timeout_seconds
+    out: list[dict[str, Any]] = [
+        _node_to_dict(row, now=now, timeout_seconds=timeout_seconds)
+        for row in rows
+    ]
     for endpoint in settings.nodes.agents:
         if endpoint not in by_endpoint:
             out.append(
@@ -146,12 +193,19 @@ async def _healthy_capable_nodes(
     heartbeat), NOT the old poll-written ``status == "healthy"``. Nodes that
     never heartbeated (``last_seen_at`` NULL) are excluded.
     """
-    cutoff = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(seconds=timeout_seconds)
     result = await session.execute(
         select(Node).where(Node.last_seen_at >= cutoff)
     )
     nodes = list(result.scalars().all())
-    return [n for n in nodes if (n.capabilities or {}).get(capability)]
+    return [
+        n for n in nodes
+        if (n.capabilities or {}).get(capability)
+        and _aggregate_node_status(
+            n, now=now, timeout_seconds=timeout_seconds
+        ) == "healthy"
+    ]
 
 
 async def select_target_nodes(
