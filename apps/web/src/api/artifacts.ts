@@ -1,12 +1,14 @@
 import client from "./client";
-import type { NodeStrategy, UploadEggResponse } from "./types";
+import type { ArtifactsResponse, ScrapyArtifact, UploadEggResponse } from "./types";
 
 export interface UploadEggInput {
   file: File;
-  project: string;
-  version: string;
-  nodeStrategy?: NodeStrategy;
-  nodeIds?: string[];
+  project?: string;
+}
+
+export async function listScrapyArtifacts(): Promise<ScrapyArtifact[]> {
+  const { data } = await client.get<ArtifactsResponse>("/artifacts/scrapy");
+  return data.artifacts;
 }
 
 export async function uploadEgg(
@@ -14,13 +16,8 @@ export async function uploadEgg(
 ): Promise<UploadEggResponse> {
   const form = new FormData();
   form.append("file", input.file);
-  form.append("project", input.project);
-  form.append("version", input.version);
-  if (input.nodeStrategy) {
-    form.append("node_strategy", input.nodeStrategy);
-  }
-  for (const nodeId of input.nodeIds ?? []) {
-    form.append("node_ids", nodeId);
+  if (input.project) {
+    form.append("project", input.project);
   }
   const { data } = await client.post<UploadEggResponse>(
     "/artifacts/scrapy/egg",

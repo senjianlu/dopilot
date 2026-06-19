@@ -35,10 +35,13 @@ from dopilot_protocol import (
     command_stream,
     from_stream_entry,
 )
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
+from ..artifacts.cache import ArtifactCacheError, ScrapyArtifactCache
 from ..runners.scrapyd import RunnerError, ScrapyRunner
 from ..state.store import StateStore
 from .events import EventPublisher
+from .status import RedisRuntimeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,8 @@ class CommandConsumer:
         pending_idle_ms: int = 30000,
         command_block_ms: int = 5000,
         batch: int = 16,
+        status: RedisRuntimeStatus | None = None,
+        artifact_cache: ScrapyArtifactCache | None = None,
     ) -> None:
         self._redis = redis
         self._agent_id = agent_id
@@ -78,6 +83,8 @@ class CommandConsumer:
         self._locks: dict[str, asyncio.Lock] = {}
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
+        self._status = status
+        self._artifact_cache = artifact_cache
 
     def _lock_for(self, attempt_id: str) -> asyncio.Lock:
         lock = self._locks.get(attempt_id)
@@ -129,6 +136,37 @@ class CommandConsumer:
         await self.recover_reserved_orphans()
         await self._claim_pending()
 
+    async def reconcile_started_attempts(self) -> int:
+        """Poll local scrapyd for started attempts and emit terminal events.
+
+        The command stream only starts/cancels work; scrapyd process completion is
+        discovered by the agent because the agent owns local scrapyd. This keeps
+        terminal state agent-authoritative without reintroducing server->agent
+        status polling.
+        """
+        reconciled = 0
+        for attempt_id in self._store.list_attempt_ids():
+            state = self._store.read(attempt_id)
+            if state is None or state.phase != "started":
+                continue
+            resp = await self._runner.status(attempt_id, state.execution_id)
+            terminal = _STATUS_TO_TERMINAL.get(resp.status)
+            if terminal is None:
+                continue
+            self._store.mark_done(
+                attempt_id,
+                result=terminal.short,
+                exit_code=resp.exit_code,
+            )
+            await self._events.emit_terminal(
+                state.execution_id,
+                attempt_id,
+                terminal,
+                exit_code=resp.exit_code,
+            )
+            reconciled += 1
+        return reconciled
+
     # --- draining ----------------------------------------------------------
     async def _claim_pending(self) -> int:
         processed = 0
@@ -158,6 +196,8 @@ class CommandConsumer:
             self._group, self._consumer, {self._stream: ">"},
             count=self._batch, block=block,
         )
+        if self._status is not None:
+            self._status.mark_command_read()
         for _stream, entries in resp or []:
             for msg_id, fields in entries:
                 await self._process(msg_id, fields)
@@ -189,12 +229,19 @@ class CommandConsumer:
             return
 
         payload = cmd.payload or {}
+        artifact = payload.get("artifact") if isinstance(payload.get("artifact"), dict) else None
+        project = str((artifact or {}).get("project") or payload.get("project", ""))
+        version = (
+            str((artifact or {}).get("version") or payload["version"])
+            if (artifact or {}).get("version") or payload.get("version")
+            else None
+        )
         reserved = self._store.create_reserved(
             execution_id=cmd.execution_id,
             attempt_id=cmd.attempt_id,
-            project=str(payload.get("project", "")),
+            project=project,
             spider=str(payload.get("spider", "")),
-            version=(str(payload["version"]) if payload.get("version") else None),
+            version=version,
         )
         if reserved is None:
             # lost the O_EXCL race (concurrent claim) -> re-emit, do not restart.
@@ -202,12 +249,38 @@ class CommandConsumer:
             return
 
         await self._events.emit_accepted(cmd.execution_id, cmd.attempt_id)
+        if artifact is not None:
+            if self._artifact_cache is None:
+                self._store.mark_done(
+                    cmd.attempt_id, result="failed", error_code="artifact_cache_unavailable"
+                )
+                await self._events.emit_terminal(
+                    cmd.execution_id,
+                    cmd.attempt_id,
+                    AgentEventType.failed,
+                    error_code="artifact_cache_unavailable",
+                )
+                return
+            try:
+                await self._artifact_cache.ensure(artifact, attempt_id=cmd.attempt_id)
+            except ArtifactCacheError as exc:
+                self._store.mark_done(
+                    cmd.attempt_id, result="failed", error_code="artifact_error"
+                )
+                await self._events.emit_terminal(
+                    cmd.execution_id,
+                    cmd.attempt_id,
+                    AgentEventType.failed,
+                    error_code="artifact_error",
+                    error_detail=exc.detail,
+                )
+                return
         run_req = AgentRunRequest(
             execution_id=cmd.execution_id,
             attempt_id=cmd.attempt_id,
-            project=str(payload.get("project", "")),
+            project=project,
             spider=str(payload.get("spider", "")),
-            version=(str(payload["version"]) if payload.get("version") else None),
+            version=version,
             settings={str(k): str(v) for k, v in (payload.get("settings") or {}).items()},
             args={str(k): str(v) for k, v in (payload.get("args") or {}).items()},
         )
@@ -289,18 +362,32 @@ class CommandConsumer:
 
     # --- background loop ---------------------------------------------------
     async def _run(self) -> None:
+        if self._status is not None:
+            self._status.mark_command_running(True)
         try:
-            await self.recover()
-        except Exception:  # noqa: BLE001
-            logger.warning("command consumer recovery failed", exc_info=True)
-        while not self._stop.is_set():
             try:
-                # retry any durably-queued events from earlier Redis outages
-                await self._events.replay_outbox()
-                await self.drain_once(claim_pending=False, block=self._block_ms)
-            except Exception:  # noqa: BLE001 - never let the loop die
-                logger.warning("command consumer drain failed", exc_info=True)
-                await asyncio.sleep(0.5)
+                await self.recover()
+            except Exception as exc:  # noqa: BLE001
+                if self._status is not None:
+                    self._status.mark_error(exc)
+                logger.warning("command consumer recovery failed", exc_info=True)
+            while not self._stop.is_set():
+                try:
+                    # retry any durably-queued events from earlier Redis outages
+                    await self._events.replay_outbox()
+                    await self.reconcile_started_attempts()
+                    await self.drain_once(claim_pending=False, block=self._block_ms)
+                except RedisTimeoutError:
+                    if self._status is not None:
+                        self._status.mark_command_read()
+                except Exception as exc:  # noqa: BLE001 - never let the loop die
+                    if self._status is not None:
+                        self._status.mark_error(exc)
+                    logger.warning("command consumer drain failed", exc_info=True)
+                    await asyncio.sleep(0.5)
+        finally:
+            if self._status is not None:
+                self._status.mark_command_running(False)
 
     def start(self) -> None:
         if self._task is None:

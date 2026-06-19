@@ -6,6 +6,19 @@ export interface HealthInfo {
   service: string;
   version: string;
   database: string; // "ok" | "error"
+  postgresql?: {
+    status: string;
+    version: string | null;
+  };
+  redis?: {
+    status: string;
+    version: string | null;
+  };
+  nodes?: {
+    total: number;
+    online: number;
+    healthy: number;
+  };
 }
 
 export interface LoginResponse {
@@ -22,7 +35,7 @@ export interface MeResponse {
   expires_at: string | null;
 }
 
-export type NodeStatus = "unknown" | "healthy" | "unhealthy";
+export type NodeStatus = "unknown" | "healthy" | "degraded" | "unhealthy";
 
 export interface NodeInfo {
   id: string | null;
@@ -62,21 +75,37 @@ export interface ScrapyArtifact {
   filename: string;
   sha256: string;
   size_bytes: number;
-  created_at: string;
+  spiders: string[];
+  valid: boolean;
+  uploaded_at: string | null;
+  created_at: string | null;
+}
+
+export interface ArtifactsResponse {
+  artifacts: ScrapyArtifact[];
 }
 
 export interface UploadEggResponse {
   artifact: ScrapyArtifact;
   spiders: string[];
   agent_id: string | null;
-  endpoint: string;
+  endpoint: string | null;
 }
 
 // Parameters for a scrapy run.
 export interface ScrapyRunParams {
-  project: string;
+  project?: string;
   spider: string;
   version?: string;
+  artifact?: {
+    hash: string;
+    sha256?: string;
+    filename: string;
+    project: string;
+    version: string;
+    size_bytes: number;
+    fetch_path: string;
+  };
   settings?: Record<string, string>;
   args?: Record<string, string>;
 }

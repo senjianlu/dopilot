@@ -9,10 +9,9 @@ import MainLayout from "@/layouts/MainLayout.vue";
 import LoginPage from "@/pages/LoginPage.vue";
 import DashboardPage from "@/pages/DashboardPage.vue";
 import NodesPage from "@/pages/NodesPage.vue";
-import ScrapyRunPage from "@/pages/ScrapyRunPage.vue";
+import CrawlersPage from "@/pages/CrawlersPage.vue";
 import ExecutionsPage from "@/pages/ExecutionsPage.vue";
 import ExecutionDetailPage from "@/pages/ExecutionDetailPage.vue";
-import PlaceholderPage from "@/pages/PlaceholderPage.vue";
 import NotFound from "@/pages/NotFound.vue";
 
 const routes: RouteRecordRaw[] = [
@@ -21,17 +20,16 @@ const routes: RouteRecordRaw[] = [
     path: "/",
     component: MainLayout,
     children: [
-      { path: "", redirect: "/dashboard" },
+      { path: "", redirect: "/login" },
       { path: "dashboard", name: "dashboard", component: DashboardPage },
       { path: "nodes", name: "nodes", component: NodesPage },
-      { path: "run", name: "run", component: ScrapyRunPage },
+      { path: "crawlers", name: "crawlers", component: CrawlersPage },
       { path: "executions", name: "executions", component: ExecutionsPage },
       {
         path: "executions/:id",
         name: "execution-detail",
         component: ExecutionDetailPage,
       },
-      { path: "placeholder", name: "placeholder", component: PlaceholderPage },
     ],
   },
   { path: "/:pathMatch(.*)*", name: "not-found", component: NotFound },

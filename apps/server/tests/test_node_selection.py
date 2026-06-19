@@ -32,7 +32,12 @@ async def _node(
         endpoint=endpoint,
         status="healthy",
         capabilities={"scrapy": scrapy},
-        health={},
+        health={
+            "redis": {
+                "connected": True,
+                "command_consumer": {"running": True},
+            }
+        },
         last_seen_at=last_seen,
     )
     session.add(node)
@@ -114,3 +119,26 @@ async def test_pick_deploy_node(db_session):
     await _node(db_session, "a1", "http://a1:6800")
     node = await pick_deploy_node(db_session)
     assert node.agent_id == "a1"
+
+
+async def test_missing_redis_detail_is_not_selectable(db_session):
+    node = await _node(db_session, "a1", "http://a1:6800")
+    node.health = {}
+    await db_session.commit()
+    with pytest.raises(ApiError) as ei:
+        await select_target_nodes(db_session, "all")
+    assert ei.value.code == "execution.no_healthy_nodes"
+
+
+async def test_disconnected_redis_detail_is_not_selectable(db_session):
+    node = await _node(db_session, "a1", "http://a1:6800")
+    node.health = {
+        "redis": {
+            "connected": False,
+            "command_consumer": {"running": True},
+        }
+    }
+    await db_session.commit()
+    with pytest.raises(ApiError) as ei:
+        await select_target_nodes(db_session, "all")
+    assert ei.value.code == "execution.no_healthy_nodes"

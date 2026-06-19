@@ -62,6 +62,39 @@ RUN pip install --no-cache-dir 'scrapy>=2.11,<3' 'scrapyd>=1.4,<2'
 # Fail the build early if the scrapyd console script did not land on PATH.
 RUN command -v scrapyd >/dev/null || (echo "scrapyd console script missing from PATH" >&2; exit 1)
 
+# Built-in validation crawler artifact. Docker named volumes mounted at
+# /server-data are initialized from this image content on first create.
+COPY examples/scrapy_clock ./examples/scrapy_clock
+RUN cd /app/examples/scrapy_clock \
+    && python setup.py clean --all >/dev/null 2>&1 || true \
+    && python setup.py bdist_egg \
+    && mkdir -p /server-data/artifacts/scrapy \
+    && python - <<'PY'
+import hashlib, json
+from datetime import UTC, datetime
+from pathlib import Path
+
+built = next(Path("/app/examples/scrapy_clock/dist").glob("*.egg"))
+data = built.read_bytes()
+sha = hashlib.sha256(data).hexdigest()
+target = Path("/server-data/artifacts/scrapy") / f"{sha}.egg"
+target.write_bytes(data)
+manifest = {
+    "sha256": sha,
+    "filename": "dopilot_clock.egg",
+    "project": "dopilot_clock",
+    "version": f"sha256-{sha[:12]}",
+    "spiders": ["clock"],
+    "size_bytes": len(data),
+    "uploaded_at": datetime.now(UTC).isoformat(),
+    "valid": True,
+}
+(Path("/server-data/artifacts/scrapy") / f"{sha}.json").write_text(
+    json.dumps(manifest, ensure_ascii=False, sort_keys=True),
+    encoding="utf-8",
+)
+PY
+
 # Alembic assets so the same image can run `alembic upgrade head`.
 COPY apps/server/alembic.ini ./alembic.ini
 COPY apps/server/migrations ./migrations

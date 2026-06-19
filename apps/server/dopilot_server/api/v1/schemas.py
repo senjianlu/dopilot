@@ -35,7 +35,7 @@ class NodeView(BaseModel):
     id: str | None = None
     agent_id: str | None = None
     endpoint: str
-    status: str  # "unknown" | "healthy" | "unhealthy"
+    status: str  # "unknown" | "healthy" | "degraded" | "unhealthy"
     capabilities: dict[str, Any] = Field(default_factory=dict)
     # Extra health detail reported by the agent /health (phase 1: scrapyd
     # subprocess status, e.g. {"scrapyd": {"running": true, "port": 6801}}).
@@ -53,7 +53,7 @@ class NodesResponse(BaseModel):
 
 
 class ArtifactView(BaseModel):
-    """A deployed (uploaded) Scrapy egg recorded in ``scrapy_artifacts``."""
+    """A validated Scrapy egg artifact."""
 
     id: str
     project: str
@@ -61,7 +61,14 @@ class ArtifactView(BaseModel):
     filename: str
     sha256: str
     size_bytes: int
+    spiders: list[str] = Field(default_factory=list)
+    valid: bool = True
+    uploaded_at: str | None = None
     created_at: str | None = None
+
+
+class ArtifactsResponse(BaseModel):
+    artifacts: list[ArtifactView]
 
 
 class EggDeployResult(BaseModel):
@@ -69,7 +76,6 @@ class EggDeployResult(BaseModel):
 
     artifact: ArtifactView
     spiders: list[str] = Field(default_factory=list)
-    # Which agent the egg was deployed to.
     agent_id: str | None = None
     endpoint: str | None = None
 

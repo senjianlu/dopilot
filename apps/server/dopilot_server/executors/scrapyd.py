@@ -60,6 +60,8 @@ class ScrapydExecutor(BaseExecutor):
             "args": scrapy["args"],
             "task_type": "scrapy",
         }
+        if scrapy["artifact"]:
+            payload["artifact"] = scrapy["artifact"]
         for node in nodes:
             attempt = svc.create_attempt(ctx.session, execution, node)
             outbox = create_run_outbox(

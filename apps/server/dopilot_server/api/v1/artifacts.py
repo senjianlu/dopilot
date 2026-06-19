@@ -1,84 +1,86 @@
-"""Scrapy artifact (egg) endpoints.
-
-Phase 1 supports uploading a PRE-BUILT egg only (no source/Git/CI build). The
-server forwards the egg to a chosen agent which calls its local scrapyd
-``/addversion.json``, then records the deployment in ``scrapy_artifacts``.
-"""
+"""Scrapy artifact (egg) endpoints."""
 
 from __future__ import annotations
 
-import hashlib
-import time
-import uuid
-
 from fastapi import APIRouter, Depends, File, Form, UploadFile
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi.responses import FileResponse
 
+from ...artifacts.scrapy_store import ScrapyArtifactManifest, ScrapyArtifactStore
+from ...auth.agent_dependencies import require_server_token
 from ...auth.dependencies import AdminContext, get_current_admin
-from ...clients.agent import (
-    AgentClient,
-    AgentResponseError,
-    AgentUnreachableError,
-    get_agent_client,
-)
-from ...db.engine import get_session
-from ...models.execution import ScrapyArtifact
-from ...nodes.service import pick_deploy_node
-from .schemas import ArtifactView, EggDeployResult
+from ...config.loader import get_settings
+from ...config.settings import Settings
+from .schemas import ArtifactsResponse, ArtifactView, EggDeployResult
 
 router = APIRouter(tags=["artifacts"])
+
+
+def _store(settings: Settings) -> ScrapyArtifactStore:
+    return ScrapyArtifactStore(settings.artifacts.root_dir)
+
+
+def _artifact_view(manifest: ScrapyArtifactManifest) -> ArtifactView:
+    return ArtifactView(
+        id=manifest.sha256,
+        project=manifest.project,
+        version=manifest.version,
+        filename=manifest.filename,
+        sha256=manifest.sha256,
+        size_bytes=manifest.size_bytes,
+        spiders=list(manifest.spiders),
+        valid=manifest.valid,
+        uploaded_at=manifest.uploaded_at,
+        created_at=manifest.uploaded_at,
+    )
+
+
+@router.get("/artifacts/scrapy", response_model=ArtifactsResponse)
+async def list_scrapy_artifacts(
+    _admin: AdminContext = Depends(get_current_admin),
+    settings: Settings = Depends(get_settings),
+) -> ArtifactsResponse:
+    artifacts = [_artifact_view(m) for m in _store(settings).list()]
+    return ArtifactsResponse(artifacts=artifacts)
 
 
 @router.post("/artifacts/scrapy/egg", response_model=EggDeployResult)
 async def upload_scrapy_egg(
     file: UploadFile = File(...),
-    project: str = Form(...),
+    project: str | None = Form(default=None),
     version: str | None = Form(default=None),
-    node_ids: list[str] = Form(default=[]),
     _admin: AdminContext = Depends(get_current_admin),
-    session: AsyncSession = Depends(get_session),
-    agent_client: AgentClient = Depends(get_agent_client),
+    settings: Settings = Depends(get_settings),
 ) -> EggDeployResult:
+    """Validate and store a Scrapy egg on the server filesystem.
+
+    ``project`` and ``version`` are accepted for backward-compatible form posts.
+    The stored artifact version is content-derived from sha256.
+    """
+    _ = version
     egg_bytes = await file.read()
-    sha256 = hashlib.sha256(egg_bytes).hexdigest()
-    resolved_version = version or str(int(time.time()))
-    filename = file.filename or f"{project}-{resolved_version}.egg"
-
-    node = await pick_deploy_node(session, node_ids or None)
-
-    try:
-        deploy = await agent_client.deploy_egg(
-            node.endpoint, project, resolved_version, filename, egg_bytes
-        )
-    except (AgentUnreachableError, AgentResponseError) as exc:
-        raise exc.to_api_error() from exc
-
-    artifact = ScrapyArtifact(
-        id=uuid.uuid4().hex,
-        project=deploy.project or project,
-        version=deploy.version or resolved_version,
-        filename=filename,
-        sha256=sha256,
-        size_bytes=len(egg_bytes),
-        agent_id=node.agent_id,
-        endpoint=node.endpoint,
+    filename = file.filename or "crawler.egg"
+    manifest = _store(settings).save(
+        filename=filename, content=egg_bytes, project_hint=project
     )
-    session.add(artifact)
-    await session.commit()
-
+    artifact = _artifact_view(manifest)
     return EggDeployResult(
-        artifact=ArtifactView(
-            id=artifact.id,
-            project=artifact.project,
-            version=artifact.version,
-            filename=artifact.filename,
-            sha256=artifact.sha256,
-            size_bytes=artifact.size_bytes,
-            created_at=artifact.created_at.isoformat()
-            if artifact.created_at
-            else None,
-        ),
-        spiders=deploy.spiders,
-        agent_id=node.agent_id,
-        endpoint=node.endpoint,
+        artifact=artifact,
+        spiders=list(manifest.spiders),
+        agent_id=None,
+        endpoint=None,
+    )
+
+
+@router.get("/artifacts/scrapy/{sha256}/egg")
+async def download_scrapy_egg(
+    sha256: str,
+    _: None = Depends(require_server_token),
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    store = _store(settings)
+    manifest = store.get(sha256)
+    return FileResponse(
+        store.egg_path(sha256),
+        media_type="application/octet-stream",
+        filename=manifest.filename,
     )

@@ -18,6 +18,7 @@ from dopilot_protocol import AgentHeartbeatRequest, CapabilitySet
 
 from ..config.settings import Settings
 from ..state.store import StateStore
+from .status import RedisRuntimeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +35,13 @@ class HeartbeatWorker:
         store: StateStore,
         version: str,
         client: httpx.AsyncClient | None = None,
+        redis_status: RedisRuntimeStatus | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
         self._version = version
         self._client = client
+        self._redis_status = redis_status
         self._owns_client = client is None
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
@@ -52,17 +55,20 @@ class HeartbeatWorker:
             docker=s.capabilities.docker,
         )
         running = len(self._store.list_attempt_ids())
+        detail = {
+            "scrapyd": {
+                "port": s.scrapyd.port,
+                "managed": s.scrapyd.start,
+            }
+        }
+        if self._redis_status is not None:
+            detail["redis"] = self._redis_status.snapshot()
         return AgentHeartbeatRequest(
             agent_id=s.agent.agent_id,
             version=self._version,
             capabilities=caps,
             load={"running_attempts": running},
-            detail={
-                "scrapyd": {
-                    "port": s.scrapyd.port,
-                    "managed": s.scrapyd.start,
-                }
-            },
+            detail=detail,
             endpoint=s.agent.advertise_endpoint or None,
             reported_at=datetime.now(UTC).isoformat(),
         )

@@ -68,7 +68,9 @@ class RedisStreams:
 
     @classmethod
     def from_url(cls, url: str) -> RedisStreams:
-        return cls(aioredis.from_url(url, decode_responses=False))
+        return cls(aioredis.from_url(
+            url, decode_responses=False, socket_timeout=None
+        ))
 
     async def xadd(
         self,

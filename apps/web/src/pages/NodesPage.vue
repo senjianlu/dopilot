@@ -8,8 +8,9 @@ const { t } = useI18n();
 const nodes = ref<NodeInfo[]>([]);
 const loading = ref(false);
 
-const statusTagType: Record<NodeStatus, "success" | "danger" | "info"> = {
+const statusTagType: Record<NodeStatus, "success" | "warning" | "danger" | "info"> = {
   healthy: "success",
+  degraded: "warning",
   unhealthy: "danger",
   unknown: "info",
 };

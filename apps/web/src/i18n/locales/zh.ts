@@ -7,7 +7,7 @@ export default {
   nav: {
     dashboard: "仪表盘",
     nodes: "节点",
-    run: "运行 Scrapy",
+    crawlers: "爬虫",
     executions: "执行记录",
   },
   login: {
@@ -49,6 +49,19 @@ export default {
     addRow: "添加一行",
     submit: "运行",
     submitError: "运行失败",
+  },
+  crawlers: {
+    title: "爬虫",
+    upload: "上传 Egg",
+    filename: "文件名",
+    spiders: "Spider",
+    hash: "Hash",
+    uploadedAt: "上传时间",
+    sizeBytes: "大小",
+    status: "状态",
+    actions: "操作",
+    run: "运行",
+    empty: "暂无爬虫",
   },
   executions: {
     title: "执行记录",
@@ -96,7 +109,9 @@ export default {
   health: {
     title: "服务健康",
     status: "状态",
-    version: "版本",
+    nodesOnline: "在线节点",
+    postgresql: "PostgreSQL",
+    redis: "Redis",
     database: "数据库",
   },
   errors: {
