@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 env:
-  DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
   DOCKER_PLATFORMS: ${{ vars.DOCKER_PLATFORMS || 'linux/amd64' }}
 
 jobs:
