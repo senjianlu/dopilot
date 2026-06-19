@@ -19,10 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       deps_hash: ${{ steps.hash.outputs.deps_hash }}
-      app_tags: ${{ steps.tags.outputs.app_tags }}
-      py_base_tags: ${{ steps.tags.outputs.py_base_tags }}
-      web_base_tags: ${{ steps.tags.outputs.web_base_tags }}
-      push_latest: ${{ steps.tags.outputs.push_latest }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,50 +28,6 @@ jobs:
         run: |
           DEPS_HASH="$(scripts/docker-deps-hash.sh)"
           echo "deps_hash=${DEPS_HASH}" >> "${GITHUB_OUTPUT}"
-
-      - id: tags
-        name: Compute image tags
-        shell: bash
-        env:
-          DEPS_HASH: ${{ steps.hash.outputs.deps_hash }}
-        run: |
-          set -euo pipefail
-
-          app_image="${DOCKERHUB_USERNAME}/dopilot"
-          py_base_image="${DOCKERHUB_USERNAME}/dopilot-py-base"
-          web_base_image="${DOCKERHUB_USERNAME}/dopilot-web-base"
-          short_sha="${GITHUB_SHA::12}"
-
-          push_latest="false"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            app_tags="${app_image}:${short_sha}"$'\n'"${app_image}:${GITHUB_REF_NAME}"$'\n'"${app_image}:latest"
-            push_latest="true"
-          elif [[ "${GITHUB_REF}" == "refs/heads/main" || "${GITHUB_REF}" == "refs/heads/master" ]]; then
-            app_tags="${app_image}:${short_sha}"$'\n'"${app_image}:latest"
-            push_latest="true"
-          else
-            app_tags="${app_image}:${short_sha}"
-          fi
-
-          py_base_tags="${py_base_image}:${DEPS_HASH}"
-          web_base_tags="${web_base_image}:${DEPS_HASH}"
-          if [[ "${push_latest}" == "true" ]]; then
-            py_base_tags="${py_base_tags}"$'\n'"${py_base_image}:latest"
-            web_base_tags="${web_base_tags}"$'\n'"${web_base_image}:latest"
-          fi
-
-          {
-            echo "app_tags<<EOF"
-            echo "${app_tags}"
-            echo "EOF"
-            echo "py_base_tags<<EOF"
-            echo "${py_base_tags}"
-            echo "EOF"
-            echo "web_base_tags<<EOF"
-            echo "${web_base_tags}"
-            echo "EOF"
-            echo "push_latest=${push_latest}"
-          } >> "${GITHUB_OUTPUT}"
 
   base:
     name: Ensure Docker base images
@@ -98,6 +50,31 @@ jobs:
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - id: tags
+        name: Compute base image tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          py_base_image="${DOCKERHUB_USERNAME}/dopilot-py-base"
+          web_base_image="${DOCKERHUB_USERNAME}/dopilot-web-base"
+
+          py_base_tags="${py_base_image}:${{ needs.deps.outputs.deps_hash }}"
+          web_base_tags="${web_base_image}:${{ needs.deps.outputs.deps_hash }}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" || "${GITHUB_REF}" == "refs/heads/main" || "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            py_base_tags="${py_base_tags}"$'\n'"${py_base_image}:latest"
+            web_base_tags="${web_base_tags}"$'\n'"${web_base_image}:latest"
+          fi
+
+          {
+            echo "py_base_tags<<EOF"
+            echo "${py_base_tags}"
+            echo "EOF"
+            echo "web_base_tags<<EOF"
+            echo "${web_base_tags}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
 
       - id: check-py
         name: Check Python base manifest
@@ -150,7 +127,7 @@ jobs:
           target: py-runtime
           platforms: ${{ env.DOCKER_PLATFORMS }}
           push: true
-          tags: ${{ needs.deps.outputs.py_base_tags }}
+          tags: ${{ steps.tags.outputs.py_base_tags }}
           cache-from: type=gha,scope=dopilot-py-base
           cache-to: type=gha,mode=max,scope=dopilot-py-base
 
@@ -163,7 +140,7 @@ jobs:
           target: web-deps
           platforms: ${{ env.DOCKER_PLATFORMS }}
           push: true
-          tags: ${{ needs.deps.outputs.web_base_tags }}
+          tags: ${{ steps.tags.outputs.web_base_tags }}
           cache-from: type=gha,scope=dopilot-web-base
           cache-to: type=gha,mode=max,scope=dopilot-web-base
 
@@ -191,6 +168,29 @@ jobs:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - id: tags
+        name: Compute app image tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          app_image="${DOCKERHUB_USERNAME}/dopilot"
+          short_sha="${GITHUB_SHA::12}"
+
+          app_tags="${app_image}:${short_sha}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" || "${GITHUB_REF}" == "refs/heads/main" || "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            app_tags="${app_tags}"$'\n'"${app_image}:latest"
+          fi
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            app_tags="${app_tags}"$'\n'"${app_image}:${GITHUB_REF_NAME}"
+          fi
+
+          {
+            echo "app_tags<<EOF"
+            echo "${app_tags}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Build and push app image
         uses: docker/build-push-action@v6
         with:
@@ -201,7 +201,7 @@ jobs:
           build-args: |
             DOPILOT_PY_BASE_IMAGE=${{ env.DOCKERHUB_USERNAME }}/dopilot-py-base:${{ needs.deps.outputs.deps_hash }}
             DOPILOT_WEB_BASE_IMAGE=${{ env.DOCKERHUB_USERNAME }}/dopilot-web-base:${{ needs.deps.outputs.deps_hash }}
-          tags: ${{ needs.deps.outputs.app_tags }}
+          tags: ${{ steps.tags.outputs.app_tags }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
