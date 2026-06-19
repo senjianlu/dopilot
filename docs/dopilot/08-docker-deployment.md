@@ -759,7 +759,7 @@ CI 不直接依赖 `rabbir/dopilot-*-base:latest` 构建应用镜像，而是先
 GitHub 配置：
 
 - Required secret：`DOCKERHUB_TOKEN`。
-- Required variable：`DOCKERHUB_USERNAME`。镜像命名空间固定使用该值，例如 `rabbir/dopilot`、`rabbir/dopilot-py-base`、`rabbir/dopilot-web-base`。
+- Required secret：`DOCKERHUB_USERNAME`。镜像命名空间固定使用该值，例如 `rabbir/dopilot`、`rabbir/dopilot-py-base`、`rabbir/dopilot-web-base`。
 - Optional variable：`DOCKER_PLATFORMS`，默认 `linux/amd64`；多架构可设为 `linux/amd64,linux/arm64`，但 arm64 经 QEMU 构建会明显变慢。
 
 后续加固项：
