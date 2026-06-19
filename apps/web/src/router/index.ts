@@ -10,6 +10,8 @@ import LoginPage from "@/pages/LoginPage.vue";
 import DashboardPage from "@/pages/DashboardPage.vue";
 import NodesPage from "@/pages/NodesPage.vue";
 import CrawlersPage from "@/pages/CrawlersPage.vue";
+import TemplatesPage from "@/pages/TemplatesPage.vue";
+import SchedulesPage from "@/pages/SchedulesPage.vue";
 import ExecutionsPage from "@/pages/ExecutionsPage.vue";
 import ExecutionDetailPage from "@/pages/ExecutionDetailPage.vue";
 import NotFound from "@/pages/NotFound.vue";
@@ -24,6 +26,8 @@ const routes: RouteRecordRaw[] = [
       { path: "dashboard", name: "dashboard", component: DashboardPage },
       { path: "nodes", name: "nodes", component: NodesPage },
       { path: "crawlers", name: "crawlers", component: CrawlersPage },
+      { path: "templates", name: "templates", component: TemplatesPage },
+      { path: "schedules", name: "schedules", component: SchedulesPage },
       { path: "executions", name: "executions", component: ExecutionsPage },
       {
         path: "executions/:id",

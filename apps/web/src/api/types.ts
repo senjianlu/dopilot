@@ -65,7 +65,10 @@ export type ExecutionStatus =
   | "complete"
   | "failed"
   | "canceled"
-  | "lost";
+  | "lost"
+  // Phase 1.7: a run (task) that found no healthy target node, so it has zero
+  // child executions. Terminal; status_reason/status_detail carry the why.
+  | "no_target";
 
 // Egg upload artifact metadata.
 export interface ScrapyArtifact {
@@ -123,13 +126,20 @@ export interface RunExecutionResponse {
   status: string;
 }
 
-// Row shape for the executions list.
+// How a task was created. manual covers ad-hoc + run-from-template.
+export type TaskSource = "manual" | "schedule_trigger_now" | "schedule_timer";
+
+// Row shape for the executions (runs/tasks) list.
 export interface ExecutionSummary {
   id: string;
   task_type: string;
   target: string;
   status: ExecutionStatus;
+  status_reason?: string | null;
   node_strategy: NodeStrategy;
+  source?: TaskSource;
+  template_id?: string | null;
+  schedule_id?: string | null;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -161,12 +171,84 @@ export interface ExecutionView {
   task_type: string;
   target: string;
   status: ExecutionStatus;
+  // Phase 1.7: present on a no_target (or other non-business) terminal.
+  status_reason?: string | null;
+  status_detail?: Record<string, unknown>;
   node_strategy: NodeStrategy;
   params: Record<string, unknown>;
+  source?: TaskSource;
+  template_id?: string | null;
+  schedule_id?: string | null;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
   attempts: AttemptView[];
+}
+
+// ---------------------------------------------------------------------------
+// phase 1.7 packet 2: task templates + schedules
+// ---------------------------------------------------------------------------
+
+export interface TaskTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  task_type: string;
+  project: string | null;
+  version: string | null;
+  spider: string | null;
+  artifact: Record<string, unknown>;
+  settings: Record<string, string>;
+  args: Record<string, string>;
+  node_strategy: NodeStrategy;
+  node_ids: string[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface TemplatesResponse {
+  templates: TaskTemplate[];
+}
+
+export interface CreateTemplateRequest {
+  name: string;
+  description?: string | null;
+  task_type?: TaskType;
+  project?: string | null;
+  version?: string | null;
+  spider?: string | null;
+  artifact?: Record<string, unknown>;
+  settings?: Record<string, string>;
+  args?: Record<string, string>;
+  node_strategy?: NodeStrategy;
+  node_ids?: string[];
+}
+
+export type TriggerType = "interval" | "cron";
+
+export interface Schedule {
+  id: string;
+  name: string;
+  description: string | null;
+  template_id: string;
+  trigger_type: TriggerType;
+  interval_seconds: number | null;
+  cron: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface SchedulesResponse {
+  schedules: Schedule[];
+}
+
+export interface CreateScheduleRequest {
+  name: string;
+  description?: string | null;
+  template_id: string;
+  trigger_type?: TriggerType;
+  interval_seconds?: number | null;
+  cron?: string | null;
 }
 
 // A snapshot pull of a log stream from a known offset.

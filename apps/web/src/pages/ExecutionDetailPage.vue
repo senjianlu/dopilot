@@ -26,6 +26,7 @@ const statusTagType: Record<
   failed: "danger",
   canceled: "info",
   lost: "danger",
+  no_target: "warning",
 };
 
 // Cancel only makes sense before the execution reaches a terminal state.

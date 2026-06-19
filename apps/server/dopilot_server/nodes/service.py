@@ -208,6 +208,28 @@ async def _healthy_capable_nodes(
     ]
 
 
+async def resolve_target_nodes(
+    session: AsyncSession,
+    strategy: str,
+    node_ids: list[str] | None = None,
+    *,
+    capability: str = "scrapy",
+    timeout_seconds: int = DEFAULT_HEARTBEAT_TIMEOUT_SECONDS,
+) -> tuple[list[Node], int]:
+    """Pick target nodes for a task; NEVER raise on the zero-node case.
+
+    Returns ``(selected_nodes, healthy_candidate_count)``. Phase 1.7 packet 2:
+    the caller (task dispatch) creates the task FIRST, then persists a terminal
+    ``no_target`` task when ``selected_nodes`` is empty — it does not raise a
+    409. ``_to_strategy`` still validates the strategy string (400 on garbage).
+    """
+    candidates = await _healthy_capable_nodes(
+        session, capability, timeout_seconds=timeout_seconds
+    )
+    selected = reduce_nodes(_to_strategy(strategy), candidates, node_ids)
+    return selected, len(candidates)
+
+
 async def select_target_nodes(
     session: AsyncSession,
     strategy: str,
@@ -220,12 +242,14 @@ async def select_target_nodes(
 
     Applies the node strategy (all/random/selected) over the live set. Raises a
     structured 409 when no usable node exists so the caller never creates a
-    half-baked running execution.
+    half-baked running execution. (Task dispatch uses the non-raising
+    :func:`resolve_target_nodes` + ``no_target``; this 409 path remains for egg
+    deploy, which has no task to mark.)
     """
-    candidates = await _healthy_capable_nodes(
-        session, capability, timeout_seconds=timeout_seconds
+    selected, healthy_count = await resolve_target_nodes(
+        session, strategy, node_ids,
+        capability=capability, timeout_seconds=timeout_seconds,
     )
-    selected = reduce_nodes(_to_strategy(strategy), candidates, node_ids)
     if not selected:
         raise ApiError(
             409,
@@ -234,7 +258,7 @@ async def select_target_nodes(
             {
                 "node_strategy": strategy,
                 "node_ids": node_ids or [],
-                "healthy_count": len(candidates),
+                "healthy_count": healthy_count,
             },
         )
     return selected

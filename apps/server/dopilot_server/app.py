@@ -39,6 +39,7 @@ from .redis.commands import CommandProducer
 from .redis.consumers import EventConsumer, LogConsumer
 from .redis.dispatcher import CommandDispatcher
 from .redis.reconcile import RedisReconcileLoop
+from .scheduler.runner import ScheduleRunner, build_schedule_runner
 
 CORS_ORIGINS = [
     "http://localhost:5173",
@@ -106,6 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         event_consumer: EventConsumer | None = None
         log_consumer: LogConsumer | None = None
         reconcile_loop: RedisReconcileLoop | None = None
+        schedule_runner: ScheduleRunner | None = None
         if owns_runtime:
             app.dependency_overrides[get_session] = _session_dependency
             # Expose the request sessionmaker so endpoints that outlive a normal
@@ -144,10 +146,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             reconcile_loop.start()
             app.state.command_dispatcher = dispatcher
             app.state.redis = redis_client
+
+            # Phase 1.7: the single-instance schedule runner (OFF unless
+            # [scheduler].enabled). Drives the schedules table via APScheduler.
+            schedule_runner = build_schedule_runner(bg_maker, active, dispatcher)
+            if schedule_runner is not None:
+                await schedule_runner.start()
+            app.state.schedule_runner = schedule_runner
         try:
             yield
         finally:
             if owns_runtime:
+                if schedule_runner is not None:
+                    await schedule_runner.stop()
                 for worker in (
                     reconcile_loop, log_consumer, event_consumer, dispatcher
                 ):

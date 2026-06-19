@@ -80,8 +80,20 @@ class EggDeployResult(BaseModel):
     endpoint: str | None = None
 
 
+# NOTE (phase 1.7 public/web seam): the web JSON still uses the phase-1.5
+# vocabulary — a parent run is an "execution" (``ExecutionView`` with
+# ``attempts[]``) and an atomic unit is an "attempt" (``AttemptView`` whose
+# ``execution_id`` is the parent task id). The server domain renamed these to
+# task/execution; the public clean-cut is a later packet. Keep these shapes
+# frozen so the web does not break in this packet.
+
+
 class AttemptView(BaseModel):
-    """One execution attempt (one target node) of an execution."""
+    """One atomic execution (one target node) of a task/run.
+
+    ``execution_id`` is the PARENT id (a task id in the server domain) — the web
+    vocabulary still calls the parent an "execution".
+    """
 
     id: str
     execution_id: str
@@ -98,15 +110,24 @@ class AttemptView(BaseModel):
 
 
 class ExecutionView(BaseModel):
-    """Full execution detail incl. its attempts."""
+    """Full task/run detail incl. its atomic executions (``attempts``)."""
 
     id: str
     task_type: str
     target: str
-    # queued|running|finalizing|complete|failed|canceled|lost
+    # queued|running|finalizing|complete|failed|canceled|lost|no_target
     status: str
+    # Phase 1.7: set on a terminal that has no child execution to explain it
+    # (currently the zero-node ``no_target`` task). NULL on normal runs.
+    status_reason: str | None = None
+    status_detail: dict[str, Any] = Field(default_factory=dict)
     node_strategy: str
     params: dict[str, Any] = Field(default_factory=dict)
+    # Phase 1.7 packet 2: provenance. source = manual | schedule_trigger_now |
+    # schedule_timer; template_id/schedule_id are null for an ad-hoc manual run.
+    source: str = "manual"
+    template_id: str | None = None
+    schedule_id: str | None = None
     created_at: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
@@ -114,13 +135,17 @@ class ExecutionView(BaseModel):
 
 
 class ExecutionSummary(BaseModel):
-    """Compact row for the executions list."""
+    """Compact row for the tasks/runs list."""
 
     id: str
     task_type: str
     target: str
     status: str
+    status_reason: str | None = None
     node_strategy: str
+    source: str = "manual"
+    template_id: str | None = None
+    schedule_id: str | None = None
     created_at: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
@@ -129,6 +154,100 @@ class ExecutionSummary(BaseModel):
 
 class ExecutionsResponse(BaseModel):
     executions: list[ExecutionSummary]
+
+
+# ---------------------------------------------------------------------------
+# phase 1.7 packet 2: task templates + schedules
+# ---------------------------------------------------------------------------
+
+
+class TemplateView(BaseModel):
+    """A reusable Scrapy run definition."""
+
+    id: str
+    name: str
+    description: str | None = None
+    task_type: str = "scrapy"
+    project: str | None = None
+    version: str | None = None
+    spider: str | None = None
+    artifact: dict[str, Any] = Field(default_factory=dict)
+    settings: dict[str, str] = Field(default_factory=dict)
+    args: dict[str, str] = Field(default_factory=dict)
+    node_strategy: str = "all"
+    node_ids: list[str] = Field(default_factory=list)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class TemplateCreateRequest(BaseModel):
+    name: str
+    description: str | None = None
+    task_type: str = "scrapy"
+    project: str | None = None
+    version: str | None = None
+    spider: str | None = None
+    artifact: dict[str, Any] = Field(default_factory=dict)
+    settings: dict[str, str] = Field(default_factory=dict)
+    args: dict[str, str] = Field(default_factory=dict)
+    node_strategy: str = "all"
+    node_ids: list[str] = Field(default_factory=list)
+
+
+class TemplateUpdateRequest(BaseModel):
+    """All fields optional; only the provided ones are patched."""
+
+    name: str | None = None
+    description: str | None = None
+    task_type: str | None = None
+    project: str | None = None
+    version: str | None = None
+    spider: str | None = None
+    artifact: dict[str, Any] | None = None
+    settings: dict[str, str] | None = None
+    args: dict[str, str] | None = None
+    node_strategy: str | None = None
+    node_ids: list[str] | None = None
+
+
+class TemplatesResponse(BaseModel):
+    templates: list[TemplateView]
+
+
+class ScheduleView(BaseModel):
+    """A timer referencing one template (interval or cron)."""
+
+    id: str
+    name: str
+    description: str | None = None
+    template_id: str
+    trigger_type: str = "interval"  # interval | cron
+    interval_seconds: int | None = None
+    cron: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ScheduleCreateRequest(BaseModel):
+    name: str
+    description: str | None = None
+    template_id: str
+    trigger_type: str = "interval"
+    interval_seconds: int | None = None
+    cron: str | None = None
+
+
+class ScheduleUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    template_id: str | None = None
+    trigger_type: str | None = None
+    interval_seconds: int | None = None
+    cron: str | None = None
+
+
+class SchedulesResponse(BaseModel):
+    schedules: list[ScheduleView]
 
 
 class LogSnapshot(BaseModel):

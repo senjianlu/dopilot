@@ -34,3 +34,8 @@ Return a concise feasibility response with these sections:
 
 Keep the response short and concrete. Focus on implementation feasibility, not
 product brainstorming. If there are no blockers, say so clearly.
+
+For a long-running feasibility check, write `<phase-or-task>/claude-progress.md`
+early with rough duration, proposed update cadence, current context, files being
+inspected, and blockers. Update it again at meaningful checkpoints. This is a
+coordination note, not a hard-timer requirement.

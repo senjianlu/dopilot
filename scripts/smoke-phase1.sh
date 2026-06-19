@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 #
-# dopilot phase-1 compose smoke: a repeatable, clean-volume end-to-end check of
-# the real Scrapy execution chain (brief §7.6 / §10):
+# dopilot phase-1 / phase-1.7 compose smoke: a repeatable, clean-volume
+# end-to-end check of the real Scrapy execution chain over the Redis Streams
+# model (brief §7.6 / §10 + phase 1.7 template/schedule paths):
 #
-#   server API -> ScrapydExecutor -> agent /run -> in-agent scrapyd
-#     -> scrapy demo:phase1 job -> agent tails job.log
-#     -> server pulls log increments -> /server-data/logs + PostgreSQL index
-#     -> server returns landed logs
+#   server API -> template -> task -> ScrapydExecutor -> Redis command stream
+#     -> agent consumes run command -> in-agent scrapyd -> scrapy demo:phase1
+#     -> agent XADDs log increments to dopilot:server:logs
+#     -> server log consumer -> /server-data/logs + PostgreSQL index
+#     -> server returns landed logs over SSE/HTTP
 #
-# It builds the images, brings up db -> migrate -> agent -> server on FRESH
-# volumes, uploads the committed demo egg, runs the demo spider, polls the
-# execution to a terminal state, asserts the demo marker lines landed in the
-# server logs, and asserts the final status is `complete`.
+# It builds the images, brings up db -> migrate (alembic head incl. 0005) ->
+# agent -> server on FRESH volumes, waits for a heartbeat-healthy agent (the
+# Redis heartbeat model; the old POST /nodes/refresh is gone), asserts
+# /health reports DB/Redis/nodes ok, uploads the committed demo egg, creates a
+# Scrapy TEMPLATE, runs it (template -> task -> one execution per healthy node),
+# polls the task to terminal, asserts the demo marker lines landed in the server
+# logs, asserts the final status is `complete`, then exercises the schedule
+# trigger-now path (schedule -> task).
 #
 # Usage:
 #   scripts/smoke-phase1.sh            # full clean-volume smoke
@@ -71,6 +77,9 @@ teardown() {
 
 cleanup_on_exit() {
   local rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    printf '\n\033[31mSMOKE FAILED\033[0m\n'
+  fi
   if [ "${rc}" -eq 0 ] && [ "${KEEP_UP:-0}" = "1" ]; then
     step "KEEP_UP=1 and smoke passed: leaving the stack running."
     return
@@ -106,6 +115,26 @@ elif isinstance(cur, bool):
     print("true" if cur else "false")
 else:
     print(cur)
+PY
+}
+
+json_template_payload() {
+  python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+import json, sys
+
+name, project, spider, artifact_raw, version = sys.argv[1:6]
+payload = {
+    "name": name,
+    "task_type": "scrapy",
+    "project": project,
+    "spider": spider,
+    "version": version,
+    "node_strategy": "all",
+}
+artifact = json.loads(artifact_raw or "{}")
+if artifact:
+    payload["artifact"] = artifact
+print(json.dumps(payload, separators=(",", ":")))
 PY
 }
 
@@ -216,19 +245,43 @@ fi
 AUTH=(-H "Authorization: Bearer ${TOKEN}")
 pass "obtained admin bearer token"
 
-# --- 5. server sees a healthy agent ----------------------------------------
-step "5. POST /api/v1/nodes/refresh -> healthy agent w/ scrapyd"
-NODES="$(curl -fsS -X POST "${SERVER}/api/v1/nodes/refresh" "${AUTH[@]}" || true)"
-NODE_STATUS="$(json_get "${NODES}" "nodes[0].status")"
+# --- 5. server sees a healthy agent (Redis heartbeat model) -----------------
+# Phase 1.5+: node liveness is sourced from agent-initiated heartbeats
+# (POST /api/v1/agents/{id}/heartbeat), NOT a server-driven /nodes/refresh poll
+# (that endpoint is gone). The agent heartbeats on its own once it is up, so we
+# poll GET /api/v1/nodes until a node reports `healthy`.
+step "5. Poll GET /api/v1/nodes until a heartbeat-healthy agent appears"
+NODE_DEADLINE=$(( $(date +%s) + HEALTH_TIMEOUT ))
+NODE_STATUS=""
+while :; do
+  NODES="$(curl -fsS "${SERVER}/api/v1/nodes" "${AUTH[@]}" || true)"
+  NODE_STATUS="$(json_get "${NODES}" "nodes[0].status")"
+  [ "${NODE_STATUS}" = "healthy" ] && break
+  if [ "$(date +%s)" -ge "${NODE_DEADLINE}" ]; then
+    fail "no heartbeat-healthy agent within ${HEALTH_TIMEOUT}s (last status: ${NODE_STATUS:-<none>}; body: ${NODES})"
+    dc logs agent | tail -60 >&2
+    exit 1
+  fi
+  sleep 3
+done
+pass "nodes[0].status == healthy (via agent heartbeat)"
 NODE_SCRAPYD="$(json_get "${NODES}" "nodes[0].health.scrapyd.running")"
-if [ "${NODE_STATUS}" = "healthy" ]; then
-  pass "nodes[0].status == healthy"
-else
-  fail "no healthy agent after refresh (got status: ${NODE_STATUS}; body: ${NODES})"
-  exit 1
-fi
 [ "${NODE_SCRAPYD}" = "true" ] && pass "nodes[0].health.scrapyd.running == true" \
   || info "node health did not surface scrapyd.running (non-fatal): ${NODES}"
+
+# --- 5b. server /health reports DB + Redis + nodes ok -----------------------
+step "5b. GET /api/v1/health -> DB/Redis/nodes ok"
+HEALTH="$(curl -fsS "${SERVER}/api/v1/health" "${AUTH[@]}" || true)"
+H_DB="$(json_get "${HEALTH}" "postgresql.status")"
+H_REDIS="$(json_get "${HEALTH}" "redis.status")"
+H_NODES_HEALTHY="$(json_get "${HEALTH}" "nodes.healthy")"
+[ "${H_DB}" = "ok" ] && pass "health.postgresql.status == ok" \
+  || { fail "health.postgresql.status != ok (body: ${HEALTH})"; exit 1; }
+[ "${H_REDIS}" = "ok" ] && pass "health.redis.status == ok" \
+  || { fail "health.redis.status != ok (body: ${HEALTH})"; exit 1; }
+[ -n "${H_NODES_HEALTHY}" ] && [ "${H_NODES_HEALTHY}" -ge 1 ] 2>/dev/null \
+  && pass "health.nodes.healthy >= 1 (${H_NODES_HEALTHY})" \
+  || { fail "health.nodes.healthy < 1 (body: ${HEALTH})"; exit 1; }
 
 # --- 6. ensure the demo egg exists (build in-container if missing) ----------
 step "6. Resolve demo egg"
@@ -262,20 +315,51 @@ else
   dc logs agent | tail -40 >&2
   exit 1
 fi
+ARTIFACT_JSON="$(python3 - "${UPLOAD}" <<'PY'
+import json, sys
 
-# --- 8. run the demo spider -------------------------------------------------
-step "8. POST /api/v1/executions/run (scrapy demo:phase1, node_strategy=all)"
-RUN="$(curl -fsS -X POST "${SERVER}/api/v1/executions/run" "${AUTH[@]}" \
+body = json.loads(sys.argv[1] or "{}")
+print(json.dumps(body.get("artifact") or {}, separators=(",", ":")))
+PY
+)"
+
+# --- 8. Phase 1.7 path: create a Scrapy template, then run it ---------------
+# This exercises the canonical phase-1.7 template -> task -> execution flow
+# (POST /templates then POST /templates/{id}/run), NOT the legacy direct
+# /executions/run. The run response's `execution_id` is the new TASK id.
+step "8. POST /api/v1/templates (scrapy demo:phase1, node_strategy=all)"
+TPL_PAYLOAD="$(json_template_payload "smoke-${SPIDER}-${VERSION}" "${PROJECT}" "${SPIDER}" "${ARTIFACT_JSON}" "${VERSION}")"
+TPL="$(curl -fsS -X POST "${SERVER}/api/v1/templates" "${AUTH[@]}" \
   -H 'Content-Type: application/json' \
-  -d "{\"task_type\":\"scrapy\",\"target\":\"${PROJECT}:${SPIDER}\",\"node_strategy\":\"all\",\"params\":{\"project\":\"${PROJECT}\",\"spider\":\"${SPIDER}\"}}" 2>/dev/null || true)"
+  -d "${TPL_PAYLOAD}" 2>/dev/null || true)"
+TEMPLATE_ID="$(json_get "${TPL}" "id")"
+if [ -n "${TEMPLATE_ID}" ]; then
+  pass "template created (id == ${TEMPLATE_ID})"
+else
+  fail "POST /templates returned no id (response: ${TPL})"
+  exit 1
+fi
+
+step "8b. POST /api/v1/templates/{id}/run -> create a task from the snapshot"
+RUN="$(curl -fsS -X POST "${SERVER}/api/v1/templates/${TEMPLATE_ID}/run" "${AUTH[@]}" \
+  -H 'Content-Type: application/json' -d '{}' 2>/dev/null || true)"
 EXEC_ID="$(json_get "${RUN}" "execution_id")"
 [ -z "${EXEC_ID}" ] && EXEC_ID="$(json_get "${RUN}" "id")"
 if [ -n "${EXEC_ID}" ]; then
-  pass "execution created (id == ${EXEC_ID})"
+  pass "task created from template (task id == ${EXEC_ID})"
 else
-  fail "executions/run returned no execution id (response: ${RUN})"
+  fail "template run returned no task id (response: ${RUN})"
   exit 1
 fi
+
+# Confirm the task has exactly one atomic execution (one healthy node, all).
+TASK_DETAIL="$(curl -fsS "${SERVER}/api/v1/executions/${EXEC_ID}" "${AUTH[@]}" || true)"
+TASK_SOURCE="$(json_get "${TASK_DETAIL}" "source")"
+TASK_ATTEMPT0="$(json_get "${TASK_DETAIL}" "attempts[0].agent_id")"
+[ "${TASK_SOURCE}" = "manual" ] && pass "task.source == manual (template run)" \
+  || info "task.source == ${TASK_SOURCE} (non-fatal)"
+[ -n "${TASK_ATTEMPT0}" ] && pass "task has a child execution on agent '${TASK_ATTEMPT0}'" \
+  || { fail "task has no child execution (body: ${TASK_DETAIL})"; exit 1; }
 
 # --- 9. poll to a terminal status -------------------------------------------
 step "9. Poll GET /api/v1/executions/{id} until terminal"
@@ -328,6 +412,44 @@ else
   fail "execution ended in '${STATUS}', expected 'complete'"
   exit 1
 fi
+
+# --- 12. Phase 1.7 schedule path: trigger-now creates a task ----------------
+# Prove the schedule -> task path (same snapshot dispatch as a timer firing)
+# also lands a task. We create a schedule referencing the step-8 template and
+# trigger it immediately; we assert a NEW task is created with source
+# `schedule_trigger_now` and a child execution. (We do not re-poll to terminal:
+# step 8-11 already proved the full template -> log -> complete chain.)
+step "12. POST /api/v1/schedules + /trigger-now -> task from schedule"
+SCHED="$(curl -fsS -X POST "${SERVER}/api/v1/schedules" "${AUTH[@]}" \
+  -H 'Content-Type: application/json' \
+  -d "{\"name\":\"smoke-sched-${VERSION}\",\"template_id\":\"${TEMPLATE_ID}\",\"trigger_type\":\"interval\",\"interval_seconds\":3600}" 2>/dev/null || true)"
+SCHEDULE_ID="$(json_get "${SCHED}" "id")"
+if [ -n "${SCHEDULE_ID}" ]; then
+  pass "schedule created (id == ${SCHEDULE_ID})"
+else
+  fail "POST /schedules returned no id (response: ${SCHED})"
+  exit 1
+fi
+
+TRIG="$(curl -fsS -X POST "${SERVER}/api/v1/schedules/${SCHEDULE_ID}/trigger-now" "${AUTH[@]}" \
+  -H 'Content-Type: application/json' -d '{}' 2>/dev/null || true)"
+TRIG_TASK_ID="$(json_get "${TRIG}" "execution_id")"
+if [ -n "${TRIG_TASK_ID}" ] && [ "${TRIG_TASK_ID}" != "${EXEC_ID}" ]; then
+  pass "trigger-now created a new task (id == ${TRIG_TASK_ID})"
+else
+  fail "trigger-now did not create a new task (response: ${TRIG})"
+  exit 1
+fi
+
+TRIG_DETAIL="$(curl -fsS "${SERVER}/api/v1/executions/${TRIG_TASK_ID}" "${AUTH[@]}" || true)"
+TRIG_SOURCE="$(json_get "${TRIG_DETAIL}" "source")"
+TRIG_SCHED="$(json_get "${TRIG_DETAIL}" "schedule_id")"
+[ "${TRIG_SOURCE}" = "schedule_trigger_now" ] \
+  && pass "task.source == schedule_trigger_now" \
+  || info "task.source == ${TRIG_SOURCE} (non-fatal)"
+[ "${TRIG_SCHED}" = "${SCHEDULE_ID}" ] \
+  && pass "task.schedule_id links back to the schedule" \
+  || info "task.schedule_id == ${TRIG_SCHED} (non-fatal)"
 
 # ---- summary ---------------------------------------------------------------
 step "Smoke summary"

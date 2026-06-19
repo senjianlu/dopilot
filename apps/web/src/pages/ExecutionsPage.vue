@@ -19,6 +19,7 @@ const statusTagType: Record<
   failed: "danger",
   canceled: "info",
   lost: "danger",
+  no_target: "warning",
 };
 
 async function load(): Promise<void> {

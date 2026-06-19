@@ -30,6 +30,7 @@ Read these before editing:
 Create or update:
 
 - `<phase-or-task>/01-claude-implementation-report.md`
+- `<phase-or-task>/claude-progress.md` for long-running work
 
 The report must include:
 
@@ -38,6 +39,16 @@ The report must include:
 - tests added or updated;
 - commands run with pass/fail output;
 - known risks or incomplete items.
+
+At the start of a long-running task, spend up to five minutes estimating the
+rough duration and write an initial `<phase-or-task>/claude-progress.md` note
+with size class (`<15m`, `15-45m`, `45-90m`, or `90m+`), proposed update cadence,
+checkpoints, and likely long-running commands. Then update the file at
+meaningful checkpoints and before/after long-running commands. The cadence is a
+guideline, not a hard timer; for large tasks, 10-20 minutes or one update per
+major edit/test phase is acceptable. Keep entries short. This file is durable
+progress coordination; the implementation report remains the authoritative final
+output.
 
 Do not mark the task complete if required tests did not run. Record the blocker
 instead.

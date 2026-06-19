@@ -9,19 +9,22 @@ from .command_outbox import CommandOutbox
 from .event_audit import EventAudit
 from .execution import (
     Execution,
-    ExecutionAttempt,
     ExecutionLogFile,
     ScrapyArtifact,
+    Task,
 )
 from .node import Node
+from .scheduling import Schedule, TaskTemplate
 
 __all__ = [
     "AuthToken",
     "Node",
+    "Task",
     "Execution",
-    "ExecutionAttempt",
     "ExecutionLogFile",
     "ScrapyArtifact",
     "CommandOutbox",
     "EventAudit",
+    "TaskTemplate",
+    "Schedule",
 ]

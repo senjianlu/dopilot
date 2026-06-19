@@ -25,6 +25,8 @@ function onLogout(): void {
         <el-menu-item index="/dashboard">{{ t("nav.dashboard") }}</el-menu-item>
         <el-menu-item index="/nodes">{{ t("nav.nodes") }}</el-menu-item>
         <el-menu-item index="/crawlers">{{ t("nav.crawlers") }}</el-menu-item>
+        <el-menu-item index="/templates">{{ t("nav.templates") }}</el-menu-item>
+        <el-menu-item index="/schedules">{{ t("nav.schedules") }}</el-menu-item>
         <el-menu-item index="/executions">{{ t("nav.executions") }}</el-menu-item>
       </el-menu>
     </el-aside>
