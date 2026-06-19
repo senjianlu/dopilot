@@ -107,12 +107,12 @@ async def list_executions(
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> ExecutionsResponse:
-    executions = await svc.list_executions(session)
+    tasks = await svc.list_tasks(session)
     summaries: list[ExecutionSummary] = []
-    for execution in executions:
-        attempts = await svc.list_attempts(session, execution.id)
+    for task in tasks:
+        executions = await svc.list_executions(session, task.id)
         summaries.append(
-            ExecutionSummary(**svc.execution_summary(execution, len(attempts)))
+            ExecutionSummary(**svc.task_summary(task, len(executions)))
         )
     return ExecutionsResponse(executions=summaries)
 
@@ -123,9 +123,10 @@ async def get_execution(
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> ExecutionView:
-    execution = await svc.get_execution_or_404(session, execution_id)
-    attempts = await svc.list_attempts(session, execution_id)
-    return ExecutionView(**svc.execution_view(execution, attempts))
+    # Web seam: the route's ``execution_id`` is the parent (task) id.
+    task = await svc.get_task_or_404(session, execution_id)
+    executions = await svc.list_executions(session, execution_id)
+    return ExecutionView(**svc.task_view(task, executions))
 
 
 @router.post("/executions/{execution_id}/cancel", response_model=ExecutionView)
@@ -141,12 +142,12 @@ async def cancel_execution(
     events roll the execution up), so the returned view may still show an active
     status.
     """
-    execution = await svc.get_execution_or_404(session, execution_id)
-    if execution.status not in states.EXEC_TERMINAL:
-        await request_cancel(session, dispatcher, execution)
-        execution = await svc.get_execution_or_404(session, execution_id)
-    attempts = await svc.list_attempts(session, execution_id)
-    return ExecutionView(**svc.execution_view(execution, attempts))
+    task = await svc.get_task_or_404(session, execution_id)
+    if task.status not in states.TASK_TERMINAL:
+        await request_cancel(session, dispatcher, task)
+        task = await svc.get_task_or_404(session, execution_id)
+    executions = await svc.list_executions(session, execution_id)
+    return ExecutionView(**svc.task_view(task, executions))
 
 
 @router.get("/executions/{execution_id}/logs", response_model=LogSnapshot)
@@ -160,15 +161,15 @@ async def get_logs(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> LogSnapshot:
-    await svc.get_execution_or_404(session, execution_id)
-    attempt = await svc.resolve_attempt(session, execution_id, attempt_id)
-    log_file = await svc.get_log_file(session, execution_id, attempt.id, stream)
+    await svc.get_task_or_404(session, execution_id)
+    execution = await svc.resolve_execution(session, execution_id, attempt_id)
+    log_file = await svc.get_log_file(session, execution_id, execution.id, stream)
     cap = max_bytes or settings.logs.max_tail_bytes_per_pull
-    finished = attempt.status in states.ATTEMPT_TERMINAL
+    finished = execution.status in states.EXEC_TERMINAL
     if log_file is None:
         return LogSnapshot(
             execution_id=execution_id,
-            attempt_id=attempt.id,
+            attempt_id=execution.id,
             stream=stream,
             start_offset=offset,
             end_offset=offset,
@@ -179,7 +180,7 @@ async def get_logs(
     start, end, content = files.read_slice(log_file.storage_path, offset, cap)
     return LogSnapshot(
         execution_id=execution_id,
-        attempt_id=attempt.id,
+        attempt_id=execution.id,
         stream=stream,
         start_offset=start,
         end_offset=end,
@@ -211,7 +212,7 @@ async def issue_log_stream_token(
             "errors.streamTokenNotRequired",
             {},
         )
-    await svc.get_execution_or_404(session, execution_id)
+    await svc.get_task_or_404(session, execution_id)
     token, exp = issue_stream_token(
         settings.auth.token_secret or "",
         execution_id,
@@ -267,14 +268,14 @@ async def stream_logs(
         raise ApiError(401, "auth.stream_unauthorized", "errors.unauthorized", {})
 
     async with sessionmaker() as session:
-        execution = await svc.get_execution_or_404(session, execution_id)
-        attempt = await svc.resolve_attempt(session, execution_id, attempt_id)
+        task = await svc.get_task_or_404(session, execution_id)
+        execution = await svc.resolve_execution(session, execution_id, attempt_id)
         log_file = await svc.get_log_file(
-            session, execution_id, attempt.id, stream
+            session, execution_id, execution.id, stream
         )
         path = log_file.storage_path if log_file is not None else None
-        already_terminal = execution.status in states.EXEC_TERMINAL
-        exec_status = execution.status
+        already_terminal = task.status in states.TASK_TERMINAL
+        exec_status = task.status
 
     last_event_id = request.headers.get("last-event-id")
     try:

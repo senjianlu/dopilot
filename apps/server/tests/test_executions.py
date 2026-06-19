@@ -100,10 +100,20 @@ async def test_run_unknown_task_type_400(exec_client, seeder):
     assert r.json()["code"] == "execution.unknown_task_type"
 
 
-async def test_run_no_healthy_nodes_409(exec_client):
+async def test_run_no_healthy_nodes_creates_no_target_task(exec_client):
+    # Phase 1.7 packet 2: no healthy node -> a persisted ZERO-execution task with
+    # terminal no_target (not a 409). status_reason/status_detail carry the why.
     r = await exec_client.post("/api/v1/executions/run", json=RUN_BODY)
-    assert r.status_code == 409
-    assert r.json()["code"] == "execution.no_healthy_nodes"
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "no_target"
+    detail = await exec_client.get(f"/api/v1/executions/{body['execution_id']}")
+    view = detail.json()
+    assert view["status"] == "no_target"
+    assert view["status_reason"] == "no_target"
+    assert view["status_detail"]["healthy_count"] == 0
+    assert view["attempts"] == []  # no fake execution
+    assert view["source"] == "manual"
 
 
 async def test_run_redis_down_503_dispatch_unavailable(
@@ -193,44 +203,47 @@ async def test_get_execution_404(exec_client):
 async def test_cancel_sends_stop_and_converges_via_event(
     exec_client, exec_redis, seeder, db_session
 ):
-    execution, attempt, _log = await seeder.running_execution()
-    r = await exec_client.post(f"/api/v1/executions/{execution.id}/cancel")
+    task, execution, _log = await seeder.running_task()
+    # web seam: the route's {execution_id} is the parent (task) id
+    r = await exec_client.post(f"/api/v1/executions/{task.id}/cancel")
     assert r.status_code == 200
     # a stop(intent=cancel) command was dispatched to the agent
     cmds = await _commands(exec_redis)
     stop = [c for c in cmds if c.type.value == "stop"]
     assert len(stop) == 1 and stop[0].intent.value == "cancel"
 
-    # the agent replies attempt.canceled -> execution converges to canceled
+    # the agent replies attempt.canceled -> task converges to canceled. wire
+    # seam: execution_id = task id, attempt_id = atomic execution id.
     ev = AgentEvent(
-        event_id="ev1", agent_id="agent-1", execution_id=execution.id,
-        attempt_id=attempt.id, type=AgentEventType.canceled, created_at="t",
+        event_id="ev1", agent_id="agent-1", execution_id=task.id,
+        attempt_id=execution.id, type=AgentEventType.canceled, created_at="t",
     )
     await apply_event(db_session, ev, "m1")
     await db_session.commit()
-    detail = await exec_client.get(f"/api/v1/executions/{execution.id}")
-    assert detail.json()["status"] == states.EXEC_CANCELED
+    detail = await exec_client.get(f"/api/v1/executions/{task.id}")
+    assert detail.json()["status"] == states.TASK_CANCELED
 
 
 async def test_logs_snapshot(exec_client, seeder, db_session):
-    execution, attempt, log_file = await seeder.running_execution()
+    task, execution, log_file = await seeder.running_task()
     files.append(log_file.storage_path, b"line1\nline2\n")
     log_file.size_bytes = files.size(log_file.storage_path)
     await db_session.commit()
 
-    r = await exec_client.get(f"/api/v1/executions/{execution.id}/logs")
+    r = await exec_client.get(f"/api/v1/executions/{task.id}/logs")
     assert r.status_code == 200
     body = r.json()
-    assert body["attempt_id"] == attempt.id
+    # web seam: the log row's attempt_id is the atomic execution id
+    assert body["attempt_id"] == execution.id
     assert "line1" in body["content"]
     assert body["start_offset"] == 0
     assert body["end_offset"] == 12
 
 
 async def test_logs_snapshot_unknown_attempt_404(exec_client, seeder):
-    execution, _attempt, _log = await seeder.running_execution()
+    task, _execution, _log = await seeder.running_task()
     r = await exec_client.get(
-        f"/api/v1/executions/{execution.id}/logs?attempt_id=nope"
+        f"/api/v1/executions/{task.id}/logs?attempt_id=nope"
     )
     assert r.status_code == 404
     assert r.json()["code"] == "execution.attempt_not_found"

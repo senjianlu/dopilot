@@ -108,10 +108,11 @@ class CommandDispatcher:
         if row.status == OUTBOX_CANCELED:
             return DispatchResult("skipped", error="canceled")
 
-        # run short-circuit: don't (re)start a task for a terminal execution.
+        # run short-circuit: don't (re)start a task for a terminal task.
+        # wire seam: row.execution_id is the parent task id.
         if row.type == "run":
-            execution = await svc.get_execution(session, row.execution_id)
-            if execution is None or execution.status in states.EXEC_TERMINAL:
+            task = await svc.get_task(session, row.execution_id)
+            if task is None or task.status in states.TASK_TERMINAL:
                 row.status = OUTBOX_CANCELED
                 row.last_error = "execution_not_dispatchable"
                 return DispatchResult("skipped", error="execution_not_dispatchable")
@@ -139,17 +140,19 @@ class CommandDispatcher:
     async def _fail_execution_dispatch_timeout(
         self, session: AsyncSession, row: CommandOutbox
     ) -> None:
-        """Mark a ``run`` row's attempt/execution failed with dispatch_timeout."""
+        """Mark a ``run`` row's execution/task failed with dispatch_timeout."""
         now = datetime.now(UTC)
-        attempt = await svc.get_attempt(session, row.attempt_id)
-        if attempt is not None and attempt.status in states.ATTEMPT_ACTIVE:
-            attempt.status = states.ATTEMPT_FAILED
-            attempt.error_code = DISPATCH_TIMEOUT
-            attempt.finished_at = now
-        execution = await svc.get_execution(session, row.execution_id)
+        # wire seam: row.attempt_id = atomic execution id, row.execution_id =
+        # parent task id.
+        execution = await svc.get_execution(session, row.attempt_id)
         if execution is not None and execution.status in states.EXEC_ACTIVE:
             execution.status = states.EXEC_FAILED
+            execution.error_code = DISPATCH_TIMEOUT
             execution.finished_at = now
+        task = await svc.get_task(session, row.execution_id)
+        if task is not None and task.status in states.TASK_ACTIVE:
+            task.status = states.TASK_FAILED
+            task.finished_at = now
 
     async def _process_row(self, session: AsyncSession, row: CommandOutbox) -> None:
         now = datetime.now(UTC)

@@ -320,8 +320,12 @@ class Seeder:
         await self.session.commit()
         return node
 
-    async def running_execution(self, node: Node | None = None):
-        """Create a running execution + one running attempt + active log file."""
+    async def running_task(self, node: Node | None = None):
+        """Create a running task + one running execution + active log file.
+
+        Returns ``(task, execution, log_file)`` — the parent run, its atomic
+        per-node execution, and the log index row.
+        """
         if node is None:
             node = await self.healthy_node()
         req = ExecutionRunRequest(
@@ -330,16 +334,16 @@ class Seeder:
             node_strategy="all",
             params={"project": "demo", "spider": "phase1"},
         )
-        execution = svc.create_execution(self.session, req)
+        task = svc.create_task(self.session, req)
+        task.status = states.TASK_RUNNING
+        execution = svc.create_execution(self.session, task, node)
         execution.status = states.EXEC_RUNNING
-        attempt = svc.create_attempt(self.session, execution, node)
-        attempt.status = states.ATTEMPT_RUNNING
-        attempt.remote_job_id = "job-x"
+        execution.remote_job_id = "job-x"
         log_file = svc.create_log_file(
-            self.session, self.settings, execution, attempt
+            self.session, self.settings, task, execution
         )
         await self.session.commit()
-        return execution, attempt, log_file
+        return task, execution, log_file
 
 
 @pytest.fixture

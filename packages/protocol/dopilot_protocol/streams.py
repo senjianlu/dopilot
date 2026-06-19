@@ -18,6 +18,16 @@ the **wire codec** (:func:`to_stream_entry` / :func:`from_stream_entry`) so the
 server and agent cannot drift: a stream message is a single ``data`` field
 holding the model's JSON body. Everything here is pure (pydantic + stdlib); the
 ``redis`` dependency lives in each app, never in this shared package.
+
+⚠️ **Naming seam (phase 1.7).** The server domain renamed its parent/atomic
+entities to *task* (parent logical run) and *execution* (atomic per-node unit),
+but this wire is a STABLE SEAM and was deliberately NOT renamed: every
+``execution_id`` field below is the **task id**, and every ``attempt_id`` is the
+**atomic execution id** (the agent's idempotency key + state-file name + on-disk
+``{execution_id}/{attempt_id}.log`` path component). The agent is unchanged; the
+server's event/log consumers translate these seam names to the task/execution
+domain at the boundary. Do not rename these fields without also versioning the
+agent.
 """
 
 from __future__ import annotations

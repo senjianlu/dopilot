@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config.settings import Settings
 from ..redis.dispatcher import CommandDispatcher
+from ..services.executions import TaskOrigin
 
 
 class DispatchUnknownError(Exception):
@@ -50,7 +51,14 @@ class BaseExecutor(ABC):
 
     @abstractmethod
     async def run(
-        self, request: ExecutionRunRequest, ctx: ExecutorContext
+        self,
+        request: ExecutionRunRequest,
+        ctx: ExecutorContext,
+        origin: TaskOrigin | None = None,
     ) -> ExecutionRunResponse:
-        """Dispatch ``request`` and return the created execution handle."""
+        """Dispatch ``request`` and return the created task handle.
+
+        ``origin`` records provenance (manual / schedule_trigger_now /
+        schedule_timer) + the immutable template snapshot copied into the task.
+        """
         raise NotImplementedError

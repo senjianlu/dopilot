@@ -1,9 +1,14 @@
-"""Command-outbox service (phase 1.5).
+"""Command-outbox service (phase 1.5; phase-1.7 task/execution naming).
 
 Creates server -> agent command rows in the SAME PostgreSQL transaction as their
-execution/attempt (the transactional producer-outbox), cancels unsent rows on
-execution cancel (CAS), and provides the coalesce primitive the scheduler will
-use to avoid piling up same-source commands while Redis is unavailable.
+task/execution (the transactional producer-outbox), cancels unsent rows on
+cancel (CAS), and provides the coalesce primitive the scheduler will use to
+avoid piling up same-source commands while Redis is unavailable.
+
+⚠️ Wire seam: the ``CommandOutbox`` row keeps the columns ``execution_id``
+(= task id) and ``attempt_id`` (= atomic execution id); the create/cancel
+helpers below take those seam names as parameters. Callers pass ``task.id`` as
+``execution_id`` and ``execution.id`` as ``attempt_id``.
 
 The actual XADD to Redis happens later, in the dispatcher — never here. This
 keeps the outbox a PG-internal producer-outbox, not a cross-resource pseudo-tx.
@@ -24,8 +29,8 @@ from ..models.command_outbox import (
     OUTBOX_UNRESOLVED,
     CommandOutbox,
 )
-from ..models.execution import Execution
-from .states import EXEC_ACTIVE
+from ..models.execution import Task
+from .states import TASK_QUEUED
 
 # Give-up windows. Manual/sync run uses a short window (the request waits on the
 # first dispatch); scheduled/async triggers tolerate a longer outage.
@@ -138,29 +143,36 @@ async def cancel_unsent_outbox(session: AsyncSession, execution_id: str) -> int:
     return int(result.rowcount or 0)
 
 
-async def has_unterminated_for_target(session: AsyncSession, target: str) -> bool:
-    """Coalesce primitive: is there an un-terminated execution OR unresolved
-    outbox for ``target``?
+async def has_undispatched_backlog_for_schedule(
+    session: AsyncSession, schedule_id: str
+) -> bool:
+    """Schedule-keyed coalesce primitive (phase 1.7 packet 2).
 
-    The scheduler (phase 2) calls this to suppress duplicate same-source
-    triggers while Redis is unavailable (refactor/00 §任务投递 coalesce). A
-    queued execution counts as un-terminated; a pending/dispatching outbox row
-    tied to such an execution counts too.
+    Returns True iff the schedule has an UNDISPATCHED backlog task: a task with
+    this ``schedule_id`` that is still ``queued`` AND has an unresolved
+    (pending / dispatching / failed_retryable) command-outbox row. That is the
+    Redis-outage backlog the scheduler must coalesce (refactor/00 §任务投递).
+
+    Deliberately narrow, to honor user decision #2 (concurrent repeated runs are
+    allowed):
+
+    - a ``running`` task does NOT count — a new timer firing must not be
+      suppressed merely because an older run is still active;
+    - a queued task whose outbox is already ``sent`` does NOT count — the
+      command reached Redis, so it is dispatched, not backlog;
+    - manual + trigger-now never call this (only the timer firing does).
+
+    The seam column ``CommandOutbox.execution_id`` holds the task id, so it joins
+    on ``Task.id``.
     """
-    active = await session.execute(
-        select(Execution.id).where(
-            Execution.target == target,
-            Execution.status.in_(tuple(EXEC_ACTIVE)),
-        )
-    )
-    if active.first() is not None:
-        return True
-    unresolved = await session.execute(
-        select(CommandOutbox.command_id)
-        .join(Execution, Execution.id == CommandOutbox.execution_id)
+    result = await session.execute(
+        select(Task.id)
+        .join(CommandOutbox, CommandOutbox.execution_id == Task.id)
         .where(
-            Execution.target == target,
+            Task.schedule_id == schedule_id,
+            Task.status == TASK_QUEUED,
             CommandOutbox.status.in_(tuple(OUTBOX_UNRESOLVED)),
         )
+        .limit(1)
     )
-    return unresolved.first() is not None
+    return result.first() is not None
