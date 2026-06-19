@@ -43,7 +43,7 @@ dopilot 是在开源项目 [scrapydweb](https://github.com/my8100/scrapydweb)（
 | 4 | 用户 / 权限体系 | **单用户、唯一管理员**。无需多用户/角色，保留并简化为单管理员认证即可。 |
 | 5 | dopilot 自身部署形态 | 分 **server**（调度中心 + Web）与 **agent**（worker 节点）两种部署角色，**均使用 Docker 部署**。 |
 | 6 | 前后端技术栈（整体重构） | **后端采用 FastAPI + Pydantic + ASGI**，由 `apps/server` 提供 `/api/v1/*` JSON API；前端采用 **Vue 3 + Element Plus + Vite + TypeScript**，位于 `apps/web`，是 **greenfield SPA**，全新构建直接对接 `/api/v1`。dopilot **不继承任何 scrapydweb Jinja 模板**，故不存在与既有 Jinja 页面共存/strangler 迁移；可分阶段交付页面。归属**阶段 0**。详见 `docs/dopilot/06-frontend-rewrite.md`。 |
-| 7 | 镜像构建与发布 | dopilot 镜像统一构建并推送到 **Docker Hub `rabbir/dopilot`**：server 角色镜像即 `rabbir/dopilot:latest`；agent 角色后续以 `rabbir/dopilot-agent:latest`（或同仓不同 tag）发布。⚠️ git `origin` 为 `senjianlu/dopilot`，镜像命名空间为 `rabbir`（Docker Hub 账号），**两者独立**，文档/CI 中不要混用。详见 `docs/dopilot/08-docker-deployment.md` §7。 |
+| 7 | 镜像构建与发布 | dopilot 镜像统一构建并推送到 **Docker Hub `rabbir/dopilot`**：server、agent、migrate 使用同一个 `rabbir/dopilot:latest` 镜像，通过启动命令选择角色。⚠️ git `origin` 为 `senjianlu/dopilot`，镜像命名空间为 `rabbir`（Docker Hub 账号），**两者独立**，文档/CI 中不要混用。详见 `docs/dopilot/08-docker-deployment.md` §7。 |
 | 8 | 代码仓库结构 | **monorepo，apps/packages 布局**：server = `apps/server/dopilot_server`，agent = `apps/agent/dopilot_agent`，web = `apps/web`；server↔agent 共享协议在 `packages/protocol`（可选客户端 SDK 在 `packages/client`），部署物在 `deploy/`，配置样例在 `configs/`。三者**同仓开发，不拆分多仓**。`reference/scrapydweb/` 仅作只读功能/测试参照，不参与构建。权威布局详见 `docs/dopilot/05-dev-setup-and-known-issues.md` §1。 |
 | 9 | scrapydweb 参考边界（原则锁定） | scrapydweb 仅作 **(1) 功能层/行为参考** 与 **(2) 测试 oracle**；其**代码写法、目录结构、模块划分、命名、依赖、配置形态一律不得作为 dopilot 的设计依据**。dopilot 为 **greenfield**、按 `apps/`+`packages/` 自有领域 **structure-first** 全新编写：`reference/scrapydweb/` **只读、不进构建上下文、不被 import、不做改名/git mv**。凡文档中出现的 scrapydweb `file:line` 引用，**仅为行为参考**（约定见各文档「Docs convention」），绝非 dopilot 的改动目标。 |
 | 10 | 数据库选型 | **只使用 PostgreSQL 作为 dopilot 唯一数据库**。server 是唯一持有数据库连接、事务与迁移的角色；agent 和 web 不直连数据库。ORM 使用 SQLAlchemy，迁移使用**裸 Alembic**（不用 Flask-Migrate，FastAPI 无 Flask app）；APScheduler jobstore 也落 PostgreSQL。**PostgreSQL 存业务数据 + 日志索引/offset/状态**（执行器差异化配置和原始运行元数据可用 `JSONB`；日志索引见 `execution_log_files` 表，主键 `(execution_id, attempt_id, stream)`，含 `storage_path`/`last_pulled_offset`/`final_offset`/`status` 等）；**日志正文不入 PostgreSQL，存 server 本地文件 `/server-data/logs`**。删库重建不作为 dopilot 正式迁移策略（仅 scrapydweb reference 行为）。 |
@@ -77,7 +77,7 @@ dopilot 是在开源项目 [scrapydweb](https://github.com/my8100/scrapydweb)（
                           (server 主动 pull 日志；agent 不主动推)
 ```
 
-> **镜像与仓库**：上图两个角色都在**同一 monorepo**（决策 8）内开发；构建产物推送到 Docker Hub —— server = `rabbir/dopilot:latest`，agent = `rabbir/dopilot-agent:latest`（决策 7）。第一版架构目标就是自有 `dopilot-agent` 包装/管理本机 scrapyd；直接使用现成 Scrapyd 镜像只允许作为本地 spike 或连通性验证，不作为第一版正式架构。
+> **镜像与仓库**：上图两个角色都在**同一 monorepo**（决策 8）内开发；构建产物统一推送到 Docker Hub `rabbir/dopilot:latest`，server/agent 由启动命令区分（决策 7）。第一版架构目标就是自有 `dopilot-agent` 包装/管理本机 scrapyd；直接使用现成 Scrapyd 镜像只允许作为本地 spike 或连通性验证，不作为第一版正式架构。
 
 ## 6. 文档导航
 

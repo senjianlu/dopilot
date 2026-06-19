@@ -130,7 +130,7 @@ dopilot **不**沿用 scrapydweb 的本机 logparser + SQLite 路线，采用 **
 
 ### 2.1 角色边界（事实 + 建议）
 
-| 能力 | server 镜像 | agent 镜像 | 依据 |
+| 能力 | server 角色 | agent 角色 | 依据 |
 |------|:----------:|:----------:|------|
 | FastAPI Web API | ✓ | ✗ | dopilot 决策：`apps/server` 提供 `/api/v1/*` JSON/SSE API |
 | 进程内 APScheduler（定时任务） | ✓ | ✗ | `scheduler.py:90`（仅 server 持有调度权） |
@@ -139,80 +139,45 @@ dopilot **不**沿用 scrapydweb 的本机 logparser + SQLite 路线，采用 **
 | PostgreSQL | ✓（唯一数据库连接持有者） | ✗ | dopilot 决策：agent/web 不直连数据库 |
 | 实际执行爬虫/脚本 | ✗（转发给 agent） | ✓ | dopilot 规划，见 `01-gap-executors.md` |
 
-> **现状事实**：上游 scrapydweb 把"执行"交给远端 **Scrapyd**（`SCRAPYD_SERVERS`），自身没有独立的 agent 进程。dopilot 的 agent 是**新增角色**（分期替换 Scrapyd：scrapy egg → python 脚本 → docker 长连接），下面的 agent Dockerfile 是**改造草案**，尚无对应代码。
+> **现状事实**：上游 scrapydweb 把"执行"交给远端 **Scrapyd**（`SCRAPYD_SERVERS`），自身没有独立的 agent 进程。dopilot 的 agent 是**新增角色**（分期替换 Scrapyd：scrapy egg → python 脚本 → docker 长连接）。server 与 agent 使用同一个应用镜像，通过启动命令选择角色。
 
 ### 2.2 镜像分层策略（多阶段构建）
 
 ```
-server 镜像（【无】前端阶段——SPA 由独立 Web 容器运行，其构建/生产托管不在本文范围）：
-  阶段 1  py-deps   : 安装 Python 依赖到 wheelhouse（server 与 agent 各自一份依赖清单）
-  阶段 2  runtime   : slim 基础镜像 + 拷贝依赖 + 拷贝 server 代码（【不】拷前端产物）
+统一应用镜像：
+  阶段 1  web-build : 构建 apps/web Vue SPA
+  阶段 2  py-deps   : 构建 protocol/server/agent wheels
+  阶段 3  runtime   : slim 基础镜像 + server/agent + scrapy/scrapyd + Alembic + Web dist
 ```
 
 分层要点：
 - 依赖层与代码层分离，最大化 layer 缓存（依赖变动少、代码变动多）。
-- **server 镜像不含前端**：server 只提供 `/api/v1` + SSE；SPA 由独立 Web 容器运行（决策 #14），其构建与生产托管属用户部署层，本文不规定。
-- agent 镜像**不含** FastAPI server/前端/调度依赖，只装执行器运行时（分期：scrapy → 纯 python → docker client）。
+- **统一应用镜像**：`rabbir/dopilot:latest` 同时包含 server、agent、protocol、Scrapy/scrapyd 运行时、Alembic 迁移资源，以及构建后的 Vue SPA。
+- **启动命令选择角色**：server 容器运行 `dopilot-server` 并托管 Web UI；agent 容器运行 `dopilot-agent` 并管理本机 scrapyd；migrate 容器运行 `alembic upgrade head`。
 - `.dockerignore` 排除 `reference/`、`.venv/`、`docs/`、`**/tests/`、`*.pyc` 等（dopilot 自有数据目录由卷管理，不进镜像）。
 
-### 2.3 server Dockerfile 草案
+### 2.3 统一 Dockerfile
 
 ```dockerfile
-# server 镜像【不】构建、也【不】托管 SPA：前端是独立 Web 容器（决策 #14），server 只提供 /api/v1 + SSE。
-# 故 server Dockerfile 无前端构建阶段、不 COPY 前端产物。
-# ---------- 阶段 1：Python 依赖 ----------
-FROM python:3.12-slim AS py-deps
-WORKDIR /app
-RUN pip install --no-cache-dir wheel
-# dopilot server 依赖声明在 apps/server/pyproject.toml；若依赖 packages/protocol，一并放入构建上下文
-COPY apps/server/ ./apps/server/
-COPY packages/protocol/ ./packages/protocol/
-RUN pip wheel --no-cache-dir --wheel-dir=/wheels ./apps/server
-
-# ---------- 阶段 2：运行时 ----------
-FROM python:3.12-slim AS runtime
-WORKDIR /app
-COPY --from=py-deps /wheels /wheels
-RUN pip install --no-cache-dir /wheels/*
-# 注意：server 镜像【不含】前端产物——SPA 在独立 Web 容器（决策 #14）；server 不托管 SPA、不内置 nginx
-
-# dopilot 配置经 DOPILOT_CONFIG 指向挂载进来的 toml（见 §2.5），无 cwd 硬编码文件名约束；数据库经 DOPILOT_DATABASE_URL 指向 PostgreSQL
-ENV DOPILOT_CONFIG=/app/configs/server.toml
-ENV DOPILOT_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
-VOLUME ["/server-data"]
-EXPOSE 5000
-
-# 入口：dopilot server 自有入口，按 DOPILOT_CONFIG 读取 toml 配置
-ENTRYPOINT ["python", "-m", "dopilot_server.app"]  # 或 console_script: dopilot-server
-CMD ["-b", "0.0.0.0", "-p", "5000"]
+# deploy/docker/Dockerfile
+# 1. node:22-slim 构建 apps/web -> dist
+# 2. python:3.12-slim 构建 protocol/server/agent wheels
+# 3. runtime 安装 server + agent + scrapy/scrapyd，复制 Alembic 迁移和 Web dist
+#
+# 默认 CMD 为 server 模式：
+CMD ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
 ```
 
-> 入口说明：dopilot server 由 `dopilot_server.app`（或等价 console_script）启动，配置路径由 `DOPILOT_CONFIG` 环境变量显式给出，无需为满足 scrapydweb 的 cwd 硬编码加载而设置 `WORKDIR /app/instance` 这类 hack。（对比 scrapydweb 基线 `vars.py:29` / `run.py:37,124` 的 cwd 加载行为，dopilot 不沿用。）
+完整实现以仓库中的 `deploy/docker/Dockerfile` 为准。server 模式会读取 `DOPILOT_WEB_DIST=/app/web`，当存在 `index.html` 时由 FastAPI 直接托管 Vue SPA；`/api/*` 始终保留为 API 路径，不做 SPA fallback。
 
-### 2.4 agent Dockerfile 草案（执行器，分期）
+### 2.4 agent 角色（执行器，分期）
 
-agent 不跑 server API，只跑 worker 执行器 + 本机 scrapyd + HTTP tail/status/cleanup 服务端。**agent 完全不主动推日志**（无 WebSocket）：它只被动响应 server 的 HTTP pull。按 dopilot 三期演进，入口命令不同：
+agent 使用同一个 `rabbir/dopilot:latest` 镜像，不单独发布 `rabbir/dopilot-agent`。agent 容器只跑 worker 执行器 + 本机 scrapyd + HTTP tail/status/cleanup 服务端。**agent 完全不主动推日志**（无 WebSocket）：它只被动响应 server 的 HTTP pull。
 
-```dockerfile
-FROM python:3.12-slim AS runtime
-WORKDIR /app
+启动命令：
 
-# dopilot agent 依赖声明在 apps/agent/pyproject.toml，随分期演进：
-#   期 1（scrapy egg）：dopilot-agent + 本机 scrapyd 子进程；agent 调本机 scrapyd API、tail job.log，提供 HTTP tail/status/cleanup
-#   期 2（python 脚本）：仅 python 运行时 + stdout/stderr 采集
-#   期 3（docker 长连接）：docker SDK，agent 作为 docker host 上的执行代理
-COPY apps/agent/ ./apps/agent/
-COPY packages/protocol/ ./packages/protocol/
-RUN pip install --no-cache-dir ./apps/agent
-
-# 执行链路（期 1）：agent 子进程拉起本机 scrapyd；scrapyd 监听容器内部端口（如 6801，仅本机可见），
-# 对外 6800 = agent HTTP API（tail/status/cleanup/health）。基础镜像须为 glibc（slim/debian），不要 Alpine。
-ENV AGENT_WORKDIR=/agent-data
-VOLUME ["/agent-data"]      # 存 scrapyd job.log + state 映射（见 §2.4 说明），server final drain 完成前不得删 job.log
-EXPOSE 6800                 # 仅 agent API 对外；scrapyd 内部端口（6801）不对外暴露
-
-# 入口：dopilot agent 自有入口（init:true/tini 作 PID 1，转发信号、收割 scrapyd 子进程）
-ENTRYPOINT ["python", "-m", "dopilot_agent.main"]
+```bash
+dopilot-agent -b 0.0.0.0 -p 6800
 ```
 
 > **dopilot 实现建议**：agent 与 server 用**不同的依赖声明**（各自的 `pyproject.toml`；agent 不需要 FastAPI server、SQLAlchemy/Alembic、前端或 logparser）。第一版正式架构中：
@@ -235,7 +200,7 @@ ENTRYPOINT ["python", "-m", "dopilot_agent.main"]
 - `agent`：宿主机运行 dopilot-agent，阶段 1 可在本机拉起 scrapyd 子进程并暴露 `6800` agent API。
 - `db`：唯一必须容器化的开发依赖。
 
-下面的 compose 示例是**后端执行闭环**（server + agent + PostgreSQL），用于集成验收、镜像构建验证和部署演练；Web 仍按决策 #14 作为独立容器/托管层，本文只给出接入约束，不把 Web 镜像发布策略绑定进 server/agent compose。
+下面的 compose 示例是**本地完整试用闭环**（server+Web UI + agent + PostgreSQL），用于集成验收、镜像构建验证和部署演练。
 
 ### 2.5 docker-compose 示例
 
@@ -246,8 +211,9 @@ services:
   server:
     build:
       context: .
-      dockerfile: deploy/docker/Dockerfile.server
-    image: rabbir/dopilot:latest      # Docker Hub 发布名（见 §7）；本地开发可另打 dopilot-server:dev tag
+      dockerfile: deploy/docker/Dockerfile
+    image: rabbir/dopilot:latest
+    command: ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
     init: true                        # tini 作 PID 1，转发 SIGTERM、收割子进程
     ports:
       - "5000:5000"
@@ -268,8 +234,9 @@ services:
   agent:
     build:
       context: .
-      dockerfile: deploy/docker/Dockerfile.agent
-    image: rabbir/dopilot-agent:latest   # 自有 agent 镜像（阶段 1 起）；见 §7
+      dockerfile: deploy/docker/Dockerfile
+    image: rabbir/dopilot:latest
+    command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
     # 第一版正式形态使用自有 dopilot-agent（子进程拉起本机 scrapyd）；现成 scrapyd 镜像仅可作为本地 spike，不作为目标架构
     init: true                            # tini 作 PID 1，收割 scrapyd 子进程
     ports:
@@ -562,17 +529,18 @@ scrapydweb 的后台执行分两类，共 3 个单元：
 
 ### 7.1 镜像命名约定
 
-| 角色 | Docker Hub 镜像 | 何时发布 | Dockerfile |
+| 角色 | Docker Hub 镜像 | 启动命令 | Dockerfile |
 |------|----------------|----------|-----------|
-| server（调度中心 + API/SSE，**不托管 SPA**） | **`rabbir/dopilot:latest`** | 阶段 0 起 | `deploy/docker/Dockerfile.server`（§2.3 草案） |
-| agent（worker 执行器） | **`rabbir/dopilot-agent:latest`** | 阶段 1 起；内置/管理本机 scrapyd，后续扩展脚本与 Docker runner | `deploy/docker/Dockerfile.agent`（§2.4 草案） |
+| server（调度中心 + API/SSE + 内置 Web UI） | **`rabbir/dopilot:latest`** | `dopilot-server -b 0.0.0.0 -p 5000` | `deploy/docker/Dockerfile` |
+| agent（worker 执行器） | **`rabbir/dopilot:latest`** | `dopilot-agent -b 0.0.0.0 -p 6800` | `deploy/docker/Dockerfile` |
+| migrate（一次性迁移） | **`rabbir/dopilot:latest`** | `alembic upgrade head` | `deploy/docker/Dockerfile` |
 
-> Web 为独立容器（决策 #14），其镜像/构建/生产托管属用户部署层，本文不规定。
+统一约定：只发布一个应用镜像 `rabbir/dopilot:latest`。镜像内包含 server、agent、protocol、Scrapy/scrapyd 运行时、Alembic 迁移资源，以及构建后的 Vue SPA；容器启动时通过 command 选择运行模式。
 
 约定：
 - **命名空间区分**：git `origin` = `senjianlu/dopilot`（源码托管），镜像命名空间 = `rabbir`（Docker Hub 账号，对应 `rabbirbot00@gmail.com`）。两者**互不等同**，CI/文档里不要把 `senjianlu` 当镜像前缀。
 - 发布 tag：`latest`（滚动）+ 建议附带不可变 tag（`rabbir/dopilot:<git-short-sha>` 或语义版本 `:1.6.0-dopilot.0`），便于回滚。
-- 两个镜像**同源单仓**（monorepo）：同一次提交可产出 server / agent 两个镜像，靠不同 Dockerfile 区分（构建上下文都是仓库根）。
+- 单镜像**同源单仓**（monorepo）：同一次提交产出一个镜像，靠启动命令区分 server / agent / migrate 角色（构建上下文为仓库根）。
 
 ### 7.2 monorepo 构建布局（决策 8）
 
@@ -601,7 +569,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 ├── packages/
 │   ├── protocol/                         # server↔agent 共享协议 schema(protocol/python/;前端也消费可并列 protocol/typescript/)
 │   └── client/                           # 可选:server→agent 客户端 SDK
-├── deploy/{docker/{Dockerfile.server,Dockerfile.agent,docker-compose.yml},k8s/}
+├── deploy/{docker/{Dockerfile,docker-compose.yml},k8s/}
 ├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置(经 DOPILOT_CONFIG 加载,不继承 scrapydweb 硬编码 settings)
 ├── scripts/  docs/
 ├── reference/scrapydweb/                 # 只读行为参考,绝不进构建上下文/不被 import/不改名
@@ -610,7 +578,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 
 要点：
 - server / agent 依赖各自声明在 `apps/server/pyproject.toml` / `apps/agent/pyproject.toml`（含 FastAPI/SQLAlchemy/Alembic/PostgreSQL driver 等依赖；`setuptools<81` 仅用于 reference 环境，见 05 §4.1），**不用根级 `requirements.txt`**。
-- 两个 Dockerfile（server/agent）与 compose 都在 `deploy/docker/`，构建上下文仍为仓库根，各 Dockerfile 只 `COPY` 自己需要的 `apps/*` 子目录。
+- 统一 Dockerfile 与 compose 都在 `deploy/docker/`，构建上下文仍为仓库根；Dockerfile 同时构建 web、server wheel、agent wheel，runtime 通过 command 选择角色。
 - `09-package-rename.md` 是 scrapydweb 行为参考与移植注意事项，**不是**对 dopilot 的改名步骤——dopilot 不对 scrapydweb 做改名/git mv。
 
 > ⚠️ `.dockerignore` **务必排除 `reference/`**，否则会把整份 scrapydweb 参考代码打进构建上下文，拖慢构建且可能误拷；scrapydweb 参考代码绝不被 dopilot import。
@@ -621,13 +589,13 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 # 在仓库根，先登录 Docker Hub（rabbir 账号）
 docker login -u rabbir
 
-# 构建并推送 server 镜像（构建上下文为仓库根，Dockerfile 在 deploy/docker/）
-docker build -f deploy/docker/Dockerfile.server -t rabbir/dopilot:latest -t rabbir/dopilot:$(git rev-parse --short HEAD) .
+# 构建并推送统一应用镜像（构建上下文为仓库根，Dockerfile 在 deploy/docker/）
+docker build -f deploy/docker/Dockerfile -t rabbir/dopilot:latest -t rabbir/dopilot:$(git rev-parse --short HEAD) .
 docker push rabbir/dopilot:latest
 docker push rabbir/dopilot:$(git rev-parse --short HEAD)
 
 # 多架构（可选，amd64 + arm64）：
-# docker buildx build --platform linux/amd64,linux/arm64 -f deploy/docker/Dockerfile.server \
+# docker buildx build --platform linux/amd64,linux/arm64 -f deploy/docker/Dockerfile \
 #   -t rabbir/dopilot:latest --push .
 ```
 
@@ -643,7 +611,7 @@ on:
     branches: [master]
     tags: ['v*']
 jobs:
-  server:
+  image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -655,7 +623,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/docker/Dockerfile.server
+          file: deploy/docker/Dockerfile
           push: true
           tags: |
             rabbir/dopilot:latest
@@ -666,5 +634,4 @@ jobs:
 
 落地前置：
 - 在 Docker Hub 创建 `rabbir/dopilot` 仓库 + access token；在 GitHub 仓库加 `DOCKERHUB_TOKEN` secret。
-- 阶段 0 需先搭建 `apps/server` 骨架并移植基线行为（参考 `09-package-rename.md` 的行为参考与移植注意事项，**非改名步骤**）、在 `apps/server/pyproject.toml` 固定依赖（选择 APScheduler>=3.10,<4 并配置 PostgreSQL，见 `05-dev-setup-and-known-issues.md` §4.1）、补 `.dockerignore`，Dockerfile 才能真正 build 通过。
-- agent 镜像加一个并列 job（`deploy/docker/Dockerfile.agent` → `rabbir/dopilot-agent:latest`），阶段 1 起启用；阶段 2/3 在同一 agent 内继续扩展 script/docker runner。
+- 阶段 0/1 代码已由统一镜像覆盖；后续阶段 2/3 在同一 agent 包内继续扩展 script/docker runner，仍复用 `rabbir/dopilot` 镜像，通过 command 选择角色。

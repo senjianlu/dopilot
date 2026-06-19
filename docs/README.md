@@ -65,5 +65,5 @@
 - **前端**：Vue 3 + Element Plus + Vite + TS（`apps/web`），前后端分离，**greenfield SPA** 直连 `/api/v1`、分阶段交付页面（无 Jinja 共存/strangler）
 - **数据库**：PostgreSQL 唯一数据库，SQLAlchemy + 裸 Alembic（FastAPI 无 Flask，不用 Flask-Migrate）；PG 存业务数据 + 日志索引/offset/状态（表 `execution_log_files`），**日志正文不进 PG，落 server 本地卷 `/server-data/logs`**
 - **实时日志**：server 按需从 agent tail API（HTTP `GET /logs/tail`）拉取日志增量 —— 打开 Web 日志窗口高频拉取（1s）、后台 reconcile loop 低频 drain active execution（30s）、任务结束后 final drain；正文写入 `/server-data/logs`，索引/offset/状态写入 PostgreSQL，并通过 SSE 单向推给 Vue。**第一版完全不使用 WebSocket、agent 不主动推**
-- **镜像发布**：构建推送到 Docker Hub `rabbir/dopilot:latest`（agent 为 `rabbir/dopilot-agent:latest`）；镜像命名空间 `rabbir` ≠ git origin `senjianlu`
+- **镜像发布**：构建推送到 Docker Hub `rabbir/dopilot:latest`；server / agent / migrate 使用同一镜像，通过启动命令选择角色；镜像命名空间 `rabbir` ≠ git origin `senjianlu`
 - **仓库结构**：monorepo（`apps/{server,agent,web}` + `packages/{protocol,client}`，权威布局见 `dopilot/05-dev-setup-and-known-issues.md` §1）—— 全新编写，`reference/scrapydweb/` 仅行为参考、不参与构建/不被 import/不改名
