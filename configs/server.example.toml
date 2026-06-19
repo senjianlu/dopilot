@@ -20,7 +20,28 @@ access_token_ttl_minutes = 720
 stream_token_ttl_seconds = 60
 
 [agent_auth]
+# server -> agent token (egg deploy over HTTP /addversion.json). Distinct from
+# [agents].server_shared_token below (agent -> server).
 shared_token = "change-me-agent-token"
+
+# Redis Streams transport (phase 1.5). Redis is a message bus, not a database.
+[redis]
+url = "redis://localhost:6379/0"
+stream_maxlen_commands = 100000
+stream_maxlen_events = 100000
+stream_maxlen_logs = 1000000
+log_retention_seconds = 86400
+consumer_name = "server-1"
+require_aof = true
+
+[agents]
+# Agent health = now - nodes.last_seen_at <= heartbeat_timeout_seconds.
+heartbeat_timeout_seconds = 30
+stalled_attempt_seconds = 300
+lost_after_stalled_seconds = 900
+# agent -> server token (heartbeat). MUST match the agent's
+# [agent].server_shared_token. Leave empty to disable inbound agent auth (dev).
+server_shared_token = "change-me-agent-server-token"
 
 [nodes]
 agents = ["localhost:6800"]
@@ -36,6 +57,8 @@ realtime_drain_interval_seconds = 1
 max_tail_bytes_per_pull = 262144
 eof_stable_seconds = 3
 final_drain_hard_timeout_seconds = 30
+# Phase 1.5: bounded drain window after a terminal event before finalize+cleanup.
+log_drain_timeout_seconds = 30
 retention_days = 30
 
 [i18n]

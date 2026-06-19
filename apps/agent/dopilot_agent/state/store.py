@@ -33,15 +33,27 @@ class AttemptState(BaseModel):
     absolute path scrapyd writes the job log to. ``canceled`` records that a
     stop succeeded so ``/status`` can report ``canceled`` rather than
     ``finished`` for a job that left the running list after a cancel.
+
+    Phase 1.5 two-phase CAS + terminal marker (cross-restart idempotency):
+    - ``phase`` = ``reserved`` (O_EXCL placeholder, spawn not yet done) ->
+      ``started`` (scrapyd job scheduled) -> ``done`` (a terminal was reported).
+    - ``result`` / ``lost_reason`` / ``error_code`` / ``exit_code`` record the
+      reported terminal so a re-delivered command re-emits it instead of
+      restarting the spider.
     """
 
     execution_id: str
     attempt_id: str
-    scrapyd_job_id: str
+    scrapyd_job_id: str = ""
     project: str
     version: str | None = None
     spider: str
-    log_path: str
+    log_path: str = ""
+    phase: str = "started"
+    result: str | None = None
+    lost_reason: str | None = None
+    error_code: str | None = None
+    exit_code: int | None = None
     created_at: str = Field(default_factory=_utcnow_iso)
     updated_at: str = Field(default_factory=_utcnow_iso)
     canceled: bool = False
@@ -74,6 +86,77 @@ class StateStore:
             os.fsync(fh.fileno())
         os.replace(tmp, final)
         return state
+
+    def create_reserved(
+        self,
+        *,
+        execution_id: str,
+        attempt_id: str,
+        project: str,
+        spider: str,
+        version: str | None = None,
+    ) -> AttemptState | None:
+        """Atomically reserve an attempt (``O_CREAT|O_EXCL``) before spawning.
+
+        Returns the reserved state, or ``None`` if a state file already exists
+        (a duplicate command / lost race / cross-restart re-delivery). This is
+        the cross-restart "don't start the same attempt twice" guard; the caller
+        promotes it to ``started`` once scrapyd has the job.
+        """
+        self._dir.mkdir(parents=True, exist_ok=True)
+        final = self.path_for(attempt_id)
+        state = AttemptState(
+            execution_id=execution_id,
+            attempt_id=attempt_id,
+            project=project,
+            spider=spider,
+            version=version,
+            phase="reserved",
+        )
+        payload = json.dumps(state.model_dump(), ensure_ascii=False)
+        try:
+            fd = os.open(final, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            return None
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        return state
+
+    def promote_started(
+        self, attempt_id: str, *, scrapyd_job_id: str, log_path: str
+    ) -> AttemptState | None:
+        """Promote a reserved attempt to ``started`` with its scrapyd job id."""
+        state = self.read(attempt_id)
+        if state is None:
+            return None
+        state.phase = "started"
+        state.scrapyd_job_id = scrapyd_job_id
+        state.log_path = log_path
+        return self.write(state)
+
+    def mark_done(
+        self,
+        attempt_id: str,
+        *,
+        result: str,
+        lost_reason: str | None = None,
+        error_code: str | None = None,
+        exit_code: int | None = None,
+    ) -> AttemptState | None:
+        """Record a reported terminal so a re-delivered command re-emits it."""
+        state = self.read(attempt_id)
+        if state is None:
+            return None
+        state.phase = "done"
+        state.result = result
+        state.lost_reason = lost_reason
+        state.error_code = error_code
+        state.exit_code = exit_code
+        if result == "canceled":
+            state.canceled = True
+        return self.write(state)
 
     def read(self, attempt_id: str) -> AttemptState | None:
         """Return the persisted state, or ``None`` if missing/corrupt."""

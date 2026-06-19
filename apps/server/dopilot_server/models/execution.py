@@ -86,6 +86,23 @@ class ExecutionAttempt(Base):
     exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String, nullable=True)
     error_detail: Mapped[dict] = mapped_column(_JSON, nullable=False, default=dict)
+    # Phase 1.5: set to "lost" when an agent-authoritative terminal overrides a
+    # prior server-inferred lost (audit of the soft-terminal override).
+    reconciled_from: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Why the attempt was declared lost: server-inferred (heartbeat_timeout /
+    # event_stall) or agent-reported (state_missing / process_missing /
+    # runner_recovered_unknown / spawn_aborted).
+    lost_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Event-stall clock: last time a status event for this attempt was applied
+    # (restart-survivable; the reconcile loop reads it, decoupled from updated_at).
+    last_event_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # One-shot stalled-alert marker (operator-visible; NOT a terminal state;
+    # cleared when the next event arrives).
+    stalled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -118,10 +135,25 @@ class ExecutionLogFile(Base):
     last_pulled_offset: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0
     )
+    # final_offset = server file PHYSICAL size (incl. visible gap markers);
+    # agent logical consumption progress lives in last_pulled_offset (never mix).
     final_offset: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    # active | finalizing | complete | missing | expired
+    # active | finalizing | complete | missing | expired  (log LIFECYCLE)
     status: Mapped[str] = mapped_column(
         String, nullable=False, default="active"
+    )
+    # Phase 1.5: log COMPLETENESS, decoupled from lifecycle status. Sticky:
+    # once "partial" (a gap was seen), it never reverts to "complete".
+    # complete | partial | missing | expired
+    log_integrity: Mapped[str] = mapped_column(
+        String, nullable=False, default="complete"
+    )
+    gap_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    first_gap_expected_offset: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    first_gap_actual_offset: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
     )
     started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

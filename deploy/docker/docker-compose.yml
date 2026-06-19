@@ -28,6 +28,33 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Redis Streams transport for server<->agent comms (phase 1.5). AUTH +
+  # append-only file (AOF) on; single instance (matches the single-server
+  # constraint — Redis here is a message bus, NOT a multi-replica HA store).
+  # Override the password with REDIS_PASSWORD in the environment.
+  redis:
+    image: redis:7
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--requirepass"
+      - "${REDIS_PASSWORD:-change-me-redis-pass}"
+    volumes:
+      - dopilot-redis:/data
+    healthcheck:
+      test:
+        - "CMD"
+        - "redis-cli"
+        - "--no-auth-warning"
+        - "-a"
+        - "${REDIS_PASSWORD:-change-me-redis-pass}"
+        - "ping"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   # One-shot migration step: brings an empty database up to head before the
   # server starts. Reuses the server image (same build + tag, built once) and
   # overrides its entrypoint. Keeps migrations an explicit, observable step;
@@ -56,6 +83,10 @@ services:
       DOPILOT_CONFIG: /app/configs/agent.toml
       AGENT_ID: scrapy-agent-1
       AGENT_WORKDIR: /agent-data
+      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - dopilot-agent-data:/agent-data
       - ../../configs/agent.example.toml:/app/configs/agent.toml:ro
@@ -92,6 +123,7 @@ services:
     environment:
       DOPILOT_CONFIG: /app/configs/server.toml
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
+      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
     volumes:
       - dopilot-server-data:/server-data
       # compose-network config: db/agent reached by service name (not localhost)
@@ -115,6 +147,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
       agent:
@@ -123,5 +157,6 @@ services:
 
 volumes:
   dopilot-db:
+  dopilot-redis:
   dopilot-server-data:
   dopilot-agent-data:

@@ -17,6 +17,7 @@ from .settings import (
     AgentSettings,
     AuthSettings,
     Capabilities,
+    RedisSettings,
     ScrapydSettings,
     Settings,
 )
@@ -42,7 +43,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
     Resolution order for the path: explicit ``path`` argument, then the
     ``DOPILOT_CONFIG`` environment variable. Environment overrides applied
     after parsing: ``AGENT_ID`` -> ``[agent].agent_id``, ``AGENT_WORKDIR`` ->
-    ``[agent].workdir``.
+    ``[agent].workdir``, ``DOPILOT_REDIS_URL`` -> ``[redis].url``.
     """
     raw_path = path if path is not None else os.environ.get("DOPILOT_CONFIG")
     if not raw_path:
@@ -56,6 +57,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
     auth_section: dict[str, Any] = dict(data.get("auth") or {})
     cap_section: dict[str, Any] = dict(data.get("capabilities") or {})
     scrapyd_section: dict[str, Any] = dict(data.get("scrapyd") or {})
+    redis_section: dict[str, Any] = dict(data.get("redis") or {})
 
     env_agent_id = os.environ.get("AGENT_ID")
     if env_agent_id:
@@ -63,6 +65,9 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
     env_workdir = os.environ.get("AGENT_WORKDIR")
     if env_workdir:
         agent_section["workdir"] = env_workdir
+    env_redis_url = os.environ.get("DOPILOT_REDIS_URL")
+    if env_redis_url:
+        redis_section["url"] = env_redis_url
 
     if not agent_section.get("agent_id"):
         raise ConfigError("missing required setting: [agent].agent_id")
@@ -72,6 +77,7 @@ def load_settings(path: str | os.PathLike[str] | None = None) -> Settings:
         auth=AuthSettings(**auth_section),
         capabilities=Capabilities(**cap_section),
         scrapyd=ScrapydSettings(**scrapyd_section),
+        redis=RedisSettings(**redis_section),
     )
 
 

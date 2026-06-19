@@ -1,10 +1,17 @@
-"""Execution API tests (phase 1): run, detail, list, cancel, logs snapshot."""
+"""Execution API tests (phase 1.5): run/cancel dispatch over the command stream."""
 
 from __future__ import annotations
 
-from dopilot_protocol import AttemptStatus
-from dopilot_server.clients.agent import AgentUnreachableError
+from dopilot_protocol import (
+    AgentCommand,
+    AgentEvent,
+    AgentEventType,
+    command_stream,
+    from_stream_entry,
+)
 from dopilot_server.logs import files
+from dopilot_server.services import states
+from dopilot_server.services.events import apply_event
 
 RUN_BODY = {
     "task_type": "scrapy",
@@ -14,26 +21,34 @@ RUN_BODY = {
 }
 
 
-async def test_run_success_creates_execution_attempt_logindex(
-    exec_client, db_session, fake_agent, seeder
+async def _commands(redis, agent_id="agent-1") -> list[AgentCommand]:
+    entries = await redis.entries(command_stream(agent_id))
+    return [from_stream_entry(AgentCommand, f) for _id, f in entries]
+
+
+async def test_run_dispatches_command_execution_queued(
+    exec_client, exec_redis, seeder
 ):
     await seeder.healthy_node()
     r = await exec_client.post("/api/v1/executions/run", json=RUN_BODY)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["status"] == "running"
+    # execution stays queued; convergence to running is via the agent event
+    assert body["status"] == "queued"
     eid = body["execution_id"]
-    assert "run" in fake_agent.call_names()
+
+    # a run command landed on the agent's command stream
+    cmds = await _commands(exec_redis)
+    assert len(cmds) == 1
+    assert cmds[0].type.value == "run"
+    assert cmds[0].payload["spider"] == "phase1"
 
     detail = await exec_client.get(f"/api/v1/executions/{eid}")
-    assert detail.status_code == 200
     view = detail.json()
-    assert view["status"] == "running"
-    assert view["task_type"] == "scrapy"
+    assert view["status"] == "queued"
     assert len(view["attempts"]) == 1
     attempt = view["attempts"][0]
-    assert attempt["status"] == "running"
-    assert attempt["remote_job_id"].startswith("job-")
+    assert attempt["status"] == "pending"  # not running until the event arrives
     assert attempt["agent_id"] == "agent-1"
 
 
@@ -41,12 +56,7 @@ async def test_run_missing_params_400(exec_client, seeder):
     await seeder.healthy_node()
     r = await exec_client.post(
         "/api/v1/executions/run",
-        json={
-            "task_type": "scrapy",
-            "target": "x",
-            "node_strategy": "all",
-            "params": {},
-        },
+        json={"task_type": "scrapy", "target": "x", "node_strategy": "all", "params": {}},
     )
     assert r.status_code == 400
     assert r.json()["code"] == "execution.invalid_params"
@@ -68,60 +78,62 @@ async def test_run_no_healthy_nodes_409(exec_client):
     assert r.json()["code"] == "execution.no_healthy_nodes"
 
 
-async def test_run_agent_failure_records_failed(exec_client, fake_agent, seeder):
-    await seeder.healthy_node()
-    fake_agent.raises["run"] = AgentUnreachableError("http://agent:6800", "boom")
-    r = await exec_client.post("/api/v1/executions/run", json=RUN_BODY)
-    assert r.status_code == 200
-    eid = r.json()["execution_id"]
-    assert r.json()["status"] == "failed"
-
-    detail = await exec_client.get(f"/api/v1/executions/{eid}")
-    attempt = detail.json()["attempts"][0]
-    assert attempt["status"] == "failed"
-    assert attempt["error_code"]
-
-
-async def test_run_immediate_terminal_status_rolls_up_not_stuck(
-    exec_client, seeder, fake_agent
+async def test_run_redis_down_503_dispatch_unavailable(
+    exec_client, exec_redis, seeder, db_session
 ):
-    """If the agent /run reports an already-terminal status, the execution must
-    roll up to a terminal state, not sit in 'running' forever."""
     await seeder.healthy_node()
-    fake_agent.run_status = AttemptStatus.finished
+    exec_redis.fail_xadd = True  # Redis unavailable for publishing
     r = await exec_client.post("/api/v1/executions/run", json=RUN_BODY)
-    assert r.status_code == 200
-    assert r.json()["status"] == "complete"
-    eid = r.json()["execution_id"]
+    assert r.status_code == 503
+    assert r.json()["code"] == "execution.dispatch_unavailable"
+    # execution + attempt marked failed (no half-baked queued)
+    eid = r.json()["detail"]["execution_id"]
     detail = await exec_client.get(f"/api/v1/executions/{eid}")
-    attempt = detail.json()["attempts"][0]
-    assert attempt["status"] == "finished"
-    assert attempt["finished_at"]
+    view = detail.json()
+    assert view["status"] == "failed"
+    assert view["attempts"][0]["status"] == "failed"
+    assert view["attempts"][0]["error_code"] == "dispatch_unavailable"
 
 
-async def test_run_unknown_status_never_writes_null(exec_client, seeder, fake_agent):
-    """An 'unknown' agent /run status must map to a concrete (running) state,
-    never NULL (which would violate NOT NULL on PostgreSQL)."""
+async def test_run_dispatch_unknown_202(exec_client, exec_redis, seeder, db_session):
     await seeder.healthy_node()
-    fake_agent.run_status = AttemptStatus.unknown
-    r = await exec_client.post("/api/v1/executions/run", json=RUN_BODY)
-    assert r.status_code == 200
-    assert r.json()["status"] == "running"
-    eid = r.json()["execution_id"]
-    detail = await exec_client.get(f"/api/v1/executions/{eid}")
-    assert detail.json()["attempts"][0]["status"] == "running"
+    # XADD succeeds but the sent-mark commit (the 2nd commit in run) is lost.
+    orig = db_session.commit
+    state = {"n": 0}
+
+    async def flaky():
+        state["n"] += 1
+        if state["n"] == 2:
+            raise RuntimeError("sent-mark commit lost")
+        return await orig()
+
+    db_session.commit = flaky
+    try:
+        r = await exec_client.post("/api/v1/executions/run", json=RUN_BODY)
+    finally:
+        db_session.commit = orig
+        await db_session.rollback()
+
+    assert r.status_code == 202
+    body = r.json()
+    assert body["status"] == "queued"  # NOT "not delivered"
+    # the command really reached Redis (so the agent may already be running it)
+    assert await exec_redis.xlen(command_stream("agent-1")) == 1
+    # execution stays queued; the agent's attempt.running event converges it
+    detail = await exec_client.get(f"/api/v1/executions/{body['execution_id']}")
+    assert detail.json()["status"] == "queued"
 
 
-async def test_run_all_strategy_two_nodes_two_attempts(
-    exec_client, seeder, fake_agent
-):
+async def test_run_all_strategy_two_nodes_two_commands(exec_client, exec_redis, seeder):
     await seeder.healthy_node("a1", "http://a1:6800")
     await seeder.healthy_node("a2", "http://a2:6800")
     r = await exec_client.post("/api/v1/executions/run", json=RUN_BODY)
     eid = r.json()["execution_id"]
     detail = await exec_client.get(f"/api/v1/executions/{eid}")
     assert len(detail.json()["attempts"]) == 2
-    assert fake_agent.call_names().count("run") == 2
+    # one run command per agent stream
+    assert len(await _commands(exec_redis, "a1")) == 1
+    assert len(await _commands(exec_redis, "a2")) == 1
 
 
 async def test_run_random_strategy_one_attempt(exec_client, seeder):
@@ -150,13 +162,26 @@ async def test_get_execution_404(exec_client):
     assert r.json()["code"] == "execution.not_found"
 
 
-async def test_cancel_execution(exec_client, seeder, db_session, fake_agent):
+async def test_cancel_sends_stop_and_converges_via_event(
+    exec_client, exec_redis, seeder, db_session
+):
     execution, attempt, _log = await seeder.running_execution()
-    fake_agent.tail_script[attempt.id] = []
     r = await exec_client.post(f"/api/v1/executions/{execution.id}/cancel")
     assert r.status_code == 200
-    assert r.json()["status"] == "canceled"
-    assert "stop" in fake_agent.call_names()
+    # a stop(intent=cancel) command was dispatched to the agent
+    cmds = await _commands(exec_redis)
+    stop = [c for c in cmds if c.type.value == "stop"]
+    assert len(stop) == 1 and stop[0].intent.value == "cancel"
+
+    # the agent replies attempt.canceled -> execution converges to canceled
+    ev = AgentEvent(
+        event_id="ev1", agent_id="agent-1", execution_id=execution.id,
+        attempt_id=attempt.id, type=AgentEventType.canceled, created_at="t",
+    )
+    await apply_event(db_session, ev, "m1")
+    await db_session.commit()
+    detail = await exec_client.get(f"/api/v1/executions/{execution.id}")
+    assert detail.json()["status"] == states.EXEC_CANCELED
 
 
 async def test_logs_snapshot(exec_client, seeder, db_session):

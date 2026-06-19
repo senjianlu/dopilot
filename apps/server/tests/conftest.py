@@ -15,33 +15,29 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import dopilot_server.models  # noqa: F401 - register tables on Base.metadata
+import fakeredis.aioredis as fakeaioredis
 import pytest
 import pytest_asyncio
-from dopilot_protocol import (
-    AgentRunResponse,
-    AgentStatusResponse,
-    AgentStopResponse,
-    AttemptStatus,
-    CleanupResponse,
-    EggDeployResponse,
-    ExecutionRunRequest,
-    TailResponse,
-)
-from dopilot_server.api.v1.executions import get_request_sessionmaker
+from dopilot_protocol import EggDeployResponse, ExecutionRunRequest
+from dopilot_server.api.v1.executions import get_dispatcher, get_request_sessionmaker
 from dopilot_server.app import create_app
 from dopilot_server.clients.agent import get_agent_client
 from dopilot_server.config.loader import get_settings
-from dopilot_server.config.settings import Settings
+from dopilot_server.config.settings import RedisSettings, Settings
 from dopilot_server.db.base import Base
 from dopilot_server.db.engine import get_session
 from dopilot_server.logs.sse import SubscriptionManager, get_subscriptions
 from dopilot_server.models.node import Node
+from dopilot_server.redis.commands import CommandProducer
+from dopilot_server.redis.dispatcher import CommandDispatcher
 from dopilot_server.services import executions as svc
 from dopilot_server.services import states
 from httpx import ASGITransport, AsyncClient
+from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -82,98 +78,21 @@ def make_settings(auth_on: bool = False, logs_root: str | None = None) -> Settin
 
 
 class FakeAgentClient:
-    """Programmable in-process fake of the agent surface used by the server."""
+    """Programmable in-process fake of the agent egg-deploy surface.
+
+    Phase 1.5: the server->agent run/stop/status/tail/cleanup HTTP paths are
+    gone; only egg deploy remains, so this fake only models ``deploy_egg``.
+    """
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, Any]] = []
         self.raises: dict[str, Exception] = {}
-        self.status_script: dict[str, list[AttemptStatus]] = {}
-        self.default_status: AttemptStatus = AttemptStatus.running
-        self.run_status: AttemptStatus = AttemptStatus.running
-        self.exit_codes: dict[str, int] = {}
-        self.tail_script: dict[str, list[str]] = {}
-        self.tail_finished: dict[str, bool] = {}
         self.deploy_result: EggDeployResponse | None = None
-        self.cleaned: list[str] = []
 
     def _maybe_raise(self, method: str) -> None:
         exc = self.raises.get(method)
         if exc is not None:
             raise exc
-
-    async def run(self, endpoint: str, req) -> AgentRunResponse:
-        self.calls.append(("run", req))
-        self._maybe_raise("run")
-        return AgentRunResponse(
-            execution_id=req.execution_id,
-            attempt_id=req.attempt_id,
-            remote_job_id=f"job-{req.attempt_id[:8]}",
-            status=self.run_status,
-        )
-
-    async def stop(self, endpoint: str, req) -> AgentStopResponse:
-        self.calls.append(("stop", req))
-        self._maybe_raise("stop")
-        return AgentStopResponse(
-            execution_id=req.execution_id,
-            attempt_id=req.attempt_id,
-            status=AttemptStatus.canceled,
-            stopped=True,
-        )
-
-    async def status(
-        self, endpoint: str, execution_id: str, attempt_id: str
-    ) -> AgentStatusResponse:
-        self.calls.append(("status", attempt_id))
-        self._maybe_raise("status")
-        script = self.status_script.get(attempt_id)
-        if script:
-            value = script.pop(0) if len(script) > 1 else script[0]
-        else:
-            value = self.default_status
-        return AgentStatusResponse(
-            execution_id=execution_id,
-            attempt_id=attempt_id,
-            remote_job_id=f"job-{attempt_id[:8]}",
-            status=value,
-            exit_code=self.exit_codes.get(attempt_id),
-        )
-
-    async def tail(self, endpoint: str, req) -> TailResponse:
-        self.calls.append(("tail", (req.attempt_id, req.offset)))
-        self._maybe_raise("tail")
-        chunks = self.tail_script.get(req.attempt_id)
-        finished = self.tail_finished.get(req.attempt_id, True)
-        if chunks:
-            content = chunks.pop(0)
-            end = req.offset + len(content.encode("utf-8"))
-            eof = not chunks
-            return TailResponse(
-                start_offset=req.offset,
-                end_offset=end,
-                content=content,
-                eof=eof,
-                finished=eof and finished,
-            )
-        return TailResponse(
-            start_offset=req.offset,
-            end_offset=req.offset,
-            content="",
-            eof=True,
-            finished=finished,
-        )
-
-    async def cleanup(
-        self,
-        endpoint: str,
-        attempt_id: str,
-        execution_id: str | None = None,
-        stream: str = "log",
-    ) -> CleanupResponse:
-        self.calls.append(("cleanup", attempt_id))
-        self._maybe_raise("cleanup")
-        self.cleaned.append(attempt_id)
-        return CleanupResponse(attempt_id=attempt_id, removed=True)
 
     async def deploy_egg(
         self,
@@ -196,8 +115,119 @@ class FakeAgentClient:
 
 
 # ---------------------------------------------------------------------------
+# fake Redis Streams (real consumer-group fidelity via fakeredis; faults
+# injected via flags). Satisfies the narrow RedisStreamClient surface used by
+# the producer / dispatcher / consumers.
+# ---------------------------------------------------------------------------
+
+
+class FakeRedisStreams:
+    """In-memory Redis Streams double backed by ``fakeredis.aioredis``.
+
+    Pass ``server=`` (a ``fakeredis.FakeServer``) to share one in-memory store
+    across several clients (e.g. a server-side and an agent-side view in one
+    test). Set ``fail_xadd`` / ``fail_streams`` to simulate Redis being
+    unavailable for publishing.
+    """
+
+    def __init__(self, *, server: Any = None) -> None:
+        kwargs: dict[str, Any] = {"decode_responses": False}
+        if server is not None:
+            kwargs["server"] = server
+        self._c = fakeaioredis.FakeRedis(**kwargs)
+        self.server = server
+        self.fail_xadd = False
+        self.fail_streams: set[str] = set()
+        self.calls: list[tuple[str, Any]] = []
+
+    async def xadd(
+        self,
+        stream: str,
+        fields: dict[Any, Any],
+        *,
+        maxlen: int | None = None,
+        approximate: bool = True,
+    ) -> Any:
+        self.calls.append(("xadd", stream))
+        if self.fail_xadd or stream in self.fail_streams:
+            raise RedisConnectionError("fake redis: xadd disabled")
+        return await self._c.xadd(stream, fields, maxlen=maxlen, approximate=approximate)
+
+    async def xreadgroup(
+        self,
+        group: str,
+        consumer: str,
+        streams: dict[str, str],
+        *,
+        count: int | None = None,
+        block: int | None = None,
+    ) -> Any:
+        return await self._c.xreadgroup(group, consumer, streams, count=count, block=block)
+
+    async def xack(self, stream: str, group: str, *ids: Any) -> int:
+        return await self._c.xack(stream, group, *ids)
+
+    async def xautoclaim(
+        self,
+        stream: str,
+        group: str,
+        consumer: str,
+        min_idle_ms: int,
+        start: str = "0-0",
+        *,
+        count: int = 100,
+    ) -> Any:
+        return await self._c.xautoclaim(stream, group, consumer, min_idle_ms, start, count=count)
+
+    async def ensure_group(self, stream: str, group: str) -> None:
+        try:
+            await self._c.xgroup_create(stream, group, id="0", mkstream=True)
+        except Exception as exc:  # BUSYGROUP if it already exists
+            if "BUSYGROUP" not in str(exc):
+                raise
+
+    async def xlen(self, stream: str) -> int:
+        return await self._c.xlen(stream)
+
+    async def aclose(self) -> None:
+        await self._c.aclose()
+
+    # --- test-only helpers -------------------------------------------------
+    async def entries(self, stream: str) -> list[tuple[Any, dict[Any, Any]]]:
+        """All entries of ``stream`` as ``[(id, fields), ...]`` for assertions."""
+        return await self._c.xrange(stream)
+
+    async def pending_count(self, stream: str, group: str) -> int:
+        info = await self._c.xpending(stream, group)
+        return int(info["pending"]) if info else 0
+
+
+# ---------------------------------------------------------------------------
 # fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_server() -> Any:
+    """A shared ``fakeredis.FakeServer`` to back several FakeRedisStreams views."""
+    import fakeredis
+
+    return fakeredis.FakeServer()
+
+
+@pytest_asyncio.fixture
+async def fake_redis() -> AsyncIterator[Any]:
+    """Factory building FakeRedisStreams instances, all closed on teardown."""
+    created: list[FakeRedisStreams] = []
+
+    def _make(*, server: Any = None) -> FakeRedisStreams:
+        fr = FakeRedisStreams(server=server)
+        created.append(fr)
+        return fr
+
+    yield _make
+    for fr in created:
+        await fr.aclose()
 
 
 @pytest.fixture
@@ -250,7 +280,12 @@ class Seeder:
         endpoint: str = "http://agent:6800",
         scrapy: bool = True,
         status: str = "healthy",
+        last_seen_age_seconds: float = 0.0,
     ) -> Node:
+        # Phase 1.5: node selection is heartbeat-recency based, so a "healthy"
+        # node must carry a fresh last_seen_at. last_seen_age_seconds backdates
+        # it (e.g. to test heartbeat-timeout exclusion).
+        last_seen = datetime.now(UTC) - timedelta(seconds=last_seen_age_seconds)
         node = Node(
             id=uuid.uuid4(),
             agent_id=agent_id,
@@ -258,6 +293,7 @@ class Seeder:
             status=status,
             capabilities={"scrapy": scrapy},
             health={"scrapyd": {"running": True, "port": 6801}},
+            last_seen_at=last_seen,
         )
         self.session.add(node)
         await self.session.commit()
@@ -345,6 +381,7 @@ def _build_exec_client(
     agent: FakeAgentClient,
     subs: SubscriptionManager,
     sessionmaker: async_sessionmaker[AsyncSession],
+    redis: Any,
 ) -> AsyncClient:
     app = create_app(app_settings)
     app.state.subscriptions = subs
@@ -359,6 +396,10 @@ def _build_exec_client(
     app.dependency_overrides[get_request_sessionmaker] = lambda: sessionmaker
     app.dependency_overrides[get_agent_client] = lambda: agent
     app.dependency_overrides[get_subscriptions] = lambda: subs
+    # Phase 1.5: the run/cancel path dispatches over the Redis command stream.
+    producer = CommandProducer(redis, RedisSettings())
+    dispatcher = CommandDispatcher(sessionmaker, producer)
+    app.dependency_overrides[get_dispatcher] = lambda: dispatcher
     transport = ASGITransport(app=app)
     return AsyncClient(transport=transport, base_url="http://test")
 
@@ -381,6 +422,12 @@ async def client_auth_on(
         yield ac
 
 
+@pytest.fixture
+def exec_redis(fake_redis) -> Any:
+    """A FakeRedisStreams shared by the exec client's dispatcher and the test."""
+    return fake_redis()
+
+
 @pytest_asyncio.fixture
 async def exec_client(
     exec_settings: Settings,
@@ -388,10 +435,12 @@ async def exec_client(
     fake_agent: FakeAgentClient,
     subscriptions: SubscriptionManager,
     test_sessionmaker: async_sessionmaker[AsyncSession],
+    exec_redis: Any,
 ) -> AsyncIterator[AsyncClient]:
-    """Auth-OFF client wired to the fake agent + a temp log root."""
+    """Auth-OFF client wired to the Redis command stream + a temp log root."""
     async with _build_exec_client(
-        exec_settings, db_session, fake_agent, subscriptions, test_sessionmaker
+        exec_settings, db_session, fake_agent, subscriptions,
+        test_sessionmaker, exec_redis,
     ) as ac:
         yield ac
 
@@ -403,13 +452,15 @@ async def exec_client_auth_on(
     fake_agent: FakeAgentClient,
     subscriptions: SubscriptionManager,
     test_sessionmaker: async_sessionmaker[AsyncSession],
+    exec_redis: Any,
 ) -> AsyncIterator[AsyncClient]:
-    """Auth-ON client wired to the fake agent + a temp log root."""
+    """Auth-ON client wired to the Redis command stream + a temp log root."""
     async with _build_exec_client(
         exec_settings_auth_on,
         db_session,
         fake_agent,
         subscriptions,
         test_sessionmaker,
+        exec_redis,
     ) as ac:
         yield ac

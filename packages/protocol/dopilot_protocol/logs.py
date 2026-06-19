@@ -1,7 +1,10 @@
 """Log tail protocol: stream selector plus pull request/response envelopes.
 
-dopilot realtime logs are server-pull (decision #11): the server pulls log
-increments from the agent tail API. These schemas describe that pull contract.
+:class:`LogStream` is shared and current. :class:`TailRequest` /
+:class:`TailResponse` are **LEGACY** (phase-1 server-pull tail contract):
+phase 1.5 replaces server pull with agent-pushed log increments over a Redis
+stream — see :class:`dopilot_protocol.streams.AgentLogEvent`. They are kept only
+until the phase-1 HTTP tail path is removed.
 """
 
 from __future__ import annotations

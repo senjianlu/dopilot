@@ -23,8 +23,25 @@ access_token_ttl_minutes = 720
 stream_token_ttl_seconds = 60
 
 [agent_auth]
-# Must match [auth].shared_token in the agent config (agent.example.toml).
+# server -> agent token; must match [auth].shared_token in the agent config.
 shared_token = "change-me-agent-token"
+
+# Redis reached by its compose SERVICE NAME (redis), with AUTH password.
+[redis]
+url = "redis://:change-me-redis-pass@redis:6379/0"
+stream_maxlen_commands = 100000
+stream_maxlen_events = 100000
+stream_maxlen_logs = 1000000
+log_retention_seconds = 86400
+consumer_name = "server-1"
+require_aof = true
+
+[agents]
+heartbeat_timeout_seconds = 30
+stalled_attempt_seconds = 300
+lost_after_stalled_seconds = 900
+# agent -> server token; must match [agent].server_shared_token in agent config.
+server_shared_token = "change-me-agent-server-token"
 
 [nodes]
 # Reach the agent by its compose service name, not localhost.
@@ -41,6 +58,7 @@ realtime_drain_interval_seconds = 1
 max_tail_bytes_per_pull = 262144
 eof_stable_seconds = 3
 final_drain_hard_timeout_seconds = 30
+log_drain_timeout_seconds = 30
 retention_days = 30
 
 [i18n]

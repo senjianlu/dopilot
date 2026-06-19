@@ -143,6 +143,15 @@ async def get_execution_or_404(
     return execution
 
 
+async def get_attempt(
+    session: AsyncSession, attempt_id: str
+) -> ExecutionAttempt | None:
+    result = await session.execute(
+        select(ExecutionAttempt).where(ExecutionAttempt.id == attempt_id)
+    )
+    return result.scalar_one_or_none()
+
+
 async def list_attempts(
     session: AsyncSession, execution_id: str
 ) -> list[ExecutionAttempt]:

@@ -5,6 +5,8 @@ autogenerate and the test ``create_all`` see the full schema.
 """
 
 from .auth_token import AuthToken
+from .command_outbox import CommandOutbox
+from .event_audit import EventAudit
 from .execution import (
     Execution,
     ExecutionAttempt,
@@ -20,4 +22,6 @@ __all__ = [
     "ExecutionAttempt",
     "ExecutionLogFile",
     "ScrapyArtifact",
+    "CommandOutbox",
+    "EventAudit",
 ]

@@ -21,7 +21,9 @@ from pathlib import Path
 
 from fastapi import Request
 
+from . import __version__
 from .config.settings import Settings
+from .redis.heartbeat import HeartbeatWorker
 from .runners.scrapyd import ScrapyRunner
 from .scrapyd.client import ScrapydClient
 from .scrapyd.process import ScrapydProcess
@@ -37,6 +39,7 @@ class AgentRuntime:
     client: ScrapydClient
     store: StateStore
     runner: ScrapyRunner
+    heartbeat: HeartbeatWorker | None = None
 
 
 def state_dir(workdir: str | Path) -> Path:
@@ -74,12 +77,20 @@ def build_runtime(settings: Settings) -> AgentRuntime:
         store=store,
         logs_dir=scrapyd_logs_dir(workdir),
     )
+    # Heartbeat worker is built only when a server_url is configured; the task
+    # itself is started by the lifespan (not under the test ASGI transport).
+    heartbeat: HeartbeatWorker | None = None
+    if settings.agent.server_url:
+        heartbeat = HeartbeatWorker(
+            settings=settings, store=store, version=__version__
+        )
     return AgentRuntime(
         settings=settings,
         process=process,
         client=client,
         store=store,
         runner=runner,
+        heartbeat=heartbeat,
     )
 
 

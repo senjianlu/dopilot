@@ -8,23 +8,24 @@ import time
 from datetime import UTC, datetime
 
 from dopilot_protocol import ExecutionRunRequest, ExecutionRunResponse
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...auth.dependencies import AdminContext, get_current_admin
-from ...clients.agent import AgentClient, get_agent_client
 from ...config.loader import get_settings
 from ...config.settings import Settings
 from ...db.engine import get_session
 from ...errors import ApiError
-from ...executors.base import ExecutorContext
+from ...executors.base import DispatchUnknownError, ExecutorContext
 from ...executors.registry import get_executor
-from ...logs import files, reconcile
+from ...logs import files
 from ...logs.sse import CLOSE, SubscriptionManager, get_subscriptions
 from ...logs.stream_token import issue_stream_token, verify_stream_token
+from ...redis.dispatcher import CommandDispatcher
 from ...services import executions as svc
 from ...services import states
+from ...services.cancel import request_cancel
 from .schemas import (
     ExecutionsResponse,
     ExecutionSummary,
@@ -50,6 +51,22 @@ def get_request_sessionmaker(request: Request) -> async_sessionmaker[AsyncSessio
         )
     return maker
 
+
+def get_dispatcher(request: Request) -> CommandDispatcher:
+    """Return the app-wide command dispatcher (built in the lifespan).
+
+    Tests override this with a dispatcher wrapping a fake Redis client.
+    """
+    dispatcher = getattr(request.app.state, "command_dispatcher", None)
+    if dispatcher is None:
+        raise ApiError(
+            503,
+            "execution.dispatcher_unavailable",
+            "errors.dispatcherUnavailable",
+            {},
+        )
+    return dispatcher
+
 _SSE_HEADERS = {
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
@@ -62,17 +79,27 @@ _SSE_MAX_LIFETIME_SECONDS = 1800.0  # 30 min connection cap
 @router.post("/executions/run", response_model=ExecutionRunResponse)
 async def run_execution(
     body: ExecutionRunRequest,
+    response: Response,
     _admin: AdminContext = Depends(get_current_admin),
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
-    agent_client: AgentClient = Depends(get_agent_client),
+    dispatcher: CommandDispatcher = Depends(get_dispatcher),
 ) -> ExecutionRunResponse:
-    """Resolve the executor and dispatch a real run (phase 1: scrapy)."""
+    """Resolve the executor and dispatch a run over the Redis command stream.
+
+    Returns 200 (execution ``queued``, command dispatched), 503
+    ``dispatch_unavailable`` (Redis down), or 202 ``dispatch_unknown`` (command
+    XADDed but the sent-mark commit was lost — convergence via the running event).
+    """
     executor = get_executor(body.task_type)
     ctx = ExecutorContext(
-        session=session, settings=settings, agent_client=agent_client
+        session=session, settings=settings, dispatcher=dispatcher
     )
-    return await executor.run(body, ctx)
+    try:
+        return await executor.run(body, ctx)
+    except DispatchUnknownError as exc:
+        response.status_code = 202
+        return ExecutionRunResponse(execution_id=exc.execution_id, status="queued")
 
 
 @router.get("/executions", response_model=ExecutionsResponse)
@@ -105,16 +132,18 @@ async def get_execution(
 async def cancel_execution(
     execution_id: str,
     _admin: AdminContext = Depends(get_current_admin),
-    settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
-    agent_client: AgentClient = Depends(get_agent_client),
-    manager: SubscriptionManager = Depends(get_subscriptions),
+    dispatcher: CommandDispatcher = Depends(get_dispatcher),
 ) -> ExecutionView:
+    """Request cancel: CAS unsent commands + send stop(intent=cancel) to agents.
+
+    Convergence to ``canceled`` is asynchronous (the agent's ``attempt.canceled``
+    events roll the execution up), so the returned view may still show an active
+    status.
+    """
     execution = await svc.get_execution_or_404(session, execution_id)
     if execution.status not in states.EXEC_TERMINAL:
-        await reconcile.cancel_execution(
-            session, settings, agent_client, manager, execution
-        )
+        await request_cancel(session, dispatcher, execution)
         execution = await svc.get_execution_or_404(session, execution_id)
     attempts = await svc.list_attempts(session, execution_id)
     return ExecutionView(**svc.execution_view(execution, attempts))

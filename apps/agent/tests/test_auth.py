@@ -1,16 +1,30 @@
-"""Tests for shared-token bearer auth on protected endpoints."""
+"""Shared-token bearer auth on the surviving protected endpoint (egg deploy).
+
+Phase 1.5 removed the server->agent run/status/logs-tail/cleanup HTTP endpoints;
+the only auth-guarded agent endpoint left is ``POST /artifacts/scrapy/egg``.
+"""
 
 from __future__ import annotations
 
-from httpx import AsyncClient
+from pathlib import Path
 
-from .conftest import TEST_TOKEN
+from .conftest import FakeScrapyd, app_with_fake_scrapyd, client_for_app
 
-TAIL = "/logs/tail?execution_id=e&attempt_id=a"
+TEST_TOKEN = "test-shared-token"
+EGG_DATA = {"project": "demo", "version": "1"}
+EGG_FILES = {"file": ("demo.egg", b"PK\x03\x04egg", "application/octet-stream")}
 
 
-async def test_protected_requires_bearer_when_auth_on(client_auth: AsyncClient) -> None:
-    resp = await client_auth.get(TAIL)
+def _egg_client(workdir: Path, *, shared_token: str):
+    app = app_with_fake_scrapyd(workdir, FakeScrapyd(), shared_token=shared_token)
+    return client_for_app(app)
+
+
+async def test_protected_requires_bearer_when_auth_on(workdir: Path) -> None:
+    async with _egg_client(workdir, shared_token=TEST_TOKEN) as client:
+        resp = await client.post(
+            "/artifacts/scrapy/egg", data=EGG_DATA, files=EGG_FILES
+        )
     assert resp.status_code == 401
     body = resp.json()
     assert body["code"] == "agent.unauthorized"
@@ -18,41 +32,34 @@ async def test_protected_requires_bearer_when_auth_on(client_auth: AsyncClient) 
     assert body["detail"] == {}
 
 
-async def test_protected_passes_auth_then_handler(client_auth: AsyncClient) -> None:
-    resp = await client_auth.get(
-        TAIL, headers={"Authorization": f"Bearer {TEST_TOKEN}"}
-    )
-    # Correct token => passes auth and reaches the real handler, which reports
-    # 404 because there is no state mapping for this attempt.
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "agent.attempt_not_found"
+async def test_protected_passes_auth_then_handler(workdir: Path) -> None:
+    async with _egg_client(workdir, shared_token=TEST_TOKEN) as client:
+        resp = await client.post(
+            "/artifacts/scrapy/egg",
+            data=EGG_DATA,
+            files=EGG_FILES,
+            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+        )
+    # Correct token => passes auth and reaches the handler (egg deploys).
+    assert resp.status_code == 200
+    assert resp.json()["project"] == "demo"
 
 
-async def test_wrong_token_rejected(client_auth: AsyncClient) -> None:
-    resp = await client_auth.get(
-        TAIL, headers={"Authorization": "Bearer wrong-token"}
-    )
+async def test_wrong_token_rejected(workdir: Path) -> None:
+    async with _egg_client(workdir, shared_token=TEST_TOKEN) as client:
+        resp = await client.post(
+            "/artifacts/scrapy/egg",
+            data=EGG_DATA,
+            files=EGG_FILES,
+            headers={"Authorization": "Bearer wrong-token"},
+        )
     assert resp.status_code == 401
 
 
-async def test_no_auth_mode_skips_token(client: AsyncClient) -> None:
-    # Empty shared token => auth OFF; protected endpoint reaches the handler
-    # directly (404: no state mapping for this attempt).
-    resp = await client.get(TAIL)
-    assert resp.status_code == 404
-    assert resp.json()["code"] == "agent.attempt_not_found"
-
-
-async def test_run_requires_auth(client_auth: AsyncClient) -> None:
-    # New /run endpoint is also behind the shared-token guard.
-    resp = await client_auth.post(
-        "/run",
-        json={
-            "execution_id": "e",
-            "attempt_id": "a",
-            "project": "demo",
-            "spider": "phase1",
-        },
-    )
-    assert resp.status_code == 401
-    assert resp.json()["code"] == "agent.unauthorized"
+async def test_no_auth_mode_skips_token(workdir: Path) -> None:
+    # Empty shared token => auth OFF; the endpoint reaches the handler directly.
+    async with _egg_client(workdir, shared_token="") as client:
+        resp = await client.post(
+            "/artifacts/scrapy/egg", data=EGG_DATA, files=EGG_FILES
+        )
+    assert resp.status_code == 200

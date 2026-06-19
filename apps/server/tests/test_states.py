@@ -51,6 +51,37 @@ def test_attempt_transitions():
     assert not states.is_valid_attempt_transition("finished", "running")
 
 
+def test_attempt_lost_is_soft_terminal_overridable():
+    # phase 1.5: an agent-authoritative terminal may override a server-lost
+    for new in ("finished", "failed", "canceled"):
+        assert states.is_valid_attempt_transition("lost", new), new
+    # idempotent same->same still allowed
+    assert states.is_valid_attempt_transition("lost", "lost")
+    # but lost cannot regress to a non-terminal
+    assert not states.is_valid_attempt_transition("lost", "running")
+    assert not states.is_valid_attempt_transition("lost", "pending")
+
+
+def test_execution_lost_is_soft_terminal_overridable():
+    # phase 1.5: execution `lost` re-rolls when its attempt is reconciled
+    for new in ("complete", "failed", "canceled"):
+        assert states.is_valid_execution_transition("lost", new), new
+    assert states.is_valid_execution_transition("lost", "lost")
+    assert not states.is_valid_execution_transition("lost", "running")
+    # other execution terminals stay frozen
+    assert not states.is_valid_execution_transition("complete", "failed")
+    assert states.is_valid_execution_transition("complete", "complete")
+
+
+def test_hard_terminals_remain_mutually_non_transitionable():
+    for old in ("finished", "failed", "canceled"):
+        for new in ("finished", "failed", "canceled", "lost", "running"):
+            if old == new:
+                assert states.is_valid_attempt_transition(old, new)
+            else:
+                assert not states.is_valid_attempt_transition(old, new), (old, new)
+
+
 def test_agent_to_attempt_mapping():
     from dopilot_protocol import AttemptStatus
 
