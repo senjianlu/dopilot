@@ -1,0 +1,48 @@
+# dopilot dependency base images.
+#
+# Build this file before the application image when local dependency inputs
+# change. It publishes two targets:
+#   - py-runtime: Python runtime dependencies shared by server/agent/migrate
+#   - web-deps: Node/pnpm workspace dependencies used by the Vue build
+#
+# Keep project source out of this file where possible. The application image
+# installs dopilot's own wheels separately, so normal app-code edits do not
+# force third-party dependency resolution.
+
+# ---- Target: Python runtime dependencies ----------------------------------
+FROM python:3.12-slim AS py-runtime
+
+WORKDIR /app
+
+ENV PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=10
+
+RUN pip install --no-cache-dir wheel hatchling \
+    && pip install --no-cache-dir \
+        'fastapi>=0.110' \
+        'uvicorn[standard]>=0.27' \
+        'pydantic>=2.6,<3' \
+        'sqlalchemy>=2.0,<2.1' \
+        'alembic>=1.13' \
+        'psycopg[binary]==3.3.4' \
+        'httpx>=0.27' \
+        'python-multipart>=0.0.9' \
+        'APScheduler>=3.10,<4' \
+        'redis>=5,<9' \
+        'scrapy>=2.11,<3' \
+        'scrapyd>=1.4,<2'
+
+# Fail the build early if the scrapyd console script did not land on PATH.
+RUN command -v scrapyd >/dev/null || (echo "scrapyd console script missing from PATH" >&2; exit 1)
+
+RUN mkdir -p /agent-data /server-data
+
+# ---- Target: Web dependency install ---------------------------------------
+FROM node:22-slim AS web-deps
+
+WORKDIR /build
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/web/package.json ./apps/web/package.json
+
+RUN corepack enable \
+    && pnpm install --filter web --frozen-lockfile

@@ -182,6 +182,8 @@ printf '======================================================================\n
 # --- 1. clean-volume bring-up ----------------------------------------------
 step "1. Clean-volume bring-up (down -v; up -d --build)"
 dc down -v --remove-orphans >/dev/null 2>&1 || true
+info "building dependency base images..."
+"${REPO_ROOT}/scripts/build-docker-base.sh"
 info "building + starting db, migrate, agent, server (this builds images)..."
 dc up -d --build
 

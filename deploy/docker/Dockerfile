@@ -12,55 +12,40 @@
 # `dopilot-server ...` or `dopilot-agent ...`. The image MUST NOT contain
 # reference/ (read-only scrapydweb behavioral reference).
 
+ARG DOPILOT_PY_BASE_IMAGE=rabbir/dopilot-py-base:local
+ARG DOPILOT_WEB_BASE_IMAGE=rabbir/dopilot-web-base:local
+
 # ---- Stage: build web -----------------------------------------------------
-FROM node:22-slim AS web-build
+FROM ${DOPILOT_WEB_BASE_IMAGE} AS web-build
 
 WORKDIR /build
-
-COPY pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/web/package.json ./apps/web/package.json
-
-RUN corepack enable \
-    && pnpm install --filter web --frozen-lockfile
 
 COPY apps/web ./apps/web
 
 RUN pnpm --filter web build
 
 # ---- Stage: build Python wheels ------------------------------------------
-FROM python:3.12-slim AS py-deps
+FROM ${DOPILOT_PY_BASE_IMAGE} AS py-deps
 
 WORKDIR /build
-
-# Make wheel builds resilient to transient PyPI / pythonhosted hiccups.
-ENV PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=10
-
-RUN pip install --no-cache-dir wheel
 
 COPY packages/protocol ./packages/protocol
 COPY apps/server ./apps/server
 COPY apps/agent ./apps/agent
 
-RUN pip wheel --wheel-dir=/wheels \
+RUN pip wheel --no-build-isolation --no-deps --wheel-dir=/wheels \
     ./packages/protocol \
     ./apps/server \
     ./apps/agent
 
 # ---- Stage: runtime -------------------------------------------------------
-FROM python:3.12-slim AS runtime
+FROM ${DOPILOT_PY_BASE_IMAGE} AS runtime
 
 WORKDIR /app
 
 COPY --from=py-deps /wheels /wheels
-RUN pip install --no-cache-dir /wheels/* \
+RUN pip install --no-cache-dir --no-deps /wheels/* \
     && rm -rf /wheels
-
-# Agent-managed Scrapy runtime. These are image-level dependencies because the
-# agent spawns `scrapyd` as a managed subprocess and deploys eggs into it.
-RUN pip install --no-cache-dir 'scrapy>=2.11,<3' 'scrapyd>=1.4,<2'
-
-# Fail the build early if the scrapyd console script did not land on PATH.
-RUN command -v scrapyd >/dev/null || (echo "scrapyd console script missing from PATH" >&2; exit 1)
 
 # Built-in validation crawler artifact. Docker named volumes mounted at
 # /server-data are initialized from this image content on first create.

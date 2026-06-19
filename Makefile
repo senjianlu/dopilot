@@ -3,7 +3,7 @@
 # Python packages install in dependency order: protocol -> server -> agent.
 # uvicorn always runs workers=1 (single-instance hard constraint).
 
-.PHONY: install web-install db-up migrate server agent web test compose-config compose-smoke fmt lint
+.PHONY: install web-install db-up migrate server agent web test docker-base compose-build compose-up compose-config compose-smoke fmt lint
 
 # --- Python: create venv + editable installs (protocol first) --------------
 install:
@@ -40,6 +40,16 @@ web:
 test:
 	pytest apps/server/tests apps/agent/tests packages/protocol/tests
 	pnpm --filter web test
+
+# --- Docker local build -----------------------------------------------------
+docker-base:
+	scripts/build-docker-base.sh
+
+compose-build: docker-base
+	cd deploy/docker && docker compose build
+
+compose-up: docker-base
+	cd deploy/docker && docker compose up -d --build
 
 # --- Compose validation -----------------------------------------------------
 compose-config:
