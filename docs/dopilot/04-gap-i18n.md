@@ -255,15 +255,16 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 ├── apps/
 │   ├── server/                           # FastAPI 调度中心:API、PostgreSQL、APScheduler、认证、节点管理、日志聚合
 │   │   ├── dopilot_server/
-│   │   │   ├── api/v1/                    # FastAPI /api/v1/* JSON + SSE 端点(server↔agent 走 HTTP pull,无 WebSocket)
+│   │   │   ├── api/v1/                    # FastAPI /api/v1/* JSON + SSE 端点(server↔agent 走 Redis Streams;server→web 仍 SSE、无 WebSocket)
 │   │   │   ├── auth/  scheduler/  nodes/  logs/  models/  repositories/  services/  config/
 │   │   │   ├── executors/                 # 缝① BaseExecutor + EXECUTOR_REGISTRY
 │   │   │   │   ├── base.py  scrapyd.py  script.py  docker.py
 │   │   │   └── app.py
 │   │   ├── migrations/  tests/  pyproject.toml
-│   ├── agent/                            # worker 执行节点:收 server push,实际跑 Scrapy/Python/Docker
+│   ├── agent/                            # worker 执行节点:主动 XREADGROUP 消费命令 stream,实际跑 Scrapy/Python/Docker
 │   │   ├── dopilot_agent/
 │   │   │   ├── api/
+│   │   │   ├── redis/                     # client.py commands.py events.py logs.py(消费命令、推状态/日志)
 │   │   │   ├── runners/                   # base.py scrapyd.py script.py docker.py
 │   │   │   ├── logs/  workspace/  heartbeat/  config/  main.py
 │   │   ├── tests/  pyproject.toml

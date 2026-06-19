@@ -380,14 +380,14 @@ check_app_config(config)                         (check_app_config.py:38)
 |----|------|
 | 切入点 | `common.py` / `baseview.py:285` `make_request` + `execute_task.py` |
 | 现状 | 所有调度均为 scrapydweb 主动 HTTP POST 到目标 scrapyd（addversion/schedule） |
-| 改法 | 在 `execute_task` 之外新增直达 worker 的 push 通道（对常驻 / 脚本 worker 暴露 push 接口），复用 `make_request` 统一 HTTP+auth 封装与 `SCRAPYD_SERVERS_AUTHS` 的 per-node 凭证（`baseview.py:102,196`） |
+| 改法 | （原构想：新增直达 worker 的 push 通道、复用 `make_request` 统一 HTTP+auth 封装与 `SCRAPYD_SERVERS_AUTHS` per-node 凭证 `baseview.py:102,196`）**dopilot v1 已翻案**：下发改走 Redis command stream(`dopilot:agent:{agent_id}:commands`)、agent 主动消费，鉴权走 Redis AUTH/ACL + agent→server `server_shared_token`，不再复用 scrapydweb 的 HTTP+auth 主路径。见 [`../refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md) |
 
 ### 7.6 实时日志流
 
 | 项 | 内容 |
 |----|------|
 | 切入点 | `log.py` + `poll.py`（当前为拉取轮询，非真正流式） |
-| 改法 | dopilot v1 见决策 #11:server 按需 pull agent tail API + server→web SSE 流式推送(**不引入 WebSocket**);对容器爬虫从容器 stdout / log 流式读取。auth 与 node 解析在 dopilot 全新实现 |
+| 改法 | dopilot v1 见决策 #11(已由 [`../refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md) 翻案):**agent 经 Redis log stream(`dopilot:server:logs`)主动推增量、server log consumer 消费落盘(`RedisLogSource`,非 server pull)**,再 server→web SSE 流式推送(**不引入 WebSocket**);对容器爬虫从容器 stdout / log 流式读取。auth 与 node 解析在 dopilot 全新实现 |
 
 ---
 

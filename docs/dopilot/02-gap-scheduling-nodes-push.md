@@ -61,7 +61,7 @@
 - **平台内部多节点编排是「进程内自调用」**：`get_response_from_view` 走 Flask `test_client`（`common.py:48-80`），并非对远程 worker 的网络推送。
 - **状态采集是「拉」**：`poll.py` 子进程定期 GET 各 scrapyd `/jobs`。
 
-> **以上是 scrapydweb 基线现状（server 进程直连各 scrapyd）。dopilot v1 链路不同**：server 不直连裸 scrapyd，而是 server → dopilot-agent → 本机 scrapyd（详见 §4.3）。dopilot 的「拉」语义延伸到日志链路（server 按 offset 从 agent tail API pull，无 WebSocket、agent 不主动推；详见 §8.3）与节点健康（server 轮询 agent `/health`）。
+> **以上是 scrapydweb 基线现状（server 进程直连各 scrapyd）。dopilot v1 链路不同**：server 不直连裸 scrapyd，而是 server → dopilot-agent → 本机 scrapyd（详见 §4.3）。**【superseded-by `docs/refactor/00-redis-streams-agent-communication.md`】** 通信重构后，scrapydweb 这套「server 主动连接、server 拉」语义在 dopilot 侧两处发生反转，不再代表 dopilot v1 当前口径：① 日志链路由「server 按 offset 从 agent tail API pull」反转为「agent 经 Redis log stream 主动 XADD 日志增量、server 消费后落盘」（仍无 WebSocket、仍 server→web SSE；详见 §8.3）；② 节点健康由「server 轮询 agent `/health`」反转为「agent 主动 POST `/heartbeat`，server 以 `now - nodes.last_seen_at <= heartbeat_timeout_seconds` 判健康」，`/health` 降级为容器本地 healthcheck。下文以下各节凡述及 server 主动 HTTP run/status/tail、server 轮询 `/health`、agent 不主动推/不回连者，均以该 refactor 文档为准。
 
 ---
 
@@ -71,7 +71,7 @@
 
 | 复用组件 | 文件:行 | 说明 |
 |---|---|---|
-| BackgroundScheduler 单例 + SQLAlchemyJobStore + ThreadPoolExecutor(20) | `scrapydweb/utils/scheduler.py:32,36,45,90` | 引擎本身与 trigger 类型无关；APScheduler 原生支持 cron/interval/date。dopilot 调度器沿用 APScheduler 这套引擎语义（自有 `scheduler/` 模块封装），新 trigger 只需向 `add_job` 传不同参数。**dopilot v1 硬约束：server = 单容器 + uvicorn workers=1 + 单 APScheduler 实例，jobstore 落 PostgreSQL（不再 SQLite）；不支持多副本/多 worker、未来也不做，不引入 Redis/NATS/PG LISTEN-NOTIFY 等 fan-out**（in-process BackgroundScheduler 无分布式锁，多副本会重复触发）。 |
+| BackgroundScheduler 单例 + SQLAlchemyJobStore + ThreadPoolExecutor(20) | `scrapydweb/utils/scheduler.py:32,36,45,90` | 引擎本身与 trigger 类型无关；APScheduler 原生支持 cron/interval/date。dopilot 调度器沿用 APScheduler 这套引擎语义（自有 `scheduler/` 模块封装），新 trigger 只需向 `add_job` 传不同参数。**dopilot v1 硬约束：server = 单容器 + uvicorn workers=1 + 单 APScheduler 实例，jobstore 落 PostgreSQL（不再 SQLite）；不支持多副本/多 worker、未来也不做。不引入 Redis/NATS/PG LISTEN-NOTIFY 做多副本 HA / 跨实例分布式锁 / 跨进程 fan-out；server→web SSE fan-out 仍在单进程内存完成**（in-process BackgroundScheduler 无分布式锁，多副本会重复触发）。**【superseded-by `docs/refactor/00-redis-streams-agent-communication.md`】注意**：通信重构后 dopilot **显式引入 Redis 作单实例 server↔agent 通信总线**（command/event/log 三条 Stream）——这与上文一致，约束收窄为「不引入 Redis 做多实例 HA/fan-out/分布式锁」，而非「完全不用 Redis」；单容器 + workers=1 + 单 APScheduler 不变。 |
 | `trigger='interval'` 的现成完整样例 | `scrapydweb/utils/check_app_config.py:306-309, 329-332` | `jobs_snapshot` / `delete_task_result` 两个内置维护作业已是 `trigger='interval', seconds=..., misfire_grace_time=60, coalesce=True, max_instances=1, jobstore='memory'` 的工作样例，可直接照搬到用户 interval 任务的组包逻辑。 |
 | paused 启动 + 全局 resume/pause | `scheduler.py:90`（`start(paused=True)`）+ `check_app_config.py:288`（按 `scheduler_state` 决定 resume） | 「整体启停定时系统」机制现成。 |
 | 持久化三件套 Task / TaskResult / TaskJobResult | `scrapydweb/models.py:89,131,147` | 任务定义、执行汇总、按节点明细的三层数据线语义完整，dopilot `models/` 按此领域分层设计自有实体（含 trigger/interval/date/node_strategy/task_type 字段）。 |
@@ -111,7 +111,7 @@
               都返回 (status_code, dict) → 统一入库 TaskResult/TaskJobResult
 ```
 
-> **dopilot v1 链路（已锁定）：** 三类 Executor 一律 server → dopilot-agent，**没有 server 直连裸 scrapyd 的路径**。scrapy 类的执行链是 server → agent API → agent 子进程拉起的本机 scrapyd（监听容器内部端口如 6801、仅本机可见；对外 6800 = agent API）→ scrapy process；agent 负责调本机 scrapyd `addversion.json`/`schedule.json` 并 tail 其 `job.log`。现成 scrapyd 镜像仅本地 spike，非正式架构。
+> **dopilot v1 链路（已锁定）：** 三类 Executor 一律 server → dopilot-agent，**没有 server 直连裸 scrapyd 的路径**。重构后（阶段 1.5，见 `docs/refactor/00-redis-streams-agent-communication.md`）server↔agent 主路径走 **Redis Streams**：scrapy 类执行链是 server 写 `command_outbox` → dispatcher `XADD run` → `dopilot:agent:{agent_id}:commands` → agent consumer 消费 → agent 子进程拉起的本机 scrapyd（监听容器内部端口如 6801、仅本机可见）调 `schedule.json` → scrapy process，agent tail 其 `job.log` 后经 `dopilot:server:logs` 推回 server。**egg 上传部署是例外，仍走 HTTP**：server → agent HTTP `/addversion.json` 转发 → 本机 scrapyd `/addversion.json`（refactor/00 命令类型仅 run/stop/cleanup_logs，不含 deploy_egg）。现成 scrapyd 镜像仅本地 spike，非正式架构。
 
 > Docker「定时」语义需先定义（见开放问题）：是「定时启动新容器实例」，还是「定时对常驻容器发指令（exec/重启/健康检查）」？这决定 DockerExecutor 接口形态。
 
@@ -196,6 +196,8 @@ execute_task(): candidates = json.loads(task.selected_nodes)   (execute_task.py:
 
 **dopilot nodes 模型从设计起即以独立 `nodes` 表 + 稳定 `agent_id` 为一等公民，`selected_nodes` 存稳定 ID**，从根上杜绝序号漂移。agent 启动时传入容器重启也不会变化的 `agent_id`，server 以该 ID upsert `nodes` 表；`[nodes].agents` 只作为初始发现地址列表。行为陷阱参考：scrapydweb `check_app_config.py:388` 的 `sorted(set())` 使增删节点后序号整体漂移、已存任务选错节点——设计 dopilot 节点标识时要避开此坑。
 
+> **【superseded-by `docs/refactor/00-redis-streams-agent-communication.md`】健康判定来源已翻转。** 通信重构后，node_strategy 的三态语义（`specified/all/random`、random 动态归约）**不变**，叠加 heartbeat 健康过滤：健康来源由「server 轮询 agent `/health`」翻转为「agent 主动 POST `/api/v1/agents/{agent_id}/heartbeat` 写入 `nodes.last_seen_at`」，server 判定 `healthy = now - nodes.last_seen_at <= heartbeat_timeout_seconds`。`node_strategy` 在触发时仍只在健康候选集内归约，只是「健康」的判据从轮询响应换成 last_seen_at 新鲜度。
+
 ---
 
 ## 4. B-4 推模式（主动下发到指定节点执行）
@@ -248,11 +250,11 @@ execute_task(): candidates = json.loads(task.selected_nodes)   (execute_task.py:
 ```
 
 要点：
-- **dopilot v1 三类下发一律经 dopilot-agent，server 不直连裸 scrapyd。** 对 **scrapy** 类，server → agent API → agent 子进程拉起的本机 scrapyd（内部端口如 6801）→ scrapy process；egg 上传也走「用户上传 → server → 转发 agent → agent 调本机 scrapyd `/addversion.json`」，scrapy 触发走 agent 调 `schedule.json`。`baseview.py:285` `make_request` 仅作 scrapydweb「对 scrapyd 真 HTTP POST」的**行为参考**，不是 dopilot 链路（dopilot 多了一跳 agent）。
-- 对 **Docker/脚本**，server→agent 同样走 `packages/protocol` 定义的网络协议（HTTP），由 `apps/server/.../executors/{docker,script}.py` 调用、`apps/agent` runners 实际执行。三类 Executor 的 `apps/server/.../executors/{scrapyd,docker,script}.py` 都是「向 agent 发网络请求」，差异在 agent 侧 runner。
+- **dopilot v1 三类下发一律经 dopilot-agent，server 不直连裸 scrapyd。** 重构后 server↔agent 主路径走 **Redis Streams**（阶段 1.5，见 `docs/refactor/00-redis-streams-agent-communication.md`）：对 **scrapy** 类，server 写 `command_outbox` → dispatcher `XADD run` → agent consumer 消费 → agent 调本机 scrapyd（内部端口如 6801）`schedule.json` → scrapy process。**egg 上传部署是例外，仍走 HTTP**：用户上传 → server → 转发 agent → agent 调本机 scrapyd `/addversion.json`（不经 Redis command stream）。`baseview.py:285` `make_request` 仅作 scrapydweb「对 scrapyd 真 HTTP POST」的**行为参考**，不是 dopilot 链路。
+- 对 **Docker/脚本**，server→agent 同样走 **Redis command stream**：server `XADD run` command → `dopilot:agent:{agent_id}:commands` → agent consumer 消费，由 `apps/server/.../executors/{docker,script}.py` 写命令、`apps/agent` runners 实际执行。三类 Executor 的 `apps/server/.../executors/{scrapyd,docker,script}.py` 都是「向 agent **写 command stream**」（egg 部署除外，仍走 HTTP `/addversion.json`），差异在 agent 侧 runner。`packages/protocol` 的 stream schema 见 `streams.py`。
 - dopilot **不存在**进程内 `test_client` 自调用层可复用（scrapydweb 平台内部 fan-out 是进程内自调用而非远程推送，见 `common.py:48-80`，仅作行为对照）。
-- **agent 注册（v1）**：`[nodes].agents=["agent:6800"]` 作为 server 初始发现地址（指向 agent API，非裸 scrapyd）；agent 启动时携带稳定 `agent_id`，server 通过 `GET agent /health` 读取并 upsert `nodes` 表，调度只选健康 agent。agent 主动 heartbeat 留后续。`execution_id`/`attempt_id` 由 server 生成下发 agent。
-- 新增「立即推送」端点：`POST /api/v1/executions/run`，可**临时指定节点+策略**，服务端受控并发执行；与 B-3 共用同一「选节点+策略+下发」入口（行为参考 `fire_task` 的即时触发思路）。
+- **agent 注册（v1）**：`[nodes].agents=["agent:6800"]` 作为 server 初始发现地址（指向 agent API，非裸 scrapyd）；agent 启动时携带稳定 `agent_id`，server 以该 ID upsert `nodes` 表，调度只选健康 agent。**【superseded-by `docs/refactor/00-redis-streams-agent-communication.md`】**：通信重构后 agent 健康发现/判定改为 **agent 主动 POST `/api/v1/agents/{agent_id}/heartbeat` 写 `nodes.last_seen_at`** 为 v1 主路径（不再「server 轮询 `GET agent /health` 读取」、不再「heartbeat 留后续」），server 判 `healthy = now - last_seen_at <= heartbeat_timeout_seconds`；agent `/health` 降级为容器本地 healthcheck，不再作 server 节点发现/健康来源。`execution_id`/`attempt_id` 由 server 生成。
+- 新增「立即推送」端点：`POST /api/v1/executions/run`，可**临时指定节点+策略**，服务端受控并发执行；与 B-3 共用同一「选节点+策略+下发」入口（行为参考 `fire_task` 的即时触发思路）。**【superseded-by 同上】**：下发动作由「server → agent HTTP `POST /run`」改为「server 事务内写 `command_outbox` → dispatcher `XADD` 到 `dopilot:agent:{agent_id}:commands` 的 `run` command → agent 经 consumer group 消费」；server 不再主动 HTTP 连 agent 下发任务（手动 run 请求内 `try_dispatch`/`dispatch_unknown(202)`/`503`、定时触发 queued+outbox give_up 等可靠性细节见 refactor 文档）。
 
 ### 4.4 候选方案对比（推模式相关）
 
@@ -304,17 +306,19 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 ├── apps/
 │   ├── server/                           # 调度中心:API、DB、APScheduler、认证、节点管理、日志聚合
 │   │   ├── dopilot_server/
-│   │   │   ├── api/v1/                    # FastAPI /api/v1/* JSON + SSE(server→web 单向);v1 不用 WebSocket,server↔agent 走 HTTP(agent tail/status/cleanup API)
+│   │   │   ├── api/v1/                    # FastAPI /api/v1/* JSON + SSE(server→web 单向);v1 不用 WebSocket;server↔agent 走 Redis Streams(command/event/log),仅 agent→server heartbeat 走 HTTP(POST /agents/{id}/heartbeat)【superseded-by docs/refactor/00-redis-streams-agent-communication.md;原"走 HTTP agent tail/status/cleanup API"已废】
 │   │   │   ├── auth/  scheduler/  nodes/  logs/  models/  repositories/  services/  config/
-│   │   │   ├── executors/                 # 缝① BaseExecutor + EXECUTOR_REGISTRY
+│   │   │   ├── redis/                      # Redis Streams 基础设施(client/streams/commands/consumers):command producer/dispatcher、event consumer、log consumer
+│   │   │   ├── executors/                 # 缝① BaseExecutor + EXECUTOR_REGISTRY(run_on_node 由 POST /run 改为 XADD command;get_status 由轮询改为消费 agent-events)
 │   │   │   │   ├── base.py  scrapyd.py  script.py  docker.py
 │   │   │   └── app.py
 │   │   ├── migrations/  tests/  pyproject.toml
-│   ├── agent/                            # worker 执行节点:收 server push,本机拉起 scrapyd(子进程)/跑 Python/Docker
+│   ├── agent/                            # worker 执行节点:主动经 Redis 消费命令、主动推状态/日志、主动 POST heartbeat;本机拉起 scrapyd(子进程)/跑 Python/Docker
 │   │   ├── dopilot_agent/
-│   │   │   ├── api/                       # agent HTTP API: /health /addversion /schedule(转本机 scrapyd) + logs tail/status/cleanup + status
+│   │   │   ├── api/                       # agent /health 降级为容器本地 healthcheck(不再作 server 节点发现/健康来源);/addversion /schedule 转本机 scrapyd 仍在【superseded-by refactor;原"logs tail/status/cleanup HTTP API"作 server 来源已废,改 Redis Streams】
+│   │   │   ├── redis/                      # agent Redis 子包(client/commands/events/logs):consumer group 消费 command、XADD agent-events、XADD logs、event/log outbox
 │   │   │   ├── runners/                   # base.py scrapyd.py script.py docker.py
-│   │   │   ├── logs/  workspace/  config/  main.py   # logs: tail 本机 scrapyd job.log,server 按 offset pull(无 WS、agent 不主动推);state/executions/{attempt_id}.json 持久化 execution_id↔scrapyd job_id↔log_path 映射(重启恢复)
+│   │   │   ├── logs/  workspace/  config/  main.py   # logs: tail 本机 scrapyd job.log,agent 主动 XADD 增量到 dopilot:server:logs(无 WS、server 消费后落盘);state/executions/{attempt_id}.json 两阶段 CAS(reserved/started)持久化 execution_id↔scrapyd job_id↔log_path 映射(重启恢复/幂等)
 │   │   ├── tests/  pyproject.toml
 │   └── web/                              # Vue3 + Element Plus + Vite + TS SPA(greenfield,直连 /api/v1)
 │       ├── src/{api,pages,components,layouts,stores,router,i18n}/  public/
@@ -335,10 +339,10 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 | `apps/server/dopilot_server/models/` + `migrations/` | B-2/B-3/A | 用 dopilot ORM + 迁移设计 Task/TaskResult/TaskJobResult：含 `trigger`、`timezone`、interval 字段(`weeks/days/hours/minutes/seconds`)、`run_date`、`node_strategy`(默认 `all`)、`task_type`；cron 与 scrapy 专有字段(`project/version/spider/jobid`)在非 scrapy 场景可空；`selected_nodes` 存稳定节点标识。模型演进全部走迁移。行为参考：`models.py:94`(trigger)、`models.py:117`(timezone)、`models.py:105-112`(cron 列)、`models.py:98-101`(scrapy 专有列)、`models.py:103`(selected_nodes) |
 | `apps/web/src/pages` 调度表单页 + 节点选择组件 | B-2/B-3 | greenfield SPA(Element Plus)：trigger 类型选择(cron\|interval\|date)与对应字段块、interval/date 输入、`node_strategy` 控件；经 `src/api` 调 `/api/v1` 提交，编辑回填读 `/api/v1`。行为参考(需覆盖的功能点对照)：scrapydweb `schedule.html`/`include_multinodes_checkboxes.html` 的字段集合 checkCurrent/checkAll/`checked_amount` 等 |
 | `apps/server/dopilot_server/services/` + `api/v1/` (任务管理/状态) | B-2/B-3/B-4 | 任务列表/dump 按 trigger 类型读取(Cron/Interval/Date 各自字段)，状态推导依赖 `next_run_time` 对三类 trigger 通用；展示 `node_strategy`；即时推送入口。行为参考：`tasks.py:380-414`(dump)、`tasks.py:166-188`(状态推导通用)、`tasks.py:353-362`(`fire_task` 即时触发思路) |
-| `apps/server/dopilot_server/executors/{base,scrapyd,script,docker}.py` | B-2/B-3/B-4/A | 调度回调解析 `selected_nodes` 后按 `node_strategy` 归约(random→`random.choice`)，按 `task_type` 经 `EXECUTOR_REGISTRY` 分派 `BaseExecutor` 实现，统一 `(status_code, dict)` 契约。行为参考：`execute_task.py:150/168`(回调与节点解析)、`execute_task.py:75-104`(下发)、`execute_task.py:44-54`(`nodes_to_retry` 重试一次) |
+| `apps/server/dopilot_server/executors/{base,scrapyd,script,docker}.py` | B-2/B-3/B-4/A | 调度回调解析 `selected_nodes` 后按 `node_strategy` 归约(random→`random.choice`)，按 `task_type` 经 `EXECUTOR_REGISTRY` 分派 `BaseExecutor` 实现，统一 `(status_code, dict)` 契约。**【superseded-by `docs/refactor/00-redis-streams-agent-communication.md`】缝① 保留、下发/取状态实现翻转**：`run_on_node` 由「server `POST /run` agent」改为「事务内写 `command_outbox` → `XADD` run command」；`get_status` 由「轮询 agent status」改为「消费 `agent-events` 的 `attempt.*` 事件」；不再「server↔agent 走 HTTP、无消息队列/回调」。行为参考：`execute_task.py:150/168`(回调与节点解析)、`execute_task.py:75-104`(下发)、`execute_task.py:44-54`(`nodes_to_retry` 重试一次) |
 | `apps/server/dopilot_server/nodes/` | B-3 | 建立 `nodes` 表，节点以稳定 `agent_id` 为一等公民；选择/下发按稳定 ID 解析，不存在按 1-based 序号索引并行列表的取值方式。行为参考(要规避的坑)：`baseview.py:189-197`(node-1 索引四并行列表)、`baseview.py:257-262`(`get_selected_nodes`)、`check_app_config.py:388`(`sorted(set())` 序号漂移) |
-| `apps/server/dopilot_server/config/` + `configs/server.example.toml` | B-2/B-3 | dopilot 自有 toml 配置(经 `DOPILOT_CONFIG` 加载)：`TIMEZONE`(默认 `Asia/Shanghai`)、`DEFAULT_NODE_STRATEGY`(默认 `all`)、调度器显式时区，不继承 scrapydweb 硬编码 settings。行为参考：`scheduler.py:44-45`(timezone 未设导致 cron/date 偏移)、`check_app_config.py:306-332`(interval 样例参数)、`default_settings.py`(配置项命名对照) |
-| `apps/server/dopilot_server/executors/` + `apps/agent` runners + `packages/protocol` | B-4 | **三类下发(含 scrapy/scrapyd)一律走 `packages/protocol` 定义的网络协议(HTTP),由 server executors 调用、agent runners 执行;server 不直连裸 scrapyd**——scrapy 类经 agent 调本机 scrapyd(内部端口如 6801)addversion/schedule,对外 6800=agent API。dopilot 无进程内 `test_client` 自调用层。agent v1 通过 `[nodes].agents` 初始发现 + 稳定 `agent_id` 入 `nodes` 表 + server 轮询 `/health` 选健康 agent。行为参考：`baseview.py:285`(scrapydweb 对 scrapyd 是真 HTTP POST、dopilot 多一跳 agent)、`common.py:48-80`(scrapydweb 平台内部 fan-out 是进程内自调用、非远程推送) |
+| `apps/server/dopilot_server/config/` + `configs/server.example.toml` | B-2/B-3 | dopilot 自有 toml 配置(经 `DOPILOT_CONFIG` 加载)：`TIMEZONE`(默认 `Asia/Shanghai`)、`DEFAULT_NODE_STRATEGY`(默认 `all`)、调度器显式时区，不继承 scrapydweb 硬编码 settings。**【superseded-by refactor】通信重构新增配置段**：server `[redis]`(url/stream_maxlen_*/log_retention_seconds/consumer_name/require_aof)、`[agents]`(heartbeat_timeout_seconds/stalled_attempt_seconds/lost_after_stalled_seconds)、`[logs].log_drain_timeout_seconds`；agent `[redis]`(url/command_block_ms/pending_idle_ms/event_outbox_dir)、`[agent].server_url`/`heartbeat_interval_seconds`/`server_shared_token`；docker compose 新增 redis 服务并启用 AUTH/AOF。行为参考：`scheduler.py:44-45`(timezone 未设导致 cron/date 偏移)、`check_app_config.py:306-332`(interval 样例参数)、`default_settings.py`(配置项命名对照) |
+| `apps/server/dopilot_server/executors/` + `apps/server/.../redis/` + `apps/agent/.../redis/` + `apps/agent` runners + `packages/protocol/.../streams.py` | B-4 | **三类下发(含 scrapy/scrapyd)由 server executors 经 Redis `command` stream `XADD` run command、agent consumer group 消费后由 runners 执行;server 不直连裸 scrapyd、不再主动 HTTP `POST /run`**——scrapy 类经 agent 调本机 scrapyd(内部端口如 6801)addversion/schedule,对外 6800=agent API。dopilot 无进程内 `test_client` 自调用层。agent v1 通过 `[nodes].agents` 初始发现 + 稳定 `agent_id` 入 `nodes` 表 + **agent 主动 heartbeat 写 `last_seen_at`** 选健康 agent。protocol 新增 `streams.py`(`AgentCommand/AgentEvent/AgentLogEvent/AgentHeartbeatRequest/Response`),既有 `AgentRunRequest/AgentStatusResponse/TailRequest/TailResponse` 标 legacy。**【superseded-by `docs/refactor/00-redis-streams-agent-communication.md`;原"走 HTTP 网络协议下发 + server 轮询 /health"已废】** 行为参考：`baseview.py:285`(scrapydweb 对 scrapyd 是真 HTTP POST、dopilot 多一跳 agent)、`common.py:48-80`(scrapydweb 平台内部 fan-out 是进程内自调用、非远程推送) |
 
 ---
 
@@ -354,9 +358,9 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 
 ### 节点策略与推模式
 7. 「随机选一个」采用**动态随机**：每次触发从候选健康节点中随机选择。
-8. 节点选择默认过滤健康状态；第一版健康条件来自 server 轮询 agent `/health`，暂不引入复杂负载权重。
+8. 节点选择默认过滤健康状态；暂不引入复杂负载权重。**【superseded-by `docs/refactor/00-redis-streams-agent-communication.md`】**：第一版健康条件由「server 轮询 agent `/health`」改为「agent 主动 POST `/api/v1/agents/{agent_id}/heartbeat`，server 判 `healthy = now - nodes.last_seen_at <= heartbeat_timeout_seconds`」；`/health` 降级为容器本地 healthcheck。
 9. 稳定节点标识采用独立 `nodes` 表主键/唯一 `agent_id`；agent 启动传入容器重启不变的 `agent_id`。
-10. B-4 推模式对 Docker/脚本的 agent 侧 runner：脚本用 agent subprocess；Docker/K3s SDK 归 agent 侧，阶段 3 实作。server→agent 通道已锁定为 HTTP。
+10. B-4 推模式对 Docker/脚本的 agent 侧 runner：脚本用 agent subprocess；Docker/K3s SDK 归 agent 侧，阶段 3 实作。**【superseded-by `docs/refactor/00-redis-streams-agent-communication.md`】server→agent 通道锁定从 HTTP 改为 Redis Streams**：命令下发走 `command` stream（server `XADD` / agent consumer group 消费）、状态/日志走 `agent-events` / `logs` stream（agent `XADD` / server 消费）；仅 agent→server heartbeat 走 HTTP（`POST /api/v1/agents/{agent_id}/heartbeat`）。
 11. B-4「推模式」与 B-3「随机」共用同一 `POST /api/v1/executions/run` 即时推送端点：请求中传 `task_type`、候选节点、`node_strategy`，server 归约后下发。
 12. 多节点「全部执行」采用 server 侧受控并发下发；并发上限做成配置项，避免大集群时压垮 agent 或 PostgreSQL。
 
@@ -384,12 +388,14 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 
 ### 8.3 与日志 pull 模型的事务交叉（涉及）
 
+> **【superseded-by `docs/refactor/00-redis-streams-agent-communication.md`】本小节描述的「server 主动 pull / 轮询 status / cleanup API」链路已被通信重构反转。** 当前 v1 口径：日志由 **agent 经 `dopilot:server:logs` stream 主动 XADD 增量、server log consumer 消费后落盘**（取代 server pull agent tail）；执行状态由 **server event consumer 消费 `dopilot:server:agent-events` 的 `attempt.accepted/running/finished/failed/canceled/lost` 事件**驱动（取代 server 轮询 agent status API）；日志清理由 **server 向 `command` stream 投递 `cleanup_logs` command**（取代 server 调 agent cleanup HTTP API）。下列事务边界结论（正文不入 PG、offset 权威在 server、索引单行 UPDATE、与执行结果事务不相交）**仍成立**，只是触发方向从「server 拉」变为「agent 推 + server 消费」。详见 refactor 文档。
+
 日志链路的权威状态在 server（PG），正文不入库，因此与上面的执行结果事务**分表、分写路径**，互不阻塞：
 
 - **正文不入 PG**：日志正文写 server 本地文件 `/server-data/logs/YYYY/MM/{execution_id}/{attempt_id}.{stream}.log`（`stream=log` 时即 `{attempt_id}.log`）；PG 仅存索引表 `execution_log_files`（主键 `(execution_id, attempt_id, stream)`，列含 `storage_path/size_bytes/last_pulled_offset/final_offset/status/started_at/finished_at/retained_until/created_at/updated_at`）。这避免了把高频增量日志写进事务库造成的写放大与锁竞争。
-- **offset 权威在 server**：`last_pulled_offset` 在 PG；agent 无状态、无 ack/去重队列，重启后只要 `/agent-data` 的 `job.log` 还在，server 按 offset 继续拉。每次 pull 后**先落盘正文、再单行 UPDATE `last_pulled_offset`**（幂等：重复 pull 同一区间靠 offset 比对丢弃），是独立短事务，不与执行结果事务耦合。
-- **pull 频率与单实例**：active execution 后台 reconcile loop 每 `background_drain_interval_seconds=30` 低频 drain；打开 Web 日志窗口升到 `realtime_drain_interval_seconds=1`，关窗降回；结束做 final drain，单次最多 `max_tail_bytes_per_pull=262144`（256KB）。这些 loop 与 SSE fan-out 都在同一 server 单进程内，与单 APScheduler 实例共存——同属「不引入外部 fan-out 中间件」的单实例模型。
-- **状态机与索引写**：server 轮询 agent status API（不依赖 agent 回调）；`finished/failed/canceled → finalizing → final drain → EOF 稳定（默认 3s）或 hard timeout（30s）→ complete`，每次状态跃迁是对 `execution_log_files.status`（`active/finalizing/complete/missing/expired`）的单行 UPDATE。`complete` 后 server 调 agent cleanup API（`POST /executions/{attempt_id}/logs/cleanup`），agent 在 server final drain 完成前不得删 `job.log`，并有 TTL 兜底（completed 3 天 / orphan 7 天）。
+- **offset 权威在 server**：`last_pulled_offset` 在 PG，记录 server 已处理到的 agent 逻辑字节 offset（消费进度权威），重构后仍是最终落盘进度权威。**【superseded-by refactor】**：原「agent 无状态、无 ack 队列，server 按 offset 主动拉」改为「agent 维护本地 log outbox 按 offset 严格递增 `XADD` 到 `logs` stream，server 消费」；每次消费一段后**先落盘正文、再单行 UPDATE `last_pulled_offset`**（幂等：`offset < last_pulled_offset` 丢弃，`offset > last_pulled_offset` 标 `partial` 黏性 + 插 gap marker），是独立短事务，不与执行结果事务耦合。
+- **消费与单实例**（重构后取代「pull 频率」）：server log consumer 消费 `dopilot:server:logs` 的 agent 推送增量并落盘，drain/落盘节奏与 final drain（含 bounded drain 窗口）见 refactor 文档；server→web SSE fan-out 仍在同一 server 单进程内存完成，与单 APScheduler 实例共存。**约束收窄**：「不引入外部 fan-out 中间件」收窄为「不引入 Redis 做多实例 HA / 跨进程 fan-out / 分布式锁」，但**显式引入 Redis 作单实例 server↔agent 传输总线**；SSE 仍单进程内存 fan-out，不经 Redis。
+- **状态机与索引写**（重构后）：server **消费 `agent-events` 的 `attempt.*` 事件**（不再轮询 agent status API、不依赖 agent HTTP 回调）；`finished/failed/canceled → finalizing → final drain → EOF 稳定（默认 3s）或 hard timeout（30s）→ complete`，每次状态跃迁是对 `execution_log_files.status`（`active/finalizing/complete/missing/expired`）的单行 UPDATE，另由独立 `log_integrity` 列（`complete/partial/missing/expired`）表达日志完整性（业务状态与日志完整性分离，日志 RPO≠0）。`complete` 后 server **向 `command` stream 投递 `cleanup_logs` command**（不再调 agent cleanup HTTP API），agent 在 server final drain 完成前不得删 `job.log`，并有 TTL 兜底（completed 3 天 / orphan 7 天）。
 - **备份边界**：因正文在卷、索引在 PG，备份必须**同时覆盖 PostgreSQL + `/server-data/logs` 卷**，否则索引与正文不一致。
 
-> 详尽日志链路 spec 见 `03`/realtime-logs 文档与决策 #11；本节只点明它与调度/推模式的事务边界**不相交**（不同表、不同写路径），以及它同样落在「server 单实例、HTTP pull、无 WebSocket、无外部 fan-out」的统一模型下。
+> 详尽日志链路 spec 见 `03`/realtime-logs 文档与决策 #11；通信重构口径以 `docs/refactor/00-redis-streams-agent-communication.md` 为准。本节只点明它与调度/推模式的事务边界**不相交**（不同表、不同写路径），以及它同样落在「server 单实例、agent 经 Redis 推 + server 消费、无 WebSocket、SSE 单进程内存 fan-out」的统一模型下（不再是「HTTP pull」）。

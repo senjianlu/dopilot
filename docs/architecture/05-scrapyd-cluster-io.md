@@ -457,6 +457,8 @@ Poll 子进程 (每 POLL_ROUND_INTERVAL，默认 300s)
 ## 9. 与 dopilot 新执行器的关系（改造建议）
 
 > 本节均为 **【改造】 / 【开放问题】**，是设计意见而非现有实现。dopilot 要把「节点」从 scrapyd-only 扩展为三类被调度对象：① scrapy 爬虫（经 scrapyd，现状）；② Docker 常驻爬虫；③ Python3 一次性脚本。
+>
+> **【已被通信重构取代 · superseded-by】** 本节 §9.3（推模式下发）、§9.4（实时日志流）、§9.5（节点寻址）涉及 server↔agent 通信方向的 dopilot 口径，以 [`../refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md) 为准（破坏性、无双轨）：server→agent 不再走「直连 agent HTTP / 进程内自调用」主路径，改为 server `XADD` 命令到 Redis Streams、agent 主动 consumer group 消费；实时日志由 agent 主动 `XADD` 到 Redis log stream、server 消费落盘 + SSE 推 Web，删除 server pull agent tail 与 `AgentTailLogSource` 主路径；节点健康来源由轮询 agent `/health` 翻转为 agent 主动 POST heartbeat 写 `nodes.last_seen_at`。§9.1/§9.2/§9.6 的 Executor 抽象与节点选择策略框架不变。
 
 ### 9.1 引入「执行后端（Executor）」抽象层
 
@@ -496,34 +498,37 @@ dispatch ──┤─ type=docker  ─▶ DockerExecutor   → docker SDK / work
 
 **现状**：push 实现是 APScheduler 线程里 `get_response_from_view` 进程内自调用 `/N/schedule/task/`（`execute_task.py:88`）。
 
-**建议**：dopilot 全新复刻这一入口模式的行为语义，但对 docker/script 节点把「进程内自调用 scrapyd 视图」改为「调用 worker agent 的下发 API」。外部触发（如 RemoteTrigger/PushNotification 一类机制）可统一挂到同一个 Executor 入口，沿用其重试/落库行为语义。
+**建议**：dopilot 全新复刻这一「立即下发到指定节点」的入口语义，但**下发通道不是 server→agent 的直连下发 API**：server 在同一 PG 事务内写 execution/attempt/`command_outbox`，再由 command dispatcher `XADD` `run` 命令到目标 agent 的 Redis 命令 stream（`dopilot:agent:{agent_id}:commands`），agent 主动 consumer group 消费并启动任务。这是 `BaseExecutor.run_on_node` 的最终形态（由 POST /run 改为 XADD command），跨 scrapy/docker/script 统一。外部触发（如 RemoteTrigger/PushNotification 一类机制）统一挂到同一 Executor 入口，沿用 outbox 的 at-least-once / 重试 / 落库语义。详见 [`../refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md)。
 
 | 触点（行为参考） | 文件 | 说明 |
 | --- | --- | --- |
-| 下发执行器 | `execute_task.py`（`TaskExecutor`） | dopilot 全新实现统一入口；按 node.type 选择下发协议 |
-| 进程内自调用 | `common.py:48-80`（`get_response_from_view`） | scrapyd 走同语义自调用；docker/script 改为 agent API 调用 |
+| 下发执行器 | `execute_task.py`（`TaskExecutor`） | dopilot 全新实现统一入口；`run_on_node` 由直连下发改为写 `command_outbox` + dispatcher `XADD` 命令 |
+| 进程内自调用 | `common.py:48-80`（`get_response_from_view`） | scrapyd 现状靠进程内自调用；dopilot 三类任务统一改为「server XADD 命令 + agent 主动消费」，不保留 server→agent 直连下发主路径 |
 
 ### 9.4 实时日志流
 
 **现状**：`utf8_realtime` / `url_refresh` 走 JS `location.reload`（`log.py:349-355, 370-376`）+ 后台 Poll 周期拉取，**非流式**。
 
-**建议**：为 docker/常驻进程接入真正的流式通道——新增 SSE 流式端点（dopilot v1 见决策#11；v1 不引入 WebSocket）或 `docker logs --follow`，新增一个流式 `LogView`/端点替代 reload 轮询；scrapy 部分仍可走现有 logparser 拉取。
+**建议**：dopilot v1（决策#11）实时日志走 **Redis log stream**，回流方向由「server pull agent tail」翻转为「agent push」：agent 主动 tail 本地日志并 `XADD` 字节增量（base64，带 offset/size_bytes/eof）到 `dopilot:server:logs`，server 的 log consumer 消费后把正文写 `/server-data/logs`、把索引/offset/状态写 PG，再经 **server→web SSE** 推 Vue（第一版不引入 WebSocket）。`LogSource` 抽象保留、缝不变，实现由 `AgentTailLogSource` 换为 `RedisLogSource`；不再保留 server 主动调用 agent `/logs/tail` 的 pull 主路径。日志 RPO≠0（server 长停或 Redis 裁剪致 partial）为已接受行为，与业务状态分离。详见 [`03-gap-realtime-logs.md`](../dopilot/03-gap-realtime-logs.md) 与 [`../refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md)。
 
 | 触点 | 文件 | 说明 |
 | --- | --- | --- |
-| 日志视图 | `scrapydweb/views/files/log.py`（`utf8_realtime`/`url_refresh`） | 新增流式端点 |
-| 后台拉取 | 行为参考：`scrapydweb/utils/poll.py` | docker/script 任务无 scrapy 日志格式，dopilot 需另设解析/统计路径（logparser 行为不适用于此，§8.5） |
+| 日志视图 | `scrapydweb/views/files/log.py`（`utf8_realtime`/`url_refresh`） | dopilot 改为 server→web SSE 端点，日志体经 Redis log stream 回流后落盘再推送 |
+| 后台拉取 | 行为参考：`scrapydweb/utils/poll.py` | docker/script 任务无 scrapy 日志格式，dopilot 需另设解析/统计路径（logparser 行为不适用于此，§8.5）；日志体本身由 agent 主动 `XADD` 推送，不再由 server 轮询拉取 |
 
 ### 9.5 节点配置结构扩展（类型/能力/凭证）
 
 **现状**：节点元数据被拆成 4 个等长 list，用 `node-1` 索引访问（`check_app_config.py:392-395`、`baseview.py:193-197`），且 node 编号随排序漂移（§3.3）。
 
-**建议**：dopilot 不沿用 scrapydweb 的「4 个并行 list + `node-1` 下标」结构，而在 `apps/` 下全新设计为 `list[dict]`（每节点一个对象）或 DB 表，每节点对象携带 `type` / `labels` / `docker-endpoint` / `agent-url` / 凭证等字段。否则字段越加越难维护，且寻址脆弱性会随节点种类增多而放大。
+**建议**：dopilot 不沿用 scrapydweb 的「4 个并行 list + `node-1` 下标」结构，而在 `apps/` 下全新设计为 `list[dict]`（每节点一个对象）或 DB 表（`nodes`），每节点对象携带 `type` / `labels` / `docker-endpoint` / `agent-url` / 凭证等字段。否则字段越加越难维护，且寻址脆弱性会随节点种类增多而放大。
+
+**节点健康叠加（通信重构）**：`node_strategy` 的三态语义不变，但寻址/选择在其上**叠加 heartbeat 健康过滤**。健康来源由「server 轮询 agent `/health`」翻转为「agent 主动 POST `/api/v1/agents/{agent_id}/heartbeat` 写 `nodes.last_seen_at`」，server 以 `healthy = now - nodes.last_seen_at <= heartbeat_timeout_seconds` 判健康；下发只选健康节点，heartbeat 超时即使 Redis 可用也不投新任务。agent `/health` 降级为容器本地 healthcheck，不再作 server 节点发现/健康来源。详见 [`../refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md)。
 
 | 触点（行为参考） | 文件:位置 | 说明 |
 | --- | --- | --- |
-| 配置解析 | `check_app_config.py:360-395`（`check_scrapyd_servers`） | dopilot 全新实现：输出结构从 4 list → list[dict] / DB |
+| 配置解析 | `check_app_config.py:360-395`（`check_scrapyd_servers`） | dopilot 全新实现：输出结构从 4 list → list[dict] / DB（`nodes` 表） |
 | 取值 | `baseview.py:189-197`（`__init__`） | dopilot 全新实现：从对象/表取值，建议用稳定主键替代整数下标 |
+| 健康判定 | scrapydweb 现状靠连通性检查 / poll | dopilot：以 `nodes.last_seen_at`（agent heartbeat 写入）+ `heartbeat_timeout_seconds` 判健康，叠加进 `node_strategy` 选择 |
 
 ### 9.6 i18n（中文）
 
