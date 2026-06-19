@@ -172,13 +172,15 @@ dopilot 的目标是在这套现成框架上扩展出三类被调度对象（Scr
 
 ### dopilot 需复刻的行为面一览
 
+> **【已被通信重构取代 · superseded-by】** 本表「实时日志流」与「推模式下发」两行的 dopilot 实现口径，以 [`../refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md) 为准：server→agent 改为 server `XADD` 命令到 Redis Streams、agent 主动消费；实时日志改为 agent 主动 `XADD` 日志增量到 Redis log stream、server 消费后落盘 + SSE 推 Web，不再由 server 主动 pull agent tail。其余行不受影响。
+
 | 需求 | 现状（事实） | 对应行为所在的 scrapydweb 参考文件（dopilot 在 apps/ 全新复刻） |
 | --- | --- | --- |
 | 三类被调度对象 | 全部硬编码假定下游是 scrapyd `*.json` | `views/api.py`、`baseview.make_request`、`execute_task.py`（抽象 Executor 接口：Scrapyd/Docker/Script） |
-| 实时日志流 | **非真流式**：整段抓取 + 前端定时 reload | `views/files/log.py`（新增 SSE 流式端点（dopilot v1 见决策#11；v1 不引入 WebSocket）） |
+| 实时日志流 | **非真流式**：整段抓取 + 前端定时 reload | dopilot v1（决策#11）：日志回流走 **Redis log stream**——agent 主动 `XADD` 增量到 `dopilot:server:logs`，server 消费后正文落 `/server-data/logs`、索引/offset/状态落 PG，再经 **server→web SSE** 推 Vue（不引入 WebSocket）；`LogSource` 抽象保留，实现由 `AgentTailLogSource` 换 `RedisLogSource`。详见 [`../refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md) |
 | 定时 cron/interval | APScheduler 原生支持，但 UI/后端**硬编码 cron** | `schedule.py`（`update_data_for_timer_task`/`update_kwargs`）+ `Task` 模型 + 表单 |
 | 节点选择策略 | 已有"指定节点全部执行"；**无"随机一个"** | `baseview.get_selected_nodes`、`execute_task.TaskExecutor.main`、`Task` 加 `node_strategy` 字段 |
-| 推模式下发 | 已有雏形（定时器进程内自调用），但**是本机代理转发**非真分布式 | `execute_task.TaskExecutor.schedule_task`（替换为对远程 worker agent 的真实下发） |
+| 推模式下发 | 已有雏形（定时器进程内自调用），但**是本机代理转发**非真分布式 | dopilot：server 在同一 PG 事务写 execution/attempt/`command_outbox`，再由 dispatcher `XADD` `run` 命令到 `dopilot:agent:{agent_id}:commands`，agent 主动消费启动（即 `BaseExecutor.run_on_node` 由 POST /run 改为 XADD command）；**不再走 server→agent 直连 HTTP 下发**。详见 [`../refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md) |
 | i18n（中文） | **完全缺失**：无 Flask-Babel，文案硬编码英文（模板 + JS） | dopilot i18n 走**前端 vue-i18n**(`apps/web`,见 `../dopilot/04-gap-i18n.md`),**不接 Flask-Babel/后端 gettext** |
 | 真实用户体系 | 单账号全有/全无，无 session/角色，账号明文存 Metadata | `run.py:require_login` + `common.authenticate`，需同步内部互调凭证 |
 

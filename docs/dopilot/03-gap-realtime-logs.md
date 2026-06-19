@@ -2,8 +2,10 @@
 
 > **【scrapydweb 参考边界】** scrapydweb 仅作**功能层/行为参考**与**测试 oracle**；其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 的设计依据**。dopilot 为 greenfield、按 `apps/`+`packages/` 自有领域 structure-first 设计（权威布局见 `05-dev-setup-and-known-issues.md` §1），**不对 scrapydweb 做改名/git mv**。详见 `00-requirements.md` 决策表。
 >
-> 本文区分「现状事实」（基于 scrapydweb 参考基线源码核实，标注 `file:line`——**这些路径相对 `reference/scrapydweb/`，是行为参考引用，不是 dopilot 源码位置**）与「改造建议 / 开放问题」。实时日志能力由 dopilot 全新实现，采用 **server 主动 pull 模型**：agent 提供 HTTP 的 **tail / status / cleanup** API（无状态、不主动推送）；server 端的 reconcile loop 按需从 agent tail API **拉取**日志增量，`LogSource` 抽象在 `apps/server/dopilot_server/`（`logs/`、`api/v1/`）保留但**传输由 server pull 驱动**；server 把日志正文写入本地文件卷 `/server-data/logs`，把索引 / offset / 状态写入 **PostgreSQL**（`execution_log_files` 表，PG 不存正文），并通过 **SSE** 单向推给 Vue SPA（原生 `EventSource`）。跨进程协议在 `packages/protocol/`，配置在 `configs/`（toml）。
-> 第一版**完全不使用 WebSocket、agent 不主动推 chunk、不做 chunk 序号 ack 协议**（决策 #11）。
+> **【已被通信重构取代 / superseded】** 本文 dopilot 侧的「server 主动 pull 调 agent tail/status/cleanup」日志模型已被 `docs/refactor/00-redis-streams-agent-communication.md` 翻案：日志由 **agent 经 Redis log stream（`dopilot:server:logs`）主动推增量，server 消费后落盘**，`LogSource` 抽象保留但实现由 `AgentTailLogSource` 换为 `RedisLogSource`。本文 dopilot 段已据该 refactor 同步；scrapydweb 现状事实（§1、§2「现状对接」、§6「为什么是缺口」依据、文末「scrapydweb 行为参考」）为行为参考，不随重构改动。细节以该 refactor 文档为准。
+>
+> 本文区分「现状事实」（基于 scrapydweb 参考基线源码核实，标注 `file:line`——**这些路径相对 `reference/scrapydweb/`，是行为参考引用，不是 dopilot 源码位置**）与「改造建议 / 开放问题」。实时日志能力由 dopilot 全新实现，采用 **agent 经 Redis log stream 主动推、server 消费落盘** 模型：agent tail 本地日志并 `XADD` 到 `dopilot:server:logs`（base64 字节，带 `offset`/`size_bytes`/`eof`）；server 端的 log consumer 消费该 stream，按 offset 落盘并更新 PG，`LogSource` 抽象在 `apps/server/dopilot_server/`（`logs/`、`api/v1/`）保留但**数据源由 Redis log stream 驱动**（实现为 `RedisLogSource`）；server 把日志正文写入本地文件卷 `/server-data/logs`，把索引 / offset / 状态写入 **PostgreSQL**（`execution_log_files` 表，PG 不存正文），并通过 **SSE** 单向推给 Vue SPA（原生 `EventSource`）。跨进程协议在 `packages/protocol/`，配置在 `configs/`（toml）。
+> 第一版**仍完全不使用 WebSocket、server→web 仍单向 SSE、正文仍落 `/server-data/logs`、PG 仍只存索引/offset/状态**（决策 #11 的四不变量）。日志 **RPO≠0**：server 长停或 Redis log stream 超出保留窗口会导致日志缺片（`log_integrity=partial`），业务执行状态收敛与日志完整性分离，缺片不阻塞 attempt 进入 terminal。
 > 目标：为三类被调度对象（Scrapy/scrapyd 爬虫、Docker 常驻爬虫、Python 一次性脚本）提供统一的**真·实时日志流**。
 
 ---
@@ -12,15 +14,15 @@
 
 | 维度 | 现状事实 | 改造方向 |
 | --- | --- | --- |
-| 传输方式 | 整段拉取 + 前端 `location.reload(true)` 硬刷新，注释自承「SLOW」 | **server 主动 pull**：server 调 agent HTTP tail API 拉日志增量；server→web 使用 SSE 推给浏览器（agent 不主动推、无 WebSocket） |
-| 读取方式 | 一次性全量 `f.read()` / 整段 GET，无 tail/offset/follow | 增量 tail（agent 按 offset 返回增量，offset 权威在 server 的 PG `last_pulled_offset`） |
-| scrapyd 日志 | 「伪实时」支持（唯一支持的执行器） | 复用文件源，包一层增量 tail |
+| 传输方式 | 整段拉取 + 前端 `location.reload(true)` 硬刷新，注释自承「SLOW」 | **agent 经 Redis log stream 主动推增量**（`dopilot:server:logs`，base64 字节），server 消费后落盘；server→web 仍使用 SSE 推给浏览器（无 WebSocket） |
+| 读取方式 | 一次性全量 `f.read()` / 整段 GET，无 tail/offset/follow | agent tail 本地日志按 byte offset 增量 `XADD`，server consumer 按 `offset == last_pulled_offset` 追加；offset 消费进度权威在 server PG `last_pulled_offset` |
+| scrapyd 日志 | 「伪实时」支持（唯一支持的执行器） | 复用文件源，agent 侧 tail `job.log` 增量推到 log stream |
 | Docker stdout | **零支持** | 新增 `DockerLogSource`（docker SDK / `docker logs -f`） |
 | Python 脚本 stdout | **零支持**（无 job 概念、无落盘位置） | stdout 重定向落盘 + 文件 tail |
 | 日志源抽象 | 参考基线无此抽象，`LogView` 硬编码 scrapyd URL/本地文件 + logparser | dopilot 从零实现 `LogSource` 抽象层（三类执行器统一接口，canon phase0/1 三大 seam 之一） |
 | 运行环境 | Werkzeug dev server（threaded），无 SSE/WS 设施，`.venv` 无相关依赖 | dopilot 使用 FastAPI/ASGI；**单容器 + uvicorn workers=1 + 单 APScheduler 实例**（不支持多副本/多 worker，未来也不做），承载 server→web SSE 长连接 |
 
-**推荐**：以「**server pull（调 agent tail/status/cleanup API）+ server 本地文件存正文 + PostgreSQL 存索引/offset/状态（`execution_log_files`）+ server→web SSE + LogSource 抽象层**」为主线，分两步走（先 scrapyd + 脚本，再补 Docker），并务必**先落地 dopilot 自有的 `LogSource` 抽象**（在 `apps/server/dopilot_server/logs/` 从零实现统一接口，各 executor/runner 接其上），避免三类执行器分别实现取数主流程。
+**推荐**：以「**agent 经 Redis log stream 主动推（server log consumer 消费）+ server 本地文件存正文 + PostgreSQL 存索引/offset/状态/完整性（`execution_log_files`，新增 `log_integrity` 列）+ server→web SSE + LogSource 抽象层**」为主线，分两步走（先 scrapyd + 脚本，再补 Docker），并务必**先落地 dopilot 自有的 `LogSource` 抽象**（在 `apps/server/dopilot_server/logs/` 从零实现统一接口，实现为 `RedisLogSource`，各 executor/runner 接其上），避免三类执行器分别实现取数主流程。任务结束检测改为 server **消费 `attempt.*` 状态事件**（见 `00-redis-streams-agent-communication.md`），不再轮询 agent status API。
 
 ---
 
@@ -134,7 +136,7 @@ self.stats = parse(self.text)
 | `make_request` 仅 `session.get(url, ..., timeout)`，**无 `stream=True` / `iter_lines`** | `baseview.py:285-308` |
 | 全局连接池 session（`pool_connections/maxsize=1000`）+ `basic_auth_header` 凭证 | `common.py:18-20,54` |
 
-**结论**：参考基线对三类执行器只有 scrapyd 文件这一种被「伪实时」支持，Docker 与脚本**完全无日志通道**。dopilot 要做统一的真·实时日志流，需在 `apps/server`（reconcile pull loop + agent tail/status/cleanup 客户端、SSE 端点 + `LogSource` 抽象、本地正文落盘 + PG 索引）与 `apps/agent`（tail/status/cleanup HTTP API、脚本/容器 stdout 采集落盘）从零实现。
+**结论**：参考基线对三类执行器只有 scrapyd 文件这一种被「伪实时」支持，Docker 与脚本**完全无日志通道**。dopilot 要做统一的真·实时日志流，需在 `apps/server`（log consumer 消费 `dopilot:server:logs` + `LogSource`/`RedisLogSource` 抽象、本地正文落盘 + PG 索引/完整性、SSE 端点）与 `apps/agent`（log publisher：tail 本地日志并 `XADD` 到 log stream；脚本/容器 stdout 采集落盘）从零实现。
 
 ---
 
@@ -167,17 +169,18 @@ self.stats = parse(self.text)
 
 ```text
 server 生成 execution_id/attempt_id
-  -> server 选择健康 node 并 push 给 dopilot-agent
-  -> agent 调本机 scrapyd /schedule.json
+  -> server 同事务写 execution/attempt/command_outbox，dispatcher XADD run command 到 dopilot:agent:{agent_id}:commands
+  -> agent consumer group 消费 run command（attempt_id 幂等），调本机 scrapyd /schedule.json
   -> scrapyd 启动 scrapy process 并写 job.log
   -> agent 建立 execution_id -> scrapyd job_id -> job.log 路径映射（落 /agent-data/state/executions/{attempt_id}.json）
-  -> server reconcile loop 按 offset 调 agent tail API 拉增量（无窗 30s / 开窗 1s）
+  -> agent log publisher tail job.log，按 byte offset 增量 XADD 到 dopilot:server:logs（base64 字节，带 offset/size_bytes/eof）
+  -> server log consumer 消费该 stream，按 offset == last_pulled_offset 追加；offset gap 则插入 gap marker 并标 log_integrity=partial
   -> server 写正文到 /server-data/logs/.../{attempt_id}.{stream}.log
-  -> server 更新 PG execution_log_files（last_pulled_offset/size_bytes/status...），并 SSE 推给 Vue
-  -> server 轮询 agent status API 检测结束 -> finalizing -> final drain -> complete -> 调 agent cleanup API
+  -> server 更新 PG execution_log_files（last_pulled_offset/size_bytes/status/log_integrity...），并 SSE 推给 Vue
+  -> server 消费 attempt.* 事件检测结束 -> finalizing -> bounded drain -> complete -> XADD cleanup_logs command
 ```
 
-关键点：Scrapy 进程由 scrapyd 启动，agent 不强行 attach scrapy 子进程 stdout；最稳定的日志源是本机 scrapyd 产出的 `job.log`。scrapy/scrapyd 只产生 **stream=log**（单一 `job.log`，不天然拆 stdout/stderr）。**offset 权威在 server**（PG `last_pulled_offset`）；agent 无状态、无 ack/去重队列；agent 重启后只要 `/agent-data` 的 job.log 还在，server 按 offset 继续拉。典型路径由 agent 配置管理，例如：
+关键点：Scrapy 进程由 scrapyd 启动，agent 不强行 attach scrapy 子进程 stdout；最稳定的日志源是本机 scrapyd 产出的 `job.log`。scrapy/scrapyd 只产生 **stream=log**（单一 `job.log`，不天然拆 stdout/stderr）。**消费进度 offset 权威在 server**（PG `last_pulled_offset`，记 agent 逻辑字节 offset）；日志由 agent 端单一顺序生产者按 offset 严格递增 `XADD`（含 outbox 重放也按 offset 排序），server 对同一 attempt 串行处理避免虚假 gap。日志字节 offset gap → `partial` 黏性完整性标记（不会因后续连续自动恢复 `complete`）；重复片段（`offset < last_pulled_offset`）丢弃。agent 重启后只要 `/agent-data` 的 job.log 还在，log publisher 按本地进度继续从 job.log 增量推。典型路径由 agent 配置管理，例如：
 
 ```text
 /agent-data/scrapyd/logs/{project}/{spider}/{job}.log
@@ -187,43 +190,44 @@ server 生成 execution_id/attempt_id
 
 ---
 
-## 3. 已锁定架构：server pull + 本地正文 + PG 索引 + SSE
+## 3. 已锁定架构：agent Redis log stream 推 + server 消费落盘 + PG 索引 + SSE
 
-> 传输模型已在决策 #11 锁定，**不再做 WebSocket / 多方案选型**：server 主动 pull，agent 提供无状态 HTTP API，server→web 单向 SSE。本节描述该锁定架构的组件与参数；下面保留的「曾考虑过的传输形态」仅作历史背书，不是待选项。
+> 传输模型在决策 #11 + 通信重构（`docs/refactor/00-redis-streams-agent-communication.md`）下锁定，**不再做 WebSocket / 多方案选型**：agent tail 本地日志并经 Redis log stream（`dopilot:server:logs`）主动 `XADD` 增量，server log consumer 消费后落盘，server→web 仍单向 SSE。四个不变量保持：第一版不用 WebSocket、server→web SSE、正文落 `/server-data/logs`、PG 只存索引/offset/状态。本节描述该锁定架构的组件与参数；下面保留的「曾考虑过的传输形态」仅作历史背书，不是待选项。
 
-核心抽象 **`LogSource`** 接口保留（统一三类执行器的取数语义），但**传输由 server pull 驱动**，`iter_incremental()` 的数据来源是「server 调 agent tail API 拉回的增量」而非「agent 主动推来的流」：
+核心抽象 **`LogSource`** 接口保留（统一三类执行器的取数语义），但**数据源由 Redis log stream 驱动**（实现为 `RedisLogSource`），`iter_incremental()` 的数据来源是「server log consumer 从 `dopilot:server:logs` 消费、按 offset 落盘后的增量」而非「server 调 agent tail API 拉回的增量」：
 
 ```
-LogSource (抽象基类，server 侧)
+LogSource (抽象基类，server 侧；实现 RedisLogSource)
   ├─ open(execution_id, attempt_id, stream)
-  ├─ iter_incremental()  -> 增量行迭代器（数据来自 server pull 回的 tail 响应）
+  ├─ iter_incremental()  -> 增量行迭代器（数据来自 server 消费 Redis log stream 后落盘的增量）
   └─ close()
-       实现：
-       ├─ ScrapydFileLogSource  经 agent tail API 按 offset 拉 job.log（stream=log）
-       ├─ DockerLogSource       经 agent tail API 拉容器 stdout/stderr 落盘文件
-       └─ ScriptLogSource       经 agent tail API 拉脚本 stdout/stderr 落盘文件
+       实现（数据源统一为 server 消费 dopilot:server:logs 后落盘的本地正文）：
+       ├─ ScrapydFileLogSource  agent tail job.log（stream=log）XADD，server 消费落盘
+       ├─ DockerLogSource       agent tail 容器 stdout/stderr 落盘文件 XADD，server 消费落盘
+       └─ ScriptLogSource       agent tail 脚本 stdout/stderr 落盘文件 XADD，server 消费落盘
 ```
 
-> 落点（dopilot 自有结构，不复用 scrapydweb 的 `utils/` 目录划分）：`LogSource` 抽象与各 source 的 server 侧归 `apps/server/dopilot_server/logs/`（如 `source.py`、`reconcile.py`）；agent tail/status/cleanup API 与采集侧归 `apps/agent/dopilot_agent/logs/`；跨进程协议（tail/status/cleanup 请求响应 schema）归 `packages/protocol/`。参考基线中无此抽象与实现，dopilot 从零新建。
+> 落点（dopilot 自有结构，不复用 scrapydweb 的 `utils/` 目录划分）：`LogSource`/`RedisLogSource` 抽象与各 source 的 server 侧归 `apps/server/dopilot_server/logs/`（如 `source.py`），log consumer 与 Redis 基础设施归 `apps/server/dopilot_server/redis/`；agent log publisher 与采集侧归 `apps/agent/dopilot_agent/logs/`，agent Redis 客户端/publisher 归 `apps/agent/dopilot_agent/redis/`；跨进程消息 schema（`AgentLogEvent` 等）归 `packages/protocol/dopilot_protocol/streams.py`。参考基线中无此抽象与实现，dopilot 从零新建。
 
-### 3.1 agent HTTP API（无状态，server 拉）
+### 3.1 agent log publisher + 命令 / 事件（agent 主动经 Redis）
 
-agent **不主动推、不维护 ack/去重队列**，只提供以下 HTTP 端点供 server 调用：
+agent **主动**向 Redis 推日志与状态、主动消费命令，不再提供 server 拉的 tail/status/cleanup 主路径 HTTP API（`AgentTailLogSource` 主路径删除）：
 
-| 端点 | 作用 | 关键 |
+| 通道 | 方向 | 关键 |
 | --- | --- | --- |
-| `GET /logs/tail?execution_id&attempt_id&stream&offset` | 返回从 offset 起的增量 | 响应 `{start_offset, end_offset, content, eof, finished}`；单次最多 `max_tail_bytes_per_pull=262144`（256KB） |
-| status API | server 轮询任务是否结束 | 返回 running/finished/failed/canceled（**结束检测不依赖 agent 回调**） |
-| `POST /executions/{attempt_id}/logs/cleanup` | server 标记 complete 后通知 agent 删 job.log | agent 在 server final drain 完成前**不得**删 job.log |
+| `dopilot:server:logs`（log publisher `XADD`） | agent → server | 增量日志事件，base64 字节，带 `offset`/`size_bytes`/`eof`；同一 attempt 单一顺序生产者按 offset 严格递增发布 |
+| `dopilot:server:agent-events`（status publisher `XADD`） | agent → server | `attempt.accepted/running/finished/failed/canceled/lost`；server 据 terminal 事件检测结束（**不再轮询 agent status API**） |
+| `dopilot:agent:{agent_id}:commands`（consumer group 消费） | server → agent | `run` / `stop`（带 `intent`）/ `cleanup_logs`；`cleanup_logs` 替代旧 cleanup HTTP，按 `attempt_id` 幂等，server bounded drain 完成前不发 |
 
-agent 重启从 `/agent-data/state/executions/{attempt_id}.json` 恢复 `execution_id ↔ scrapyd job_id ↔ log_path` 映射；TTL 兜底删除（completed 3 天 / orphan 7 天）。
+agent log publisher 在 `XACK` / outbox 语义下保证日志至少一次到达 Redis；`eof=true` 日志事件作清理优化信号但非清理前置条件。agent 重启从 `/agent-data/state/executions/{attempt_id}.json` 恢复 `execution_id ↔ scrapyd job_id ↔ log_path` 映射并续推；TTL 兜底删除（completed 3 天 / orphan 7 天）。agent `/health` 降级为容器本地 healthcheck，不再作 server 节点发现/健康来源（健康改由 agent 主动 POST heartbeat、server 以 `last_seen_at` 判定）。
 
-### 3.2 server reconcile pull loop
+### 3.2 server log consumer + reconcile
 
-- **拉取频率**：active execution 后台 reconcile loop 每 `background_drain_interval_seconds=30` 低频 drain；打开 Web 日志窗口该 execution 升到 `realtime_drain_interval_seconds=1`；关窗降回低频；任务结束做 **final drain**。
-- **offset 权威在 server**：每次 tail 带 PG `last_pulled_offset`，拉回后推进 offset 并落 PG；agent 无状态。
-- **结束检测**：server 轮询 agent status API（不依赖 agent 回调）。`finished/failed/canceled` → `finalizing` → final drain → **EOF 稳定（默认 3s）或 hard timeout（30s）→ complete**，随后调 agent cleanup API。
-- **多窗复用**：多窗口看同一 execution 复用**一个 pull loop + SSE fan-out**，不重复打开 N 个拉取循环。
+- **消费驱动**：server log consumer 持续从 `dopilot:server:logs` 消费日志事件并落盘，不再按窗口频率拉取；agent 侧推送频率与窗口解耦（agent 始终增量推）。Web 开窗只影响 server→web SSE fan-out 是否对该 execution 推送，不再驱动 server→agent 拉取频率升降。
+- **offset 处理**：server 只追加 `offset == last_pulled_offset` 的片段并推进 `last_pulled_offset = offset + size_bytes`；`offset < last_pulled_offset` 丢弃；`offset > last_pulled_offset` 视为缺片 → 插入可见 gap marker、记 expected/actual offset、标 `log_integrity=partial`（黏性）后写入。`last_pulled_offset` 记 agent 逻辑字节进度，`final_offset` 记 server 文件物理大小（含 gap marker）。
+- **结束检测**：server **消费 `attempt.*` 状态事件**（不再轮询 agent status）。收到 terminal 事件 → `finalizing` → 进入 **bounded drain 窗口**（`log_drain_timeout_seconds`，默认 30s）消费当前可见日志事件落盘 → drain timeout 或 `eof` 信号 → `complete`（并把 `log_integrity` 收口为 `complete`/`partial`），随后 `XADD cleanup_logs` command。
+- **多窗复用**：多窗口看同一 execution 复用**一个 log consumer 落盘 + 单进程内存 SSE fan-out**，不重复打开 N 个消费/广播循环。
+- **消费幂等/恢复**：log consumer 用 consumer group 消费、按 offset 去重，`XACK` 已处理消息；server 重启后从 pending / 未 ack 处续消费，仍按 offset 收敛。
 
 ### 3.3 server→web SSE
 
@@ -233,37 +237,40 @@ agent 重启从 `/agent-data/state/executions/{attempt_id}.json` 恢复 `executi
 
 ### 3.4 曾考虑过的传输形态（历史背书，非待选项）
 
-第一版**不采用**以下形态，仅记录为何 pull 模型胜出：
+> **【superseded 注】** 早期曾锁定「server 主动 pull 调 agent tail/status/cleanup」为 agent→server 日志主路径；通信重构（`docs/refactor/00-redis-streams-agent-communication.md`）已破坏性翻案为「agent 经 Redis log stream 主动推、server 消费」。以下记录各形态取舍，**当前胜出形态是 Redis log stream 推**。
 
-- **agent→server WebSocket / agent 主动推 chunk / chunk 序号 ack**：已废弃。pull 模型让 agent 无状态、offset 权威集中在 server，agent 重启即可按 offset 续拉，免去推流连接管理、ack/去重与背压。
-- **浏览器直连 WebSocket**：浏览器只读日志不需要双向；SSE 更简单、原生自动重连，且 server 单实例下足够。
-- **节点 agent 推流 + 中心 pub/sub 聚合**：dopilot **单容器 + uvicorn workers=1 + 单 APScheduler 实例**，不支持多副本/多 worker 且未来也不做，因此**不引入 Redis/NATS/PG LISTEN-NOTIFY fan-out**；SSE fan-out 在单进程内存内完成。
+第一版**不采用**以下 agent→server 日志形态：
+
+- **server pull 调 agent tail/status/cleanup HTTP（旧主路径）**：已废弃。曾因「agent 无状态、offset 权威集中在 server」入选，但要求 server 主动可达每个 agent、调度/状态/日志全耦合在 agent HTTP 可达性上、缺统一消息语义；重构后改为 agent 主动经 Redis 推，server 不再主动连 agent。
+- **agent→server WebSocket / chunk 序号双向 ack**：仍不采用。Redis log stream 已提供 at-least-once 传输与 byte offset 语义，server 侧按 offset 去重/补 gap，无需自建推流连接管理与背压。
+- **浏览器直连 WebSocket**：浏览器只读日志不需要双向；server→web 仍用 SSE，更简单、原生自动重连，且 server 单实例下足够。
+- **引入 Redis 做多副本 HA / fan-out / 分布式锁**：仍不采用。Redis 在 dopilot 仅作**单实例 server↔agent 通信总线**（消息传输，非业务持久化），**不**用于多副本 active-active、跨进程 fan-out 或分布式锁；server→web SSE fan-out 仍在**单进程内存**内完成。**不引入 NATS / PG LISTEN-NOTIFY** 做 fan-out。单容器 + uvicorn workers=1 + 单 APScheduler 实例的硬约束不变。
 
 ---
 
 ## 4. 落地方案（分两步走）
 
-> 以**锁定架构（server pull 调 agent tail/status/cleanup API + server 本地正文 + PG `execution_log_files` 索引 + server→web SSE + LogSource 抽象层）为主线**，先做 scrapyd 与 Python 脚本两类，再补 Docker。dopilot-agent 阶段 1 即落地。
+> 以**锁定架构（agent 经 Redis log stream 主动推 + server log consumer 消费落盘 + server 本地正文 + PG `execution_log_files` 索引/`log_integrity` + server→web SSE + LogSource/`RedisLogSource` 抽象层）为主线**，先做 scrapyd 与 Python 脚本两类，再补 Docker。dopilot-agent 阶段 1 即落地。
 
 ### 第一步（MVP）
 
-1. 在 `apps/server/dopilot_server/logs/` 实现 dopilot 自有的 `LogSource` 抽象接口 + `ScrapydFileLogSource`（经 agent tail API 拉取）；reconcile pull loop（`reconcile.py`）。
-2. 在 `apps/agent/dopilot_agent/logs/` 与 `packages/protocol/` 定义 **tail / status / cleanup HTTP API** 与请求响应 schema：tail 返回 `{start_offset, end_offset, content, eof, finished}`，单次 ≤ 256KB；agent 无状态，offset 由 server 在请求里给出。agent 重启从 `/agent-data/state/executions/{attempt_id}.json` 恢复映射。
-3. 在 `apps/server/dopilot_server/api/v1/`（logs 路由）新建 FastAPI SSE 端点；server reconcile loop 按频率（无窗 30s / 开窗 1s / 结束 final drain）拉增量、写 `/server-data/logs/.../{attempt_id}.{stream}.log`、更新 PG `execution_log_files`、再经内存 SSE fan-out 推给浏览器。
-4. 前端：dopilot Web（Vue3 SPA）在 `apps/web/src/`（pages/components）新建日志页组件，用浏览器原生 `EventSource` 订阅 `/api/v1/executions/{id}/logs/stream`，处理 `id:<seq>` / `Last-Event-ID` 重连补洞，前端自行实现增量 append、自动滚底（无 scrapydweb Jinja 模板可复用）。开窗/关窗驱动 server 把该 execution 的拉取频率升到 1s / 降回 30s。
-5. 脚本日志：dopilot agent 的 `ScriptRunner`（`apps/agent/dopilot_agent/runners/script.py`）自行实现进程拉起，把 stdout/stderr 重定向到 agent 工作区（`apps/agent/dopilot_agent/workspace/`）落盘文件，按 stream=stdout/stderr 供 server tail API 拉取。**移植注意**：进程拉起须遵守 `prctl(PR_SET_PDEATHSIG)` 父进程死亡信号语义，并使用 glibc（slim/debian）基础镜像而非 Alpine（musl 不满足 `libc.so.6` prctl）——此约束以参考基线 `sub_process.py:8,21-40,73-78` 行为为参照，dopilot 在 runner 中自行实现，不复用/修改该文件。
+1. 在 `apps/server/dopilot_server/logs/` 实现 dopilot 自有的 `LogSource` 抽象接口 + `RedisLogSource`（数据源为 server 消费 Redis log stream 后落盘的正文）；log consumer 与 Redis 客户端落 `apps/server/dopilot_server/redis/`（`client.py`、`consumers.py`）。
+2. 在 `apps/agent/dopilot_agent/logs/`（log publisher：tail 本地日志、按 byte offset 增量 `XADD`）与 `apps/agent/dopilot_agent/redis/` 实现 agent 侧推送；`packages/protocol/dopilot_protocol/streams.py` 定义 `AgentLogEvent`（base64 字节，带 `offset`/`size_bytes`/`eof`）等 schema。agent 重启从 `/agent-data/state/executions/{attempt_id}.json` 恢复映射并按本地进度续推。
+3. 在 `apps/server/dopilot_server/api/v1/`（logs 路由）新建 FastAPI SSE 端点；server log consumer 消费 `dopilot:server:logs`、按 `offset == last_pulled_offset` 写 `/server-data/logs/.../{attempt_id}.{stream}.log`（缺片插 gap marker 标 `log_integrity=partial`）、更新 PG `execution_log_files`、再经内存 SSE fan-out 推给浏览器。结束由消费 `attempt.*` terminal 事件 + bounded drain 触发。
+4. 前端：dopilot Web（Vue3 SPA）在 `apps/web/src/`（pages/components）新建日志页组件，用浏览器原生 `EventSource` 订阅 `/api/v1/executions/{id}/logs/stream`，处理 `id:<seq>` / `Last-Event-ID` 重连补洞，前端自行实现增量 append、自动滚底（无 scrapydweb Jinja 模板可复用）。开窗/关窗只影响 server→web SSE 是否对该 execution 推送，不再驱动 server→agent 拉取频率（agent 始终经 log stream 增量推）。
+5. 脚本日志：dopilot agent 的 `ScriptRunner`（`apps/agent/dopilot_agent/runners/script.py`）自行实现进程拉起，把 stdout/stderr 重定向到 agent 工作区（`apps/agent/dopilot_agent/workspace/`）落盘文件，由 agent log publisher 按 stream=stdout/stderr tail 并增量 `XADD` 到 `dopilot:server:logs`。**移植注意**：进程拉起须遵守 `prctl(PR_SET_PDEATHSIG)` 父进程死亡信号语义，并使用 glibc（slim/debian）基础镜像而非 Alpine（musl 不满足 `libc.so.6` prctl）——此约束以参考基线 `sub_process.py:8,21-40,73-78` 行为为参照，dopilot 在 runner 中自行实现，不复用/修改该文件。
 
-> **为什么是 server pull + SSE**：agent 保持无状态、offset 权威集中在 server PG，agent 重启即可按 offset 续拉，免去推流连接管理与 ack；浏览器只负责看日志，SSE 单向、原生自动重连且在 server 单实例下足够。
+> **为什么是 Redis log stream 推 + SSE**：agent 主动经 Redis 推增量，免去 server 主动连每个 agent 与拉取调度；Redis log stream 提供 at-least-once 传输与 byte offset 语义，server 按 offset 去重/补 gap、消费进度（`last_pulled_offset`）权威仍集中在 server PG；浏览器只负责看日志，server→web 仍 SSE 单向、原生自动重连且在 server 单实例下足够。日志 RPO≠0 为已接受设计（缺片 `partial` 不阻塞执行状态收敛）。
 
 ### 第二步
 
-1. 在 `apps/agent/dopilot_agent/logs/` 增加 `DockerLogSource` 采集侧（docker SDK 或 `docker logs -f` 子进程落盘），同样经 tail API 暴露 stdout/stderr。
+1. 在 `apps/agent/dopilot_agent/logs/` 增加 `DockerLogSource` 采集侧（docker SDK 或 `docker logs -f` 子进程落盘），同样由 agent log publisher tail 后增量 `XADD` 暴露 stdout/stderr。
 2. dopilot `auth/` 模块按 **config-present-or-off** 实现鉴权：agent `shared_token` 非空才启用 agent 认证；Web 认证（`admin_username`+`admin_password`+`token_secret` 三者齐全且非空）开启时，SSE 用短期 `stream_token`（POST 换取、TTL 60s、仅校验建连）。内网防误操作策略，非互联网零信任。
 
 ### 兜底与边界
 
-- **offset 增量轮询 JSON 端点**可与 SSE 共存（与 `LogSource`/`execution_log_files` offset 共用），作为不支持 SSE 环境的降级读取路径；但**不引入浏览器 WebSocket、不引入 agent 主动推**。
-- **单实例硬约束**：server = 单容器 + uvicorn workers=1 + 单 APScheduler 实例，不支持多副本/多 worker，且未来也不做；**不引入 Redis/NATS/PG LISTEN-NOTIFY fan-out**，SSE fan-out 在单进程内存内完成。
+- **offset 增量轮询 JSON 端点**（读 server 已落盘正文 + `execution_log_files` offset）可与 SSE 共存，作为不支持 SSE 环境的浏览器降级**读取**路径；但**不引入浏览器 WebSocket**（agent→server 日志走 Redis log stream 推，此处仅指 web→server 读取通道）。
+- **单实例硬约束**：server = 单容器 + uvicorn workers=1 + 单 APScheduler 实例，不支持多副本/多 worker，且未来也不做。**不引入 Redis 做多副本 HA / fan-out / 分布式锁**，**不引入 NATS / PG LISTEN-NOTIFY** 做 fan-out，server→web SSE fan-out 在单进程内存内完成；Redis 仅作单实例 server↔agent 通信总线（含日志 stream），不改变单实例约束。
 - **备份**：必须同时覆盖 PostgreSQL（索引）+ `/server-data/logs` 卷（正文）。
 
 > ⚠️ **务必先落地 dopilot 自有的 `LogSource` 抽象**（`apps/server/dopilot_server/logs/`），避免三类执行器分别实现日志取数主流程。
@@ -276,18 +283,19 @@ agent 重启从 `/agent-data/state/executions/{attempt_id}.json` 恢复 `executi
 
 | dopilot 位置 | 性质 | 实现要点 |
 | --- | --- | --- |
-| `apps/server/dopilot_server/api/v1/`（logs 路由） | 新建 | FastAPI SSE 流式端点（`text/event-stream`，`id:<seq>`/`Last-Event-ID`）+ offset 增量轮询 JSON 端点（降级用）+ `stream_token` 换取端点；**不含任何 WebSocket / agent 推流接入端点**；调用 `LogSource` 取增量行；节点选择经 `nodes/`/`services/` |
-| `apps/server/dopilot_server/logs/`（如 `source.py`、`reconcile.py`） | 新建 | dopilot 自有 `LogSource` 抽象（`open/iter_incremental/close`）+ `ScrapydFileLogSource`；reconcile pull loop（无窗 30s / 开窗 1s / final drain）+ agent tail/status/cleanup 客户端；正文写 `/server-data/logs`、索引写 PG `execution_log_files` |
-| `apps/agent/dopilot_agent/logs/` | 新建 | **tail/status/cleanup HTTP API**（无状态，server 拉）+ `ScriptLogSource` / `DockerLogSource` 采集侧（脚本 stdout 落盘；容器 `docker logs -f` / SDK `container.logs(stream,follow)` 落盘）；`/agent-data/state/executions/{attempt_id}.json` 映射恢复 + TTL 兜底 |
-| `apps/agent/dopilot_agent/runners/script.py`、`docker.py` | 新建 | runner 自行实现进程/容器拉起，stdout/stderr 重定向到 `apps/agent/dopilot_agent/workspace/` 落盘以供 tail；进程拉起遵守 `prctl(PR_SET_PDEATHSIG)` + glibc 基础镜像约束（见文末行为参考） |
-| `apps/web/src/`（pages/components + api） | 新建 | Vue3 日志页组件，浏览器原生 `EventSource` 订阅 `/api/v1` SSE（`id:<seq>`/`Last-Event-ID` 重连补洞），前端实现增量 append/自动滚底；开窗/关窗驱动 server 拉取频率升降；不支持 SSE 时降级到 offset 分页 fetch |
-| `apps/server/dopilot_server/auth/` | 新建 | config-present-or-off 鉴权：agent `shared_token`；前端 SSE 短期 `stream_token`（POST 换取、TTL 60s、仅校验建连，`EventSource` 不能带自定义头） |
-| `packages/protocol/` | 新建 | server↔agent **tail/status/cleanup** 协议 schema（含 `{start_offset,end_offset,content,eof,finished}`）；统一任务/日志标识定义；**无推流/ack 协议** |
-| `apps/server/dopilot_server/models/`（如 `execution_log_files`） + Alembic 迁移 | 新建 | PG 索引表 `execution_log_files`（见 §5.1），SQLAlchemy + **裸 Alembic**（FastAPI 无 Flask app，非 Flask-Migrate）；APScheduler jobstore 落 PG |
-| `configs/server.example.toml` + `apps/server/dopilot_server/config/` | 新建 | 实时日志配置项（`background_drain_interval_seconds=30` / `realtime_drain_interval_seconds=1` / `max_tail_bytes_per_pull=262144` / EOF 稳定 3s / hard timeout 30s / 容器日志保留轮转策略）写入 toml，由 dopilot 的 toml 加载器解析与校验 |
-| `apps/server/pyproject.toml` / `apps/agent/pyproject.toml` | 新建 | server 侧声明 FastAPI/uvicorn（workers=1）/SQLAlchemy/Alembic/asyncpg 或 psycopg 等依赖；agent 侧声明 HTTP server（tail/status/cleanup）、docker SDK 等采集依赖；版本由 dopilot 自定 |
+| `apps/server/dopilot_server/api/v1/`（logs 路由） | 新建 | FastAPI SSE 流式端点（`text/event-stream`，`id:<seq>`/`Last-Event-ID`）+ offset 增量轮询 JSON 端点（读已落盘正文，降级用）+ `stream_token` 换取端点；**web→server 不含任何 WebSocket 端点**；调用 `LogSource`（`RedisLogSource`）取增量行；节点选择经 `nodes/`/`services/` |
+| `apps/server/dopilot_server/logs/`（如 `source.py`） | 新建 | dopilot 自有 `LogSource` 抽象（`open/iter_incremental/close`）+ `RedisLogSource`（数据源为 server 消费 Redis log stream 后落盘正文）；正文写 `/server-data/logs`、索引/完整性写 PG `execution_log_files`（含 `log_integrity`/gap 字段） |
+| `apps/server/dopilot_server/redis/`（`client.py`、`consumers.py` 等） | 新建 | log consumer 消费 `dopilot:server:logs`（offset 去重/补 gap/落盘/`XACK`）、event consumer 消费 `attempt.*`（结束检测）；server reconcile 改为 heartbeat/event 对账，不再访问 agent HTTP status |
+| `apps/agent/dopilot_agent/logs/` + `apps/agent/dopilot_agent/redis/` | 新建 | **log publisher**：tail 本地日志按 byte offset 增量 `XADD` 到 `dopilot:server:logs`（base64 字节，单一顺序生产者 offset 递增，含 outbox 重放排序）+ `ScriptLogSource` / `DockerLogSource` 采集侧（脚本 stdout 落盘；容器 `docker logs -f` / SDK `container.logs(stream,follow)` 落盘）；`/agent-data/state/executions/{attempt_id}.json` 映射恢复 + TTL 兜底 |
+| `apps/agent/dopilot_agent/runners/script.py`、`docker.py` | 新建 | runner 自行实现进程/容器拉起，stdout/stderr 重定向到 `apps/agent/dopilot_agent/workspace/` 落盘以供 log publisher tail；进程拉起遵守 `prctl(PR_SET_PDEATHSIG)` + glibc 基础镜像约束（见文末行为参考） |
+| `apps/web/src/`（pages/components + api） | 新建 | Vue3 日志页组件，浏览器原生 `EventSource` 订阅 `/api/v1` SSE（`id:<seq>`/`Last-Event-ID` 重连补洞），前端实现增量 append/自动滚底；开窗/关窗只影响 server→web SSE 是否推送该 execution；不支持 SSE 时降级到 offset 分页 fetch |
+| `apps/server/dopilot_server/auth/` | 新建 | config-present-or-off 鉴权：agent→server `server_shared_token`（不复用 server→agent 旧 token）；前端 SSE 短期 `stream_token`（POST 换取、TTL 60s、仅校验建连，`EventSource` 不能带自定义头） |
+| `packages/protocol/dopilot_protocol/streams.py` | 新建 | server↔agent stream 消息 schema：`AgentLogEvent`（base64 字节，`offset`/`size_bytes`/`eof`）/ `AgentCommand` / `AgentEvent` / `AgentHeartbeatRequest`/`Response`；统一任务/日志标识定义。既有 `TailRequest`/`TailResponse`/`AgentRunRequest`/`AgentStatusResponse` 标 legacy，不再代表当前协议 |
+| `apps/server/dopilot_server/models/`（如 `execution_log_files`） + Alembic 迁移 | 新建 | PG 索引表 `execution_log_files`（见 §5.1），新增 `log_integrity` 列 + gap 字段；SQLAlchemy + **裸 Alembic**（FastAPI 无 Flask app，非 Flask-Migrate），新增放 `0003+`；APScheduler jobstore 落 PG |
+| `configs/server.example.toml` + `apps/server/dopilot_server/config/` | 新建 | 实时日志配置项写入 toml：`[redis]`（`url`/`stream_maxlen_logs`/`log_retention_seconds`/`consumer_name`/`require_aof`）、`[logs].log_drain_timeout_seconds=30`、EOF 稳定 3s、容器日志保留轮转策略；由 dopilot 的 toml 加载器解析与校验 |
+| `apps/server/pyproject.toml` / `apps/agent/pyproject.toml` | 新建 | server 侧声明 FastAPI/uvicorn（workers=1）/SQLAlchemy/Alembic/asyncpg 或 psycopg/redis 客户端等依赖；agent 侧声明 redis 客户端、heartbeat HTTP 客户端、docker SDK 等采集依赖；版本由 dopilot 自定 |
 
-> 节点寻址与日志取数：dopilot 在 `apps/server/dopilot_server/nodes/` 与 `services/` 自行实现节点选择与日志取数（第一版 `[nodes].agents=["agent:6800"]` 只作初始发现地址；agent 启动携带稳定 `agent_id`，server 轮询 agent `GET /health` 后 upsert `nodes` 表，并只选择健康 agent）；日志增量读取经 agent tail API（不直连裸 scrapyd），由 dopilot 自有 HTTP 客户端或 `packages/protocol/` 层实现。
+> 节点寻址与日志取数：dopilot 在 `apps/server/dopilot_server/nodes/` 与 `services/` 自行实现节点选择与日志取数（agent 启动携带稳定 `agent_id` 并**主动 POST `/api/v1/agents/{agent_id}/heartbeat`**，server 以 `healthy = now - nodes.last_seen_at <= heartbeat_timeout_seconds` 判健康、upsert `nodes`，只选择健康 agent；`nodes.last_seen_at` 由 agent heartbeat 写入，不再由 server 轮询 `/health` 回填）；日志增量由 agent 经 Redis log stream 推、server log consumer 消费落盘（不直连裸 scrapyd、不再 server 拉 agent tail），消息 schema 经 `packages/protocol/dopilot_protocol/streams.py`。
 
 ### 5.1 存储模型（正文文件 + PG 索引）
 
@@ -301,9 +309,11 @@ agent 重启从 `/agent-data/state/executions/{attempt_id}.json` 恢复 `executi
 **索引（PostgreSQL 唯一库，表 `execution_log_files`）**：
 
 - 主键：`(execution_id, attempt_id, stream)`
-- 列：`storage_path` / `size_bytes` / `last_pulled_offset`（offset 权威） / `final_offset` / `status` / `started_at` / `finished_at` / `retained_until` / `created_at` / `updated_at`
-- `status` 枚举：`active` / `finalizing` / `complete` / `missing` / `expired`
+- 列：`storage_path` / `size_bytes` / `last_pulled_offset`（消费进度权威，记 agent 逻辑字节 offset） / `final_offset`（server 文件物理大小，含 gap marker） / `status`（生命周期） / `log_integrity`（完整性，与生命周期分离） / gap 字段（如 `gap_count` / `first_gap_expected_offset` / `first_gap_actual_offset`，或独立 gap 明细表） / `started_at` / `finished_at` / `retained_until` / `created_at` / `updated_at`
+- `status`（生命周期）枚举：`active` / `finalizing` / `complete` / `missing` / `expired`
+- `log_integrity`（完整性，**与 `status` 分离**，黏性 `partial` 不因后续连续自动回到 `complete`）枚举：`complete` / `partial` / `missing` / `expired`。业务状态与日志完整性独立：任务可 `complete`、日志可 `partial`
 - `stream` 枚举：`log` / `stdout` / `stderr` / `system`（schema/API 从第一版即支持；scrapy/scrapyd 只产 `log`，脚本阶段用 `stdout`/`stderr`）
+- 新增列经 Alembic `0003+` 迁移，不塞进既有 `0001`/`0002`
 
 `execution_id` / `attempt_id` 由 server 生成并下发 agent。
 
@@ -341,18 +351,19 @@ agent 重启从 `/agent-data/state/executions/{attempt_id}.json` 恢复 `executi
 ## 7. 已锁定日志细节
 
 > 以下原列项已由 v1 锁定 spec / 决策 #11 与后续用户确认收口；本节作为实现约束。
+> **【superseded 注】** 其中「日志取数=server pull 调 agent tail」「每秒增量 pull」相关锁定已被通信重构（`docs/refactor/00-redis-streams-agent-communication.md`）翻案为「agent 经 Redis log stream 推、server 消费」；下方已据此同步，四个不变量（不用 WebSocket、server→web SSE、正文落盘、PG 只存索引/offset/状态）保持。
 
 **已锁定（不再讨论）：**
 
-- ~~多副本日志广播~~ → 单容器 + uvicorn workers=1 + 单 APScheduler 实例，不支持多副本，未来也不做；**不引入 Redis/NATS/PG LISTEN-NOTIFY**，SSE fan-out 在单进程内存内完成。
+- ~~多副本日志广播~~ → 单容器 + uvicorn workers=1 + 单 APScheduler 实例，不支持多副本，未来也不做；**不引入 Redis 做多副本 HA/fan-out/分布式锁、不引入 NATS/PG LISTEN-NOTIFY**，server→web SSE fan-out 在单进程内存内完成（Redis 仅作单实例 server↔agent 通信总线，含日志 stream）。
 - ~~部署形态~~ → uvicorn workers=1 单实例。
-- ~~远程 scrapyd 真增量 / Docker 采集路径~~ → 不直连裸 scrapyd / docker daemon；统一经本机 dopilot-agent 的 tail API（agent 子进程拉起本机 scrapyd，scrapyd 仅监听容器内部端口）。
-- ~~流式端点鉴权~~ → config-present-or-off；Web 认证开启时 SSE 用短期 `stream_token`（TTL 60s、仅校验建连）。
-- ~~多人共享同一 job~~ → 多窗口复用一个 pull loop + SSE fan-out。
+- ~~远程 scrapyd 真增量 / Docker 采集路径~~ → 不直连裸 scrapyd / docker daemon；统一由本机 dopilot-agent log publisher tail 后经 Redis log stream 推（agent 子进程拉起本机 scrapyd，scrapyd 仅监听容器内部端口）。
+- ~~流式端点鉴权~~ → config-present-or-off；Web 认证开启时 SSE 用短期 `stream_token`（TTL 60s、仅校验建连）；agent→server 用 `server_shared_token`（不复用 server→agent 旧 token），Redis 启用 AUTH/ACL。
+- ~~多人共享同一 job~~ → 多窗口复用一个 log consumer 落盘 + 单进程内存 SSE fan-out。
 
 **新增锁定：**
 
 1. **落盘与截断**：server 本地日志默认保留 30 天；单次 execution 的单个 stream 文件默认最大 100MB，超过后停止继续追加正文并把 `execution_log_files.truncated=true`、`status` 保持可读状态。agent 已完成任务日志保留 3 天，孤儿日志保留 7 天，作为 server cleanup 失败时的兜底。
-2. **首屏 tail**：打开 Web 日志窗口时，server 先从本地文件返回最后 2000 行或最后 1MB（取先达到的边界），随后按 `last_pulled_offset` 每秒增量 pull 对应 execution；未打开窗口时只执行 30s 低频后台 drain，任务结束后 final drain。
+2. **首屏 tail**：打开 Web 日志窗口时，server 先从本地（已由 log consumer 落盘的）文件返回最后 2000 行或最后 1MB（取先达到的边界），随后将该 execution 经 log consumer 落盘的增量经 SSE fan-out 推送；agent 始终经 Redis log stream 增量推，开窗/关窗只影响 server→web 是否推送，不再驱动 server→agent 拉取频率升降。任务结束由消费 `attempt.*` terminal 事件触发 bounded drain 收口。
 3. **显示形态**：第一版只做 raw text 显示与 `log/stdout/stderr/system` stream 分流，不做 logparser 风格解析、统计或高亮；scrapy 第一版仅产 `stream=log`。
 4. **过期联动**：PG `retained_until` 与本地文件清理同步。清理任务先把 `execution_log_files.status` 置为 `expired`，再删除 `/server-data/logs` 正文；若读取时索引存在但文件缺失，返回 `status=missing` 并在 UI 标记日志正文已不可用。

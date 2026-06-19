@@ -10,6 +10,8 @@
 
 本仓库为 **monorepo**（`00-requirements.md` 决策 8）：server 与 agent 同仓开发，`reference/` 仅作基线参考、不参与构建。
 
+> **【通信模型新口径，superseded-by】** server↔agent 通信已由"server 主动 HTTP run/status/tail pull"翻案为"server→Redis Streams 投命令、agent 主动消费/推状态/推日志 + 主动 POST heartbeat"(破坏性、无双轨)。下文布局已据此补入 `apps/server/dopilot_server/redis/`、`apps/agent/dopilot_agent/redis/` 子包与 `packages/protocol/dopilot_protocol/streams.py`;权威口径见 `docs/refactor/00-redis-streams-agent-communication.md`。
+
 dopilot 自身代码按 **structure-first** 的 `apps/`+`packages/` monorepo 全新编写(各包均为 greenfield,以 scrapydweb 为行为参考逐域移植,**不对 scrapydweb 改名/git mv**)。权威布局:
 
 ```text
@@ -17,15 +19,17 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 ├── apps/
 │   ├── server/                           # FastAPI 调度中心:API、PostgreSQL、APScheduler、认证、节点管理、日志聚合
 │   │   ├── dopilot_server/
-│   │   │   ├── api/v1/                    # FastAPI /api/v1/* JSON + SSE 端点(server↔agent 走 HTTP pull,无 WebSocket)
+│   │   │   ├── api/v1/                    # FastAPI /api/v1/* JSON + SSE 端点(server↔agent 走 Redis Streams;server→web 仍 SSE、无 WebSocket)
+│   │   │   ├── redis/                     # server↔agent Redis Streams 基础设施:client/streams/commands/consumers(command outbox/dispatcher、event/log consumer、heartbeat)
 │   │   │   ├── auth/  scheduler/  nodes/  logs/  models/  repositories/  services/  config/  db/
 │   │   │   ├── executors/                 # 缝① BaseExecutor + EXECUTOR_REGISTRY
 │   │   │   │   ├── base.py  scrapyd.py  script.py  docker.py
 │   │   │   └── app.py
 │   │   ├── migrations/  tests/  pyproject.toml
-│   ├── agent/                            # worker 执行节点:收 server push,实际跑 Scrapy/Python/Docker
+│   ├── agent/                            # worker 执行节点:经 Redis Streams 主动消费命令、主动推状态/日志、主动 POST heartbeat,实际跑 Scrapy/Python/Docker
 │   │   ├── dopilot_agent/
-│   │   │   ├── api/
+│   │   │   ├── api/                       # /health 仅容器本地 healthcheck(不再作 server 节点发现/健康来源)
+│   │   │   ├── redis/                     # server↔agent Redis Streams 基础设施:client/commands/events/logs(command consumer、event/log publisher、event outbox)
 │   │   │   ├── runners/                   # base.py scrapyd.py script.py docker.py
 │   │   │   ├── logs/  workspace/  heartbeat/  config/  main.py
 │   │   ├── tests/  pyproject.toml
@@ -33,7 +37,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 │       ├── src/{api,pages,components,layouts,stores,router,i18n}/  public/
 │       ├── package.json  vite.config.ts
 ├── packages/
-│   ├── protocol/                         # server↔agent 共享协议 schema(protocol/python/;前端也消费可并列 protocol/typescript/)
+│   ├── protocol/                         # server↔agent 共享协议 schema(含 dopilot_protocol/streams.py:AgentCommand/AgentEvent/AgentLogEvent/AgentHeartbeat*;前端也消费可并列 protocol/typescript/)
 │   └── client/                           # 可选:server→agent 客户端 SDK
 ├── deploy/{docker/{Dockerfile,docker-compose.yml},k8s/}
 ├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置(经 DOPILOT_CONFIG 加载,不继承 scrapydweb 硬编码 settings)
@@ -82,7 +86,9 @@ pnpm install                        # 在仓库根安装,或 pnpm --filter web i
 
 ### 3.b 本地开发容器策略
 
-日常开发默认只需要一个 PostgreSQL 容器；`server` / `web` / `agent` 都在宿主机运行，便于 Python editable install、Vite 热更新和调试。完整 Docker 闭环（`db + server + web + agent`）只用于集成验收、镜像验证或模拟部署。
+日常开发默认需要 PostgreSQL 与 Redis 两个容器（Redis 是 server↔agent 通信总线，agent 经 Redis Streams 消费命令、推状态/日志，server 消费后落库/落盘）；`server` / `web` / `agent` 都在宿主机运行，便于 Python editable install、Vite 热更新和调试。完整 Docker 闭环（`db + redis + server + web + agent`）只用于集成验收、镜像验证或模拟部署。
+
+> Redis 仅作消息总线/瞬时传输,不是 dopilot 持久化数据库:业务真相仍在 PostgreSQL,日志正文仍落 `/server-data/logs`。引入 Redis 也不表示支持多副本——单实例约束不变（server 单容器、uvicorn `workers=1`、单 APScheduler）。
 
 最小开发依赖：
 
@@ -99,8 +105,18 @@ services:
     volumes:
       - dopilot-db:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7
+    # server↔agent 通信总线;开发期也建议启用 AUTH + AOF,贴近生产
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "dopilot"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - dopilot-redis:/data
+
 volumes:
   dopilot-db:
+  dopilot-redis:
 ```
 
 宿主机运行时，server 的日志正文路径仍按角色命名为 `/server-data/logs`；本地可通过配置把它映射到仓库外或 `.local/server-data/logs`，但不要把日志正文写入 PostgreSQL。
@@ -152,15 +168,52 @@ dopilot 自身的首次运行基于其**自有 toml 配置**(不继承 scrapydwe
 
 ```bash
 # server:复制示例配置 → 由 dopilot 自有 toml 加载器读取(经 DOPILOT_CONFIG 指定路径)
-cp configs/server.example.toml configs/server.toml   # 配置节点、PostgreSQL、认证、调度等
+cp configs/server.example.toml configs/server.toml   # 配置节点、PostgreSQL、Redis、认证、调度等
 DOPILOT_CONFIG=configs/server.toml dopilot-server     # 起 Web + scheduler hub
 
 # agent:同理
-cp configs/agent.example.toml configs/agent.toml      # 配置 server 地址、workspace、心跳等
+cp configs/agent.example.toml configs/agent.toml      # 配置 server 地址、Redis、workspace、心跳等
 DOPILOT_CONFIG=configs/agent.toml dopilot-agent       # 起 worker 执行节点
 ```
 
 > 完整命令名/参数随 apps/server、apps/agent 落地后补全;在此之前为目标运行形态。
+
+通信走 Redis Streams,server 与 agent 都需配 `[redis]` 段(口径见 `docs/refactor/00-redis-streams-agent-communication.md`「配置建议」)。最小示例:
+
+```toml
+# configs/server.toml(节选)
+[redis]
+url = "redis://:dopilot@localhost:6379/0"   # server 消费 agent-events / logs、投 command;开发期对齐 compose 的 AUTH 口令
+stream_maxlen_commands = 100000
+stream_maxlen_events = 100000
+stream_maxlen_logs = 1000000
+log_retention_seconds = 86400
+consumer_name = "server-1"
+require_aof = true
+
+[agents]
+heartbeat_timeout_seconds = 30                # healthy = now - nodes.last_seen_at <= 该值
+stalled_attempt_seconds = 300
+lost_after_stalled_seconds = 900
+
+[logs]
+log_drain_timeout_seconds = 30
+```
+
+```toml
+# configs/agent.toml(节选)
+[redis]
+url = "redis://:dopilot@localhost:6379/0"   # agent 主动消费命令、XADD 状态/日志
+command_block_ms = 5000
+pending_idle_ms = 30000
+event_outbox_dir = "/agent-data/outbox"
+
+[agent]
+agent_id = "agent-01"
+server_url = "http://localhost:5000"          # 主动 POST /api/v1/agents/{agent_id}/heartbeat 用
+heartbeat_interval_seconds = 10
+server_shared_token = "change-me-agent-server-token"   # agent→server token,不复用 server→agent 旧 token
+```
 
 **移植/对照注意(功能参考,非 dopilot 设计)**:scrapydweb 首次运行会在工作目录生成默认 `scrapydweb_settings_v11.py`(文件名硬编码于 `vars.py:29` `SCRAPYDWEB_SETTINGS_PY`),且仅从 `os.getcwd()` 查找,在其中配置 `SCRAPYD_SERVERS` 等。dopilot **不沿用**这种「硬编码文件名 + 仅 cwd 查找」的加载方式——仅参考其配置键的**语义**,改用上述 toml + `DOPILOT_CONFIG` 显式路径加载。
 
