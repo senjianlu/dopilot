@@ -1,6 +1,7 @@
 """Application factory + ``run()`` entrypoint.
 
-``create_app`` mounts ``/api/v1``, enables CORS for the Vite dev origins,
+``create_app`` mounts ``/api/v1``, serves the bundled web UI when present,
+enables CORS for the Vite dev origins,
 registers the global :class:`ApiError` -> error-envelope handler, attaches the
 in-memory SSE :class:`SubscriptionManager`, and installs a lifespan that builds
 the async engine/session factory, the agent HTTP client, and the background log
@@ -14,13 +15,15 @@ Entrypoints:
 from __future__ import annotations
 
 import argparse
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from .api.v1.router import router as api_v1_router
@@ -36,6 +39,7 @@ CORS_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+DEFAULT_WEB_DIST = "/app/web"
 
 
 def _error_envelope(error: ApiError) -> JSONResponse:
@@ -48,6 +52,23 @@ def _error_envelope(error: ApiError) -> JSONResponse:
             "detail": error.detail,
         },
     )
+
+
+def _web_dist_path() -> Path | None:
+    """Return the bundled SPA directory when it has a built ``index.html``."""
+    configured = os.getenv("DOPILOT_WEB_DIST", DEFAULT_WEB_DIST)
+    root = Path(configured).resolve()
+    if (root / "index.html").is_file():
+        return root
+    return None
+
+
+def _file_under(root: Path, path: str) -> Path | None:
+    """Resolve a requested static path without allowing traversal outside root."""
+    candidate = (root / path).resolve()
+    if not candidate.is_file() or not candidate.is_relative_to(root):
+        return None
+    return candidate
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -131,6 +152,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _error_envelope(exc)
 
     app.include_router(api_v1_router)
+    web_dist = _web_dist_path()
+    if web_dist is not None:
+
+        @app.get("/", include_in_schema=False)
+        async def _serve_web_index() -> FileResponse:
+            return FileResponse(web_dist / "index.html")
+
+        @app.get("/{path:path}", include_in_schema=False)
+        async def _serve_web_asset_or_spa(path: str) -> FileResponse:
+            if path == "api" or path.startswith("api/"):
+                raise HTTPException(status_code=404)
+            asset = _file_under(web_dist, path)
+            if asset is not None:
+                return FileResponse(asset)
+            return FileResponse(web_dist / "index.html")
+
     return app
 
 

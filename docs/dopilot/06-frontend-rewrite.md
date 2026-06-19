@@ -34,7 +34,7 @@
         │   │  vue-i18n(zh)   │   SSE          │  - APScheduler 定时           │    │
         │   └─────────────────┘ ◄──日志流──── │  - PostgreSQL: 业务+日志索引/  │    │
         │     (Vite 构建产物                   │    offset(SQLAlchemy)         │    │
-        │      独立 Web 容器运行，反代可选)          │  - 本地 /server-data/logs 正文   │    │
+        │      由 server 角色托管)              │  - 本地 /server-data/logs 正文   │    │
         │                                     └──────────────┬───────────────┘    │
         └────────────────────────────────────────────────────┼────────────────────┘
                               server→agent HTTP pull(tail/status) │
@@ -172,9 +172,9 @@ Authorization: Bearer <shared_token>
 
 ## 8. 部署（契合 server/agent + Docker）
 
-- **Web 容器**：第一版不把 SPA copy 进 server 镜像，也不内置 nginx。`apps/web` 按 Vue/Vite 常规方式构建并由独立 Web 容器运行；server 容器只提供 `/api/v1` 与 SSE。Web 容器的生产托管方式与反向代理属用户部署层，本文不规定。因 Web 与 server 默认不同源，server 需开 CORS 放行 Web origin（见 M0）。
+- **Web UI 托管**：第一版本地测试镜像会把 `apps/web` 构建产物 copy 进统一应用镜像；server 角色直接托管 SPA，同时保留 `/api/v1` 与 SSE。开发期仍可用 Vite dev server 热更。
 - 开发期：Vite dev server + `proxy` 转发 `/api`（含 SSE 流）到 FastAPI，前后端分别热更。
-- agent 镜像不含前端，只跑执行器（scrapyd/脚本/容器管理）。
+- agent 角色只跑执行器（scrapyd/脚本/容器管理），不托管前端。
 
 ## 9. 风险与开放问题
 

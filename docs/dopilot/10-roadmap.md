@@ -43,8 +43,8 @@
 | 单管理员 token 认证 | 🟡 | HTTP Basic → token 登录（单用户，无需 RBAC） | `06-frontend-rewrite.md` §5、`architecture/06-auth-and-utils.md` |
 | 前端骨架 M0 | 🆕 | Vite+Vue3+EP+TS + 登录/布局/菜单 + axios + SSE 客户端；后端 FastAPI `/api/v1` 骨架 | `06-frontend-rewrite.md` §2 |
 | i18n 框架 | 🆕 | SPA 用 vue-i18n，默认中文；后端 `/api/v1` 仅返回结构化 message code，由前端做文案映射 | `04-gap-i18n.md` §7、`06-frontend-rewrite.md` §7 |
-| server/agent Docker 化 | 🆕 | 两种镜像 + PostgreSQL 服务/连接配置；reference 的 `vars.py` 启动清目录只作行为坑说明 | `08-docker-deployment.md` |
-| 镜像构建发布 + CI | 🆕 | Dockerfile.server/agent + `.dockerignore`（排除 `reference/`）+ GitHub Actions 推送 `rabbir/dopilot:latest`（决策 7、monorepo 决策 8） | `08-docker-deployment.md` §7 |
+| server/agent Docker 化 | 🆕 | 统一应用镜像 + PostgreSQL 服务/连接配置；server/agent/migrate 通过启动命令选择角色；reference 的 `vars.py` 启动清目录只作行为坑说明 | `08-docker-deployment.md` |
+| 镜像构建发布 + CI | 🆕 | `deploy/docker/Dockerfile` + `.dockerignore`（排除 `reference/`）+ GitHub Actions 推送 `rabbir/dopilot:latest`（决策 7、monorepo 决策 8） | `08-docker-deployment.md` §7 |
 | 测试基线 | 🆕 | dopilot 自有测试套件(`apps/server/tests`、`apps/agent/tests`、`apps/web`)；以 scrapydweb/tests 的行为预期作对照(oracle)校准移植正确性 | `07-testing-baseline.md` |
 | 实时日志框架(第一步) | 🆕 | server pull（agent tail API）+ server→web SSE + LogSource 主干，先打通 scrapyd；正文落 server `/server-data/logs`，索引/offset/状态落 PostgreSQL（无 WebSocket、agent 不主动推） | `03-gap-realtime-logs.md` §4 |
 

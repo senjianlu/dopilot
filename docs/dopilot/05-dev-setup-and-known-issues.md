@@ -35,7 +35,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 ├── packages/
 │   ├── protocol/                         # server↔agent 共享协议 schema(protocol/python/;前端也消费可并列 protocol/typescript/)
 │   └── client/                           # 可选:server→agent 客户端 SDK
-├── deploy/{docker/{Dockerfile.server,Dockerfile.agent,docker-compose.yml},k8s/}
+├── deploy/{docker/{Dockerfile,docker-compose.yml},k8s/}
 ├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置(经 DOPILOT_CONFIG 加载,不继承 scrapydweb 硬编码 settings)
 ├── scripts/  docs/
 ├── reference/scrapydweb/                 # 只读行为参考,绝不进构建上下文/不被 import/不改名
@@ -184,7 +184,7 @@ DOPILOT_CONFIG=configs/agent.toml dopilot-agent       # 起 worker 执行节点
 | `playwright` | 仓库根 `.mcp.json`(项目级、已签入 git) | 驱动浏览器测试 Vue3 + Element Plus 前端功能点 | 靠 `npx -y @playwright/mcp@latest` 拉起,需先装 Node |
 
 > 选型：相比 chrome-devtools MCP,Playwright MCP 更通用、可自带下载 Chromium,适合常规页面功能点测试。后续若需深挖 SSE 实时日志的 EventStream/网络面板,可再叠加 chrome-devtools MCP。
-> Docker 侧刻意**不引入 Docker MCP**——目标 ② 全程用 Bash 调 Docker CLI 即可,且 `08-docker-deployment.md` 已规划好 `Dockerfile.server` / `Dockerfile.agent` / compose。
+> Docker 侧刻意**不引入 Docker MCP**——目标 ② 全程用 Bash 调 Docker CLI 即可,且 `08-docker-deployment.md` 已规划好 `Dockerfile` / compose。
 
 ### 6.3 Skills(均为内置,零新增)
 

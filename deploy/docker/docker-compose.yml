@@ -1,13 +1,14 @@
-# dopilot backend execution loop: db + server + agent.
+# dopilot local stack: db + unified dopilot image running server/agent roles.
 #
 # This compose file lives in deploy/docker, so build contexts point at the repo
-# ROOT via context: ../.. (Dockerfiles expect the repo root as their context).
+# ROOT via context: ../.. (Dockerfile expects the repo root as its context).
 #
-# The web SPA is NOT part of compose: it runs via Vite during development
-# (see Makefile `web` target). Single server replica only (hard constraint:
-# in-process scheduler + in-memory pull/SSE tables cannot be replicated).
+# The server role serves the bundled Web SPA from the same container. Single
+# server replica only (hard constraint: in-process scheduler + in-memory
+# pull/SSE tables cannot be replicated).
 #
 # Image namespace is rabbir (Docker Hub); unrelated to the git origin senjianlu.
+# server, agent, and migrate all use the same image; command selects the role.
 
 services:
   db:
@@ -34,9 +35,9 @@ services:
   migrate:
     build:
       context: ../..
-      dockerfile: deploy/docker/Dockerfile.server
+      dockerfile: deploy/docker/Dockerfile
     image: rabbir/dopilot:latest
-    entrypoint: ["alembic", "upgrade", "head"]
+    command: ["alembic", "upgrade", "head"]
     environment:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
     depends_on:
@@ -47,8 +48,9 @@ services:
   agent:
     build:
       context: ../..
-      dockerfile: deploy/docker/Dockerfile.agent
-    image: rabbir/dopilot-agent:latest
+      dockerfile: deploy/docker/Dockerfile
+    image: rabbir/dopilot:latest
+    command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
     init: true
     environment:
       DOPILOT_CONFIG: /app/configs/agent.toml
@@ -83,8 +85,9 @@ services:
   server:
     build:
       context: ../..
-      dockerfile: deploy/docker/Dockerfile.server
+      dockerfile: deploy/docker/Dockerfile
     image: rabbir/dopilot:latest
+    command: ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
     init: true
     environment:
       DOPILOT_CONFIG: /app/configs/server.toml
