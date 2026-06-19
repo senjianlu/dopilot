@@ -12,6 +12,7 @@
 2. **再看总纲**：[`dopilot/10-roadmap.md`](dopilot/10-roadmap.md) —— 综合 greenfield 构建/移植路线图，串联 scrapydweb 行为参考+gap+决策。
 3. **开始实现**：阶段 0 直接看 [`phases/phase-0/00-brief.md`](phases/phase-0/00-brief.md) —— 给 Claude 编码用的任务书与 Codex review/验收清单。
 4. **按需深入**：scrapydweb 行为参考看 `architecture/`，dopilot 设计/实现看 `dopilot/0x-gap-*`。
+5. **重构提案**：[`refactor/00-redis-streams-agent-communication.md`](refactor/00-redis-streams-agent-communication.md) —— server/agent 通信改为 Redis Streams 的破坏性重构概念文档。
 
 ## 一、scrapydweb 现状行为参考（`architecture/`）
 
@@ -54,6 +55,14 @@
 | [`phase-0/02-review-response.md`](phases/phase-0/02-review-response.md) | 阶段 0 返工响应 |
 | [`phase-0/03-acceptance.md`](phases/phase-0/03-acceptance.md) | 阶段 0 验收记录 |
 | [`phase-1/00-brief.md`](phases/phase-1/00-brief.md) | 阶段 1 实现任务书 |
+
+## 四、重构概念文档（`refactor/`）
+
+该目录记录尚未合并进主线设计的重构概念、破坏性调整方案和审阅材料。此类文档用于方案评审与改修点整理，不直接覆盖 `dopilot/` 下的当前权威设计。
+
+| 文档 | 内容 |
+|------|------|
+| [`00-redis-streams-agent-communication.md`](refactor/00-redis-streams-agent-communication.md) | server/agent 任务调度、状态事件、日志回流改为 Redis Streams；健康检查改为 agent 主动 heartbeat 到 server API；不保留 HTTP 调度/状态/日志兜底链路 |
 
 ## 决策速查
 
