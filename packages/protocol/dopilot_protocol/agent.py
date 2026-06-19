@@ -1,13 +1,22 @@
-"""server -> agent execution-control protocol (phase 1).
+"""server -> agent execution-control protocol (phase 1, **LEGACY HTTP path**).
 
-These schemas describe the HTTP contract the server uses to drive a dopilot
-agent over its root API (no ``/api/v1`` prefix): run a Scrapy job, stop it,
-poll its status, deploy a pre-built egg, and clean up its logs.
+These schemas described the HTTP contract the server used to drive a dopilot
+agent over its root API in phase 1: run a Scrapy job, stop it, poll its status,
+deploy a pre-built egg, and clean up its logs.
 
-The agent is **stateless w.r.t. log offsets** (offset authority is the server's
-PostgreSQL ``execution_log_files.last_pulled_offset``); these schemas carry only
-what the agent needs to act. Log byte-slice pulls use :class:`TailRequest` /
-:class:`TailResponse` from :mod:`dopilot_protocol.logs`.
+Phase 1.5 (``docs/refactor/00-redis-streams-agent-communication.md``) replaces
+the run/status/stop/cleanup main paths with Redis Streams — see
+:mod:`dopilot_protocol.streams`. The types here are retained as **legacy**:
+``AttemptStatus`` and ``AgentRunRequest`` are still reused (the latter as the
+``run`` command payload shape, the former as the agent-observed status enum);
+``EggDeployResponse`` survives because egg upload stays HTTP ``/addversion.json``.
+``AgentStatusResponse`` / ``AgentStopRequest`` / ``AgentStopResponse`` /
+``CleanupResponse`` no longer represent the live protocol.
+
+On offsets: the agent now actively **publishes** log increments carrying a
+logical byte ``offset`` (:class:`dopilot_protocol.streams.AgentLogEvent`); the
+server's ``execution_log_files.last_pulled_offset`` remains the consumption-
+progress authority. The agent does not hold the server's final offset authority.
 """
 
 from __future__ import annotations

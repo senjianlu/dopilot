@@ -1,15 +1,14 @@
-"""Server -> agent HTTP client.
+"""Server -> agent HTTP client (phase 1.5: egg deploy ONLY).
 
-Wraps the agent's stateless root API (run/stop/status/logs.tail/cleanup/egg).
-The server is the offset authority; this client just carries requests and
-parses the protocol responses. Outgoing requests carry
-``Authorization: Bearer <shared_token>`` when the agent shared token is set.
+The phase-1 run/stop/status/logs-tail/cleanup HTTP main paths were removed in the
+Redis Streams refactor; the only surviving server->agent HTTP path is **egg
+deploy** (``POST /artifacts/scrapy/egg`` -> agent -> local scrapyd
+``/addversion.json``), which stays HTTP by design. Outgoing requests carry
+``Authorization: Bearer <shared_token>`` (the server->agent token) when set.
 
-Failures are surfaced as two exception kinds so the API layer (which wants a
-clean ``ApiError``) and the reconcile loop (which wants to distinguish
-transient unreachable from a real agent error) can react differently:
+Failures surface as two kinds so the API layer can render a clean ``ApiError``:
 
-- :class:`AgentUnreachableError` — network/timeout (retryable);
+- :class:`AgentUnreachableError` — network/timeout (transport error);
 - :class:`AgentResponseError` — the agent answered with a non-2xx envelope.
 """
 
@@ -18,17 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from dopilot_protocol import (
-    AgentRunRequest,
-    AgentRunResponse,
-    AgentStatusResponse,
-    AgentStopRequest,
-    AgentStopResponse,
-    CleanupResponse,
-    EggDeployResponse,
-    TailRequest,
-    TailResponse,
-)
+from dopilot_protocol import EggDeployResponse
 from fastapi import Request
 
 from ..errors import ApiError
@@ -82,7 +71,7 @@ class AgentResponseError(Exception):
 
 
 class AgentClient:
-    """Thin async client over the agent root API for one or many endpoints."""
+    """Thin async client over the agent's surviving egg-deploy HTTP endpoint."""
 
     def __init__(
         self, http: httpx.AsyncClient, shared_token: str | None = None
@@ -110,63 +99,6 @@ class AgentClient:
             raise AgentResponseError(endpoint, resp.status_code, body or {})
         return resp
 
-    async def run(
-        self, endpoint: str, req: AgentRunRequest
-    ) -> AgentRunResponse:
-        resp = await self._request(
-            "POST", endpoint, "/run", json=req.model_dump(mode="json")
-        )
-        return AgentRunResponse.model_validate(resp.json())
-
-    async def stop(
-        self, endpoint: str, req: AgentStopRequest
-    ) -> AgentStopResponse:
-        resp = await self._request(
-            "POST", endpoint, "/stop", json=req.model_dump(mode="json")
-        )
-        return AgentStopResponse.model_validate(resp.json())
-
-    async def status(
-        self, endpoint: str, execution_id: str, attempt_id: str
-    ) -> AgentStatusResponse:
-        resp = await self._request(
-            "GET",
-            endpoint,
-            "/status",
-            params={"execution_id": execution_id, "attempt_id": attempt_id},
-        )
-        return AgentStatusResponse.model_validate(resp.json())
-
-    async def tail(self, endpoint: str, req: TailRequest) -> TailResponse:
-        resp = await self._request(
-            "GET",
-            endpoint,
-            "/logs/tail",
-            params={
-                "execution_id": req.execution_id,
-                "attempt_id": req.attempt_id,
-                "stream": req.stream.value,
-                "offset": req.offset,
-                "max_bytes": req.max_bytes,
-            },
-        )
-        return TailResponse.model_validate(resp.json())
-
-    async def cleanup(
-        self,
-        endpoint: str,
-        attempt_id: str,
-        execution_id: str | None = None,
-        stream: str = "log",
-    ) -> CleanupResponse:
-        resp = await self._request(
-            "POST",
-            endpoint,
-            f"/executions/{attempt_id}/logs/cleanup",
-            json={"execution_id": execution_id, "stream": stream},
-        )
-        return CleanupResponse.model_validate(resp.json())
-
     async def deploy_egg(
         self,
         endpoint: str,
@@ -186,11 +118,10 @@ class AgentClient:
 
 
 def get_agent_client(request: Request) -> AgentClient:
-    """FastAPI dependency returning the app-wide :class:`AgentClient`.
+    """FastAPI dependency returning the app-wide egg-deploy :class:`AgentClient`.
 
-    Built in ``create_app`` and stored on ``app.state``; tests override this
-    dependency to inject an :class:`AgentClient` backed by an httpx
-    ``MockTransport`` (no real agent needed).
+    Built in the lifespan and stored on ``app.state.agent_client``; tests
+    override this dependency to inject one backed by an httpx ``MockTransport``.
     """
     client = getattr(request.app.state, "agent_client", None)
     if client is None:  # pragma: no cover - defensive

@@ -1,22 +1,17 @@
-"""Node discovery + health-refresh service.
+"""Node service: heartbeat upsert, listing, and target selection.
 
-``refresh_nodes`` polls each configured agent ``/health`` endpoint and upserts
-a :class:`Node` row (healthy/unhealthy). Upsert is done SELECT-then-update/insert
-so it stays dialect-agnostic (no PostgreSQL ``ON CONFLICT``), which keeps the
-SQLite test path working.
-
-Outgoing requests carry ``Authorization: Bearer <shared_token>`` when the agent
-shared token is configured.
+Phase 1.5: node liveness/health/capabilities are written by agent heartbeats
+(:func:`upsert_node_heartbeat`), NOT a server-driven ``/health`` poll. Selection
+filters by heartbeat recency. Upserts are SELECT-then-update/insert so they stay
+dialect-agnostic (no PostgreSQL ``ON CONFLICT``), keeping the SQLite test path.
 """
 
 from __future__ import annotations
 
-import contextlib
-from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import httpx
+from dopilot_protocol import AgentHeartbeatRequest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +20,9 @@ from ..errors import ApiError
 from ..models.node import Node
 from .strategy import NodeStrategy, reduce_nodes
 
-_HTTP_TIMEOUT = httpx.Timeout(5.0, connect=2.0)
+# Fallback heartbeat-liveness window when a caller does not thread the configured
+# [agents].heartbeat_timeout_seconds (mirrors the AgentsSettings default).
+DEFAULT_HEARTBEAT_TIMEOUT_SECONDS = 30
 
 
 def _to_strategy(strategy: str) -> NodeStrategy:
@@ -45,31 +42,6 @@ def _to_strategy(strategy: str) -> NodeStrategy:
         "errors.invalidNodeStrategy",
         {"node_strategy": strategy},
     )
-
-
-def _normalize_endpoint(endpoint: str) -> str:
-    """Return a base URL for an endpoint; assume http:// when no scheme given."""
-    if endpoint.startswith(("http://", "https://")):
-        return endpoint.rstrip("/")
-    return f"http://{endpoint.rstrip('/')}"
-
-
-def _auth_headers(settings: Settings) -> dict[str, str]:
-    token = settings.agent_auth.shared_token
-    if token:
-        return {"Authorization": f"Bearer {token}"}
-    return {}
-
-
-@contextlib.asynccontextmanager
-async def _maybe_client(
-    client: httpx.AsyncClient | None,
-) -> AsyncIterator[httpx.AsyncClient]:
-    if client is not None:
-        yield client
-    else:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as owned:
-            yield owned
 
 
 async def _get_node_by_endpoint(
@@ -96,50 +68,42 @@ def _node_to_dict(node: Node) -> dict[str, Any]:
     }
 
 
-async def refresh_nodes(
-    session: AsyncSession,
-    settings: Settings,
-    client: httpx.AsyncClient | None = None,
-) -> list[Node]:
-    """Poll every configured agent and upsert its health snapshot.
+async def _get_node_by_agent_id(
+    session: AsyncSession, agent_id: str
+) -> Node | None:
+    result = await session.execute(
+        select(Node).where(Node.agent_id == agent_id)
+    )
+    return result.scalar_one_or_none()
 
-    Returns all node rows after the refresh.
+
+async def upsert_node_heartbeat(
+    session: AsyncSession, agent_id: str, hb: AgentHeartbeatRequest
+) -> Node:
+    """Apply an agent heartbeat: refresh ``last_seen_at`` + capabilities/health.
+
+    Phase 1.5: this REPLACES server polling of agent ``/health`` as the source
+    of ``nodes.last_seen_at``. Keyed by ``agent_id``; matched first by agent_id,
+    then by the agent-advertised endpoint, so a node previously seeded by
+    endpoint is adopted rather than duplicated. The caller commits.
     """
-    headers = _auth_headers(settings)
-    async with _maybe_client(client) as http:
-        for endpoint in settings.nodes.agents:
-            base = _normalize_endpoint(endpoint)
-            agent_id: str | None = None
-            capabilities: dict[str, Any] = {}
-            health: dict[str, Any] = {}
-            status = "unhealthy"
-            try:
-                resp = await http.get(f"{base}/health", headers=headers)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    agent_id = data.get("agent_id")
-                    capabilities = data.get("capabilities") or {}
-                    # agent health detail (phase 1: scrapyd subprocess status)
-                    health = data.get("detail") or {}
-                    status = "healthy"
-            except Exception:  # noqa: BLE001 - any failure => unhealthy
-                status = "unhealthy"
+    now = datetime.now(UTC)
+    node = await _get_node_by_agent_id(session, agent_id)
+    if node is None and hb.endpoint:
+        # Adopt a node previously created from config/discovery by endpoint.
+        node = await _get_node_by_endpoint(session, hb.endpoint)
+    if node is None:
+        node = Node(endpoint=hb.endpoint or f"agent://{agent_id}")
+        session.add(node)
 
-            node = await _get_node_by_endpoint(session, endpoint)
-            now = datetime.now(UTC)
-            if node is None:
-                node = Node(endpoint=endpoint)
-                session.add(node)
-            node.status = status
-            node.last_seen_at = now
-            if status == "healthy":
-                node.agent_id = agent_id
-                node.capabilities = capabilities
-                node.health = health
-        await session.commit()
-
-    result = await session.execute(select(Node))
-    return list(result.scalars().all())
+    node.agent_id = agent_id
+    if hb.endpoint:
+        node.endpoint = hb.endpoint
+    node.status = "healthy"
+    node.last_seen_at = now
+    node.capabilities = hb.capabilities.model_dump()
+    node.health = dict(hb.detail or {})
+    return node
 
 
 async def list_nodes(
@@ -171,10 +135,20 @@ async def list_nodes(
 
 
 async def _healthy_capable_nodes(
-    session: AsyncSession, capability: str
+    session: AsyncSession,
+    capability: str,
+    *,
+    timeout_seconds: int,
 ) -> list[Node]:
+    """Nodes that heartbeated within ``timeout_seconds`` and have ``capability``.
+
+    Phase 1.5: liveness is ``now - last_seen_at <= timeout_seconds`` (agent
+    heartbeat), NOT the old poll-written ``status == "healthy"``. Nodes that
+    never heartbeated (``last_seen_at`` NULL) are excluded.
+    """
+    cutoff = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
     result = await session.execute(
-        select(Node).where(Node.status == "healthy")
+        select(Node).where(Node.last_seen_at >= cutoff)
     )
     nodes = list(result.scalars().all())
     return [n for n in nodes if (n.capabilities or {}).get(capability)]
@@ -186,14 +160,17 @@ async def select_target_nodes(
     node_ids: list[str] | None = None,
     *,
     capability: str = "scrapy",
+    timeout_seconds: int = DEFAULT_HEARTBEAT_TIMEOUT_SECONDS,
 ) -> list[Node]:
-    """Pick target nodes for an execution: only ``healthy`` + ``capability``.
+    """Pick target nodes for an execution: heartbeat-live + ``capability``.
 
-    Applies the node strategy (all/random/selected) over the healthy set.
-    Raises a structured 409 when no usable node exists so the caller never
-    creates a half-baked running execution.
+    Applies the node strategy (all/random/selected) over the live set. Raises a
+    structured 409 when no usable node exists so the caller never creates a
+    half-baked running execution.
     """
-    candidates = await _healthy_capable_nodes(session, capability)
+    candidates = await _healthy_capable_nodes(
+        session, capability, timeout_seconds=timeout_seconds
+    )
     selected = reduce_nodes(_to_strategy(strategy), candidates, node_ids)
     if not selected:
         raise ApiError(
@@ -214,10 +191,12 @@ async def pick_deploy_node(
     node_ids: list[str] | None = None,
     *,
     capability: str = "scrapy",
+    timeout_seconds: int = DEFAULT_HEARTBEAT_TIMEOUT_SECONDS,
 ) -> Node:
     """Pick a single agent to deploy an egg to (specified first, else any)."""
     strategy = "selected" if node_ids else "all"
     nodes = await select_target_nodes(
-        session, strategy, node_ids, capability=capability
+        session, strategy, node_ids, capability=capability,
+        timeout_seconds=timeout_seconds,
     )
     return nodes[0]

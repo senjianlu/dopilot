@@ -34,7 +34,8 @@ def load_settings(path: str | None = None) -> Settings:
     ``DOPILOT_CONFIG`` environment variable. If neither is set, or the file is
     missing, a :class:`ConfigError` is raised.
 
-    The ``DOPILOT_DATABASE_URL`` env var, if set, overrides ``[database].url``.
+    The ``DOPILOT_DATABASE_URL`` env var, if set, overrides ``[database].url``;
+    ``DOPILOT_REDIS_URL`` likewise overrides ``[redis].url``.
     """
     resolved = path or os.environ.get("DOPILOT_CONFIG")
     if not resolved:
@@ -57,6 +58,10 @@ def load_settings(path: str | None = None) -> Settings:
     db_override = os.environ.get("DOPILOT_DATABASE_URL")
     if db_override:
         settings.database.url = db_override
+
+    redis_override = os.environ.get("DOPILOT_REDIS_URL")
+    if redis_override:
+        settings.redis.url = redis_override
 
     return settings
 

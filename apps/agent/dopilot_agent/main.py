@@ -30,6 +30,10 @@ from .config.loader import get_settings, load_settings
 from .config.settings import Settings
 from .deps import build_runtime
 from .errors import AgentError
+from .redis.client import build_redis
+from .redis.commands import CommandConsumer
+from .redis.events import EventPublisher
+from .redis.logs import LogPublisher
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -44,11 +48,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         runtime = app.state.runtime
+        s = runtime.settings
         if runtime.process is not None:
             runtime.process.start()
+        if runtime.heartbeat is not None:
+            runtime.heartbeat.start()
+
+        # Redis-backed command consumer + event publisher are built HERE (not in
+        # build_runtime) so the test ASGI path never constructs a real client.
+        redis_client = None
+        consumer: CommandConsumer | None = None
+        log_publisher: LogPublisher | None = None
+        if s.redis.url:
+            redis_client = build_redis(s.redis.url)
+            publisher = EventPublisher(
+                redis=redis_client,
+                agent_id=s.agent.agent_id,
+                runner=runtime.runner,
+                store=runtime.store,
+                outbox_dir=s.redis.event_outbox_dir or None,
+            )
+            consumer = CommandConsumer(
+                redis=redis_client,
+                agent_id=s.agent.agent_id,
+                runner=runtime.runner,
+                store=runtime.store,
+                events=publisher,
+                pending_idle_ms=s.redis.pending_idle_ms,
+                command_block_ms=s.redis.command_block_ms,
+            )
+            log_publisher = LogPublisher(
+                redis=redis_client,
+                agent_id=s.agent.agent_id,
+                store=runtime.store,
+                cursor_dir=str(runtime.store.dir / "logpos"),
+            )
+            consumer.start()
+            log_publisher.start()
+            app.state.command_consumer = consumer
         try:
             yield
         finally:
+            if log_publisher is not None:
+                await log_publisher.stop()
+            if consumer is not None:
+                await consumer.stop()
+            if redis_client is not None:
+                await redis_client.aclose()
+            if runtime.heartbeat is not None:
+                await runtime.heartbeat.stop()
             if runtime.process is not None:
                 runtime.process.stop()
 

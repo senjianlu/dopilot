@@ -4,8 +4,9 @@
 enables CORS for the Vite dev origins,
 registers the global :class:`ApiError` -> error-envelope handler, attaches the
 in-memory SSE :class:`SubscriptionManager`, and installs a lifespan that builds
-the async engine/session factory, the agent HTTP client, and the background log
-reconcile loop. The app NEVER creates tables (Alembic owns the schema).
+the async engine/session factory plus the phase-1.5 Redis runtime (command
+dispatcher + event/log consumers + heartbeat/event-stall reconcile loop, and the
+slim egg-deploy HTTP client). The app NEVER creates tables (Alembic owns it).
 
 Entrypoints:
 - console script ``dopilot-server`` -> :func:`run`
@@ -32,8 +33,12 @@ from .config.loader import get_settings, load_settings
 from .config.settings import Settings
 from .db.engine import dispose_engines, get_session, get_sessionmaker
 from .errors import ApiError
-from .logs.loop import ReconcileLoop
 from .logs.sse import SubscriptionManager
+from .redis.client import build_redis
+from .redis.commands import CommandProducer
+from .redis.consumers import EventConsumer, LogConsumer
+from .redis.dispatcher import CommandDispatcher
+from .redis.reconcile import RedisReconcileLoop
 
 CORS_ORIGINS = [
     "http://localhost:5173",
@@ -76,8 +81,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     ``settings`` may be injected (tests); otherwise the lifespan loads them via
     the cached ``get_settings`` dependency. The lifespan builds the async
-    session factory, the agent HTTP client, and the reconcile loop, and wires
-    the session factory into the ``get_session`` dependency override.
+    session factory and the Redis runtime (dispatcher + consumers + reconcile),
+    and wires the session factory into the ``get_session`` dependency override.
     """
 
     @asynccontextmanager
@@ -91,46 +96,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # Tests override get_session before the lifespan and use ASGITransport
         # (which does not run the lifespan at all). Only the real server path
-        # gets here with no override -> build the prod wiring (agent client +
-        # reconcile loop) only in that case.
+        # gets here with no override -> build the Redis runtime (command
+        # dispatcher + event/log consumers + reconcile loop) only in that case.
         owns_runtime = get_session not in app.dependency_overrides
-        loop: ReconcileLoop | None = None
-        http: httpx.AsyncClient | None = None
-        loop_engine = None
+        redis_client = None
+        bg_engine = None
+        egg_http: httpx.AsyncClient | None = None
+        dispatcher: CommandDispatcher | None = None
+        event_consumer: EventConsumer | None = None
+        log_consumer: LogConsumer | None = None
+        reconcile_loop: RedisReconcileLoop | None = None
         if owns_runtime:
             app.dependency_overrides[get_session] = _session_dependency
             # Expose the request sessionmaker so endpoints that outlive a normal
             # request (the SSE stream) can open a SHORT-LIVED preflight session
             # and release the pooled connection before streaming.
             app.state.sessionmaker = maker
-            http = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)
-            agent_client = AgentClient(http, active.agent_auth.shared_token)
-            app.state.agent_client = agent_client
-            app.state.agent_http = http
-            # The reconcile loop runs on its OWN engine/pool so that long-lived
-            # SSE connections pinning request-pool connections can never starve
-            # log draining / status polling.
-            loop_engine = create_async_engine(
+            # Background loops share ONE engine/pool, distinct from the request
+            # pool, so long-lived SSE connections can never starve dispatch /
+            # event-and-log consumption / reconcile.
+            bg_engine = create_async_engine(
                 active.database.url, pool_pre_ping=True, future=True
             )
-            loop_maker = async_sessionmaker(
-                bind=loop_engine, expire_on_commit=False
+            bg_maker = async_sessionmaker(bind=bg_engine, expire_on_commit=False)
+
+            # Surviving server->agent HTTP path: egg deploy only.
+            egg_http = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)
+            app.state.agent_client = AgentClient(
+                egg_http, active.agent_auth.shared_token
             )
-            loop = ReconcileLoop(
-                loop_maker, active, agent_client, app.state.subscriptions
+
+            redis_client = build_redis(active.redis.url)
+            producer = CommandProducer(redis_client, active.redis)
+            dispatcher = CommandDispatcher(bg_maker, producer)
+            event_consumer = EventConsumer(
+                bg_maker, redis_client, consumer_name=active.redis.consumer_name
             )
-            loop.start()
-            app.state.reconcile_loop = loop
+            log_consumer = LogConsumer(
+                bg_maker, redis_client, active, app.state.subscriptions,
+                consumer_name=active.redis.consumer_name,
+            )
+            reconcile_loop = RedisReconcileLoop(bg_maker, active)
+
+            dispatcher.start()
+            event_consumer.start()
+            log_consumer.start()
+            reconcile_loop.start()
+            app.state.command_dispatcher = dispatcher
+            app.state.redis = redis_client
         try:
             yield
         finally:
             if owns_runtime:
-                if loop is not None:
-                    await loop.stop()
-                if loop_engine is not None:
-                    await loop_engine.dispose()
-                if http is not None:
-                    await http.aclose()
+                for worker in (
+                    reconcile_loop, log_consumer, event_consumer, dispatcher
+                ):
+                    if worker is not None:
+                        await worker.stop()
+                if redis_client is not None:
+                    await redis_client.aclose()
+                if egg_http is not None:
+                    await egg_http.aclose()
+                if bg_engine is not None:
+                    await bg_engine.dispose()
                 app.dependency_overrides.pop(get_session, None)
                 await dispose_engines()
 

@@ -53,10 +53,15 @@ class ScrapyRunner:
         """scrapyd writes job logs to logs_dir/{project}/{spider}/{job}.log."""
         return self._logs_dir / project / spider / f"{job_id}.log"
 
-    async def run(self, req: AgentRunRequest) -> AgentRunResponse:
-        """Schedule a spider, persist attempt state, return the remote job id."""
+    async def schedule(self, req: AgentRunRequest) -> str:
+        """Schedule a spider on local scrapyd and return its job id.
+
+        No state is written here — the phase-1.5 command consumer manages the
+        two-phase ``reserved`` -> ``started`` state file around this call. Raises
+        :class:`RunnerError` on a scrapyd failure.
+        """
         try:
-            job_id = await self._client.schedule(
+            return await self._client.schedule(
                 req.project,
                 req.spider,
                 version=req.version,
@@ -68,6 +73,10 @@ class ScrapyRunner:
                 f"failed to schedule spider: {exc.message}",
                 detail={"project": req.project, "spider": req.spider, **exc.detail},
             ) from exc
+
+    async def run(self, req: AgentRunRequest) -> AgentRunResponse:
+        """Schedule a spider, persist attempt state, return the remote job id."""
+        job_id = await self.schedule(req)
 
         state = AttemptState(
             execution_id=req.execution_id,

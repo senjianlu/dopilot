@@ -11,16 +11,29 @@ from pydantic import BaseModel, Field
 
 
 class AgentSettings(BaseModel):
-    """Identity and HTTP bind settings for this agent."""
+    """Identity and HTTP bind settings for this agent.
+
+    Phase 1.5 adds the agent -> server contact details: ``server_url`` (where the
+    agent POSTs heartbeats), ``heartbeat_interval_seconds``, and
+    ``server_shared_token`` (the agent -> server token, distinct from the
+    server -> agent :class:`AuthSettings.shared_token`).
+    """
 
     agent_id: str
     host: str = "0.0.0.0"
     port: int = 6800
     workdir: str = "/agent-data"
+    server_url: str = ""
+    heartbeat_interval_seconds: int = 10
+    server_shared_token: str = ""
+    # The server-reachable base endpoint this agent advertises in its heartbeat
+    # (e.g. "agent:6800" in compose). Used by the surviving egg-deploy HTTP path;
+    # empty => not advertised (the server keeps any previously-known endpoint).
+    advertise_endpoint: str = ""
 
 
 class AuthSettings(BaseModel):
-    """Server->agent shared-token auth.
+    """Server->agent shared-token auth (used by the surviving egg-deploy path).
 
     Auth is enabled iff ``shared_token`` is non-empty.
     """
@@ -30,6 +43,24 @@ class AuthSettings(BaseModel):
     @property
     def enabled(self) -> bool:
         return bool(self.shared_token)
+
+
+class RedisSettings(BaseModel):
+    """``[redis]`` — agent-side Redis Streams transport (phase 1.5).
+
+    The agent consumes its command stream and publishes status/log events; it
+    never connects to PostgreSQL. ``event_outbox_dir`` holds the durable local
+    event outbox replayed on restart.
+    """
+
+    url: str = "redis://redis:6379/0"
+    command_block_ms: int = 5000
+    pending_idle_ms: int = 30000
+    event_outbox_dir: str = "/agent-data/outbox"
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.url)
 
 
 class Capabilities(BaseModel):
@@ -65,3 +96,4 @@ class Settings(BaseModel):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     capabilities: Capabilities = Field(default_factory=Capabilities)
     scrapyd: ScrapydSettings = Field(default_factory=ScrapydSettings)
+    redis: RedisSettings = Field(default_factory=RedisSettings)

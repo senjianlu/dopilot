@@ -9,14 +9,27 @@ agent_id = "scrapy-agent-1"
 host = "0.0.0.0"
 port = 6800
 workdir = "/agent-data"
+# Phase 1.5: where the agent POSTs heartbeats, and the agent -> server token
+# (must match the server's [agents].server_shared_token).
+server_url = "http://server:5000"
+heartbeat_interval_seconds = 10
+server_shared_token = "change-me-agent-server-token"
 
 [auth]
+# server -> agent token (egg deploy). Must match server's [agent_auth].shared_token.
 shared_token = "change-me-agent-token"
 
 [capabilities]
 scrapy = true
 script = false
 docker = false
+
+# Redis Streams transport (phase 1.5). Reach redis by compose service name.
+[redis]
+url = "redis://:change-me-redis-pass@redis:6379/0"
+command_block_ms = 5000
+pending_idle_ms = 30000
+event_outbox_dir = "/agent-data/outbox"
 
 # Local scrapyd subprocess the agent owns.
 # host/port are container-internal (NEVER exposed to the host); the server only

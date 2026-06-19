@@ -19,8 +19,10 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs
 
+import fakeredis.aioredis as fakeaioredis
 import httpx
 import pytest
 import pytest_asyncio
@@ -45,6 +47,7 @@ from dopilot_agent.scrapyd.client import ScrapydClient
 from dopilot_agent.state.store import StateStore
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 BASE_URL = "http://agent.test"
 TEST_TOKEN = "test-shared-token"
@@ -165,6 +168,107 @@ class FakeScrapyd:
         return httpx.Response(
             200, json={"status": "ok", "spiders": self.spiders}
         )
+
+
+class FakeRedisStreams:
+    """In-memory Redis Streams double backed by ``fakeredis.aioredis``.
+
+    Pass ``server=`` (a ``fakeredis.FakeServer``) to share one in-memory store
+    across clients. Set ``fail_xadd`` / ``fail_streams`` to simulate Redis being
+    unavailable for publishing (event-outbox replay tests).
+    """
+
+    def __init__(self, *, server: Any = None) -> None:
+        kwargs: dict[str, Any] = {"decode_responses": False}
+        if server is not None:
+            kwargs["server"] = server
+        self._c = fakeaioredis.FakeRedis(**kwargs)
+        self.server = server
+        self.fail_xadd = False
+        self.fail_streams: set[str] = set()
+        self.calls: list[tuple[str, Any]] = []
+
+    async def xadd(
+        self,
+        stream: str,
+        fields: dict[Any, Any],
+        *,
+        maxlen: int | None = None,
+        approximate: bool = True,
+    ) -> Any:
+        self.calls.append(("xadd", stream))
+        if self.fail_xadd or stream in self.fail_streams:
+            raise RedisConnectionError("fake redis: xadd disabled")
+        return await self._c.xadd(stream, fields, maxlen=maxlen, approximate=approximate)
+
+    async def xreadgroup(
+        self,
+        group: str,
+        consumer: str,
+        streams: dict[str, str],
+        *,
+        count: int | None = None,
+        block: int | None = None,
+    ) -> Any:
+        return await self._c.xreadgroup(group, consumer, streams, count=count, block=block)
+
+    async def xack(self, stream: str, group: str, *ids: Any) -> int:
+        return await self._c.xack(stream, group, *ids)
+
+    async def xautoclaim(
+        self,
+        stream: str,
+        group: str,
+        consumer: str,
+        min_idle_ms: int,
+        start: str = "0-0",
+        *,
+        count: int = 100,
+    ) -> Any:
+        return await self._c.xautoclaim(stream, group, consumer, min_idle_ms, start, count=count)
+
+    async def ensure_group(self, stream: str, group: str) -> None:
+        try:
+            await self._c.xgroup_create(stream, group, id="0", mkstream=True)
+        except Exception as exc:  # BUSYGROUP if it already exists
+            if "BUSYGROUP" not in str(exc):
+                raise
+
+    async def xlen(self, stream: str) -> int:
+        return await self._c.xlen(stream)
+
+    async def aclose(self) -> None:
+        await self._c.aclose()
+
+    # --- test-only helpers -------------------------------------------------
+    async def entries(self, stream: str) -> list[tuple[Any, dict[Any, Any]]]:
+        return await self._c.xrange(stream)
+
+    async def pending_count(self, stream: str, group: str) -> int:
+        info = await self._c.xpending(stream, group)
+        return int(info["pending"]) if info else 0
+
+
+@pytest.fixture
+def fake_server() -> Any:
+    import fakeredis
+
+    return fakeredis.FakeServer()
+
+
+@pytest_asyncio.fixture
+async def fake_redis() -> AsyncIterator[Any]:
+    """Factory building FakeRedisStreams instances, all closed on teardown."""
+    created: list[FakeRedisStreams] = []
+
+    def _make(*, server: Any = None) -> FakeRedisStreams:
+        fr = FakeRedisStreams(server=server)
+        created.append(fr)
+        return fr
+
+    yield _make
+    for fr in created:
+        await fr.aclose()
 
 
 def _build_app(settings: Settings) -> FastAPI:

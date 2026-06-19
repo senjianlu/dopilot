@@ -27,6 +27,15 @@ def _write_toml(tmp_path) -> str:
 
             [nodes]
             agents = ["agent-a:9100", "agent-b:9100"]
+
+            [redis]
+            url = "redis://:pw@redis:6379/2"
+            stream_maxlen_logs = 500000
+            consumer_name = "server-x"
+
+            [agents]
+            heartbeat_timeout_seconds = 15
+            server_shared_token = "agent-server-tok"
             """
         ),
         encoding="utf-8",
@@ -42,13 +51,39 @@ def test_load_from_toml(tmp_path):
     assert settings.auth.enabled is True
 
 
+def test_redis_and_agents_sections_parse(tmp_path):
+    settings = load_settings(_write_toml(tmp_path))
+    assert settings.redis.url == "redis://:pw@redis:6379/2"
+    assert settings.redis.stream_maxlen_logs == 500000
+    assert settings.redis.consumer_name == "server-x"
+    # defaults for unspecified fields
+    assert settings.redis.require_aof is True
+    assert settings.redis.enabled is True
+    assert settings.agents.heartbeat_timeout_seconds == 15
+    assert settings.agents.stalled_attempt_seconds == 300  # default
+    assert settings.agents.server_shared_token == "agent-server-tok"
+    assert settings.agents.inbound_auth_enabled is True
+
+
+def test_redis_agents_defaults_when_absent(tmp_path):
+    path = tmp_path / "minimal.toml"
+    path.write_text('[server]\nhost = "x"\n', encoding="utf-8")
+    settings = load_settings(str(path))
+    assert settings.redis.url == "redis://localhost:6379/0"
+    assert settings.agents.heartbeat_timeout_seconds == 30
+    assert settings.agents.inbound_auth_enabled is False  # no inbound token => off
+    assert settings.logs.log_drain_timeout_seconds == 30
+
+
 def test_env_override_wins(tmp_path, monkeypatch):
     monkeypatch.setenv(
         "DOPILOT_DATABASE_URL",
         "postgresql+psycopg://dopilot:dopilot@override:5432/dopilot",
     )
+    monkeypatch.setenv("DOPILOT_REDIS_URL", "redis://envhost:6390/9")
     settings = load_settings(_write_toml(tmp_path))
     assert "override:5432" in settings.database.url
+    assert settings.redis.url == "redis://envhost:6390/9"
 
 
 def test_missing_config_raises(monkeypatch):

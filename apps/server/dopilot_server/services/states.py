@@ -82,6 +82,12 @@ _EXEC_EDGES: dict[str, frozenset[str]] = {
             EXEC_LOST,
         }
     ),
+    # Phase 1.5: execution `lost` is a SOFT terminal (mirrors attempt `lost`).
+    # When a lost attempt is overridden by a later agent-authoritative terminal,
+    # its execution re-rolls to the correct terminal.
+    EXEC_LOST: frozenset(
+        {EXEC_LOST, EXEC_COMPLETE, EXEC_FAILED, EXEC_CANCELED}
+    ),
 }
 
 _ATTEMPT_EDGES: dict[str, frozenset[str]] = {
@@ -104,17 +110,28 @@ _ATTEMPT_EDGES: dict[str, frozenset[str]] = {
             ATTEMPT_LOST,
         }
     ),
+    # Phase 1.5: `lost` is a SOFT terminal. A later agent-authoritative terminal
+    # (finished/failed/canceled) may override it (recorded as
+    # reconciled_from=lost). finished/failed/canceled stay mutually
+    # non-transitionable. See refactor/00 §状态事件可靠性.
+    ATTEMPT_LOST: frozenset(
+        {ATTEMPT_LOST, ATTEMPT_FINISHED, ATTEMPT_FAILED, ATTEMPT_CANCELED}
+    ),
 }
 
 
 def is_valid_execution_transition(old: str, new: str) -> bool:
-    if old in EXEC_TERMINAL:
+    # `lost` is the one soft execution terminal (overridable when its attempt is
+    # reconciled); all other terminals only permit the same->same no-op.
+    if old in EXEC_TERMINAL and old != EXEC_LOST:
         return old == new
     return new in _EXEC_EDGES.get(old, frozenset())
 
 
 def is_valid_attempt_transition(old: str, new: str) -> bool:
-    if old in ATTEMPT_TERMINAL:
+    # `lost` is the one soft terminal: its override out-edges live in
+    # _ATTEMPT_EDGES; all other terminals only permit the same->same no-op.
+    if old in ATTEMPT_TERMINAL and old != ATTEMPT_LOST:
         return old == new
     return new in _ATTEMPT_EDGES.get(old, frozenset())
 
