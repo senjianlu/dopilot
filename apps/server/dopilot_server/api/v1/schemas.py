@@ -318,8 +318,7 @@ class LogSnapshot(BaseModel):
     """A landed log slice returned by ``GET /tasks/{task_id}/logs``.
 
     Public ids: ``task_id`` is the parent task, ``execution_id`` the atomic
-    per-node execution. Internally these map to the frozen seam
-    ``execution_id`` / ``attempt_id`` on the log index.
+    per-node execution — the same names used on the log index.
     """
 
     task_id: str

@@ -1,7 +1,7 @@
 """On-disk log body store.
 
-Bodies live at ``{root}/YYYY/MM/{execution_id}/{attempt_id}.log`` (stream=log)
-or ``{attempt_id}.{stream}.log`` for other streams. PostgreSQL stores only the
+Bodies live at ``{root}/YYYY/MM/{task_id}/{execution_id}.log`` (stream=log)
+or ``{execution_id}.{stream}.log`` for other streams. PostgreSQL stores only the
 offset/index; this module is the body side.
 
 Writes are append-only and offset-idempotent: :func:`write_increment` is safe to
@@ -24,17 +24,21 @@ class LogGapError(Exception):
 def log_path(
     root_dir: str,
     when: datetime,
+    task_id: str,
     execution_id: str,
-    attempt_id: str,
     stream: str = "log",
 ) -> str:
-    """Compute the body path for one attempt+stream (stable for an execution)."""
-    name = f"{attempt_id}.log" if stream == "log" else f"{attempt_id}.{stream}.log"
+    """Compute the body path for one execution+stream (stable for an execution)."""
+    name = (
+        f"{execution_id}.log"
+        if stream == "log"
+        else f"{execution_id}.{stream}.log"
+    )
     return str(
         Path(root_dir)
         / f"{when.year:04d}"
         / f"{when.month:02d}"
-        / execution_id
+        / task_id
         / name
     )
 
@@ -90,8 +94,8 @@ def remove(path: str) -> bool:
     """Delete one log body file; return True if a file was removed.
 
     Best-effort: a missing file is not an error (returns False). After removing
-    the file, the now-possibly-empty per-execution parent directory is pruned
-    (also best-effort) so manual cleanup does not leave empty ``{execution_id}/``
+    the file, the now-possibly-empty per-task parent directory is pruned
+    (also best-effort) so manual cleanup does not leave empty ``{task_id}/``
     shells behind. Higher directories (YYYY/MM) are left intact.
     """
     removed = False

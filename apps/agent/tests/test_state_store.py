@@ -1,4 +1,4 @@
-"""Unit tests for the atomic per-attempt state store."""
+"""Unit tests for the atomic per-execution state store."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ from pathlib import Path
 from dopilot_agent.state.store import AttemptState, StateStore
 
 
-def _state(attempt_id: str = "a1", job_id: str = "job-1") -> AttemptState:
+def _state(execution_id: str = "a1", job_id: str = "job-1") -> AttemptState:
     return AttemptState(
-        execution_id="exec-1",
-        attempt_id=attempt_id,
+        task_id="exec-1",
+        execution_id=execution_id,
         scrapyd_job_id=job_id,
         project="demo",
         version="1",
@@ -25,7 +25,7 @@ def test_write_then_read_roundtrip(tmp_path: Path) -> None:
 
     got = store.read("a1")
     assert got is not None
-    assert got.execution_id == "exec-1"
+    assert got.task_id == "exec-1"
     assert got.scrapyd_job_id == "job-1"
     assert got.spider == "phase1"
     assert got.canceled is False
@@ -51,7 +51,7 @@ def test_read_corrupt_half_json_returns_none(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state")
     store.dir.mkdir(parents=True, exist_ok=True)
     # Simulate a crash mid-write: truncated JSON.
-    store.path_for("a1").write_text('{"execution_id": "exec-1", "att', encoding="utf-8")
+    store.path_for("a1").write_text('{"task_id": "exec-1", "exe', encoding="utf-8")
     assert store.read("a1") is None
 
 
@@ -71,12 +71,12 @@ def test_delete_idempotent(tmp_path: Path) -> None:
     assert store.read("a1") is None
 
 
-def test_list_attempt_ids(tmp_path: Path) -> None:
+def test_list_execution_ids(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state")
-    assert store.list_attempt_ids() == []
-    store.write(_state(attempt_id="a1"))
-    store.write(_state(attempt_id="a2"))
-    assert store.list_attempt_ids() == ["a1", "a2"]
+    assert store.list_execution_ids() == []
+    store.write(_state(execution_id="a1"))
+    store.write(_state(execution_id="a2"))
+    assert store.list_execution_ids() == ["a1", "a2"]
 
 
 def test_updated_at_refreshed_on_rewrite(tmp_path: Path) -> None:

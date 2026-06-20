@@ -25,7 +25,6 @@ async def request_cancel(
     session: AsyncSession, dispatcher: CommandDispatcher, task: Task
 ) -> int:
     """Request cancel of ``task``; returns the number of stop commands sent."""
-    # wire seam: outbox rows key on execution_id = task id, attempt_id = exec id.
     await cancel_unsent_outbox(session, task.id)
     executions = await svc.list_executions(session, task.id)
     stops = []
@@ -35,8 +34,8 @@ async def request_cancel(
         stops.append(
             create_stop_outbox(
                 session,
-                execution_id=task.id,
-                attempt_id=execution.id,
+                task_id=task.id,
+                execution_id=execution.id,
                 agent_id=execution.agent_id or "",
                 intent=StopIntent.cancel,
             )

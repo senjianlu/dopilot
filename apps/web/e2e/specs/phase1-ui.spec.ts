@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import {
   AGENT_IDS,
+  confirmMessageBox,
   login,
   selectOption,
   waitForExecutionCount,
@@ -69,11 +70,13 @@ test("nodes page renders the three agents as scrapy-healthy", async () => {
     await expect(page.getByTestId(`node-badge-${agentId}`)).toHaveClass(
       /el-tag--success/,
     );
-    // The scrapyd subprocess cell renders. NOTE: the heartbeat health snapshot
-    // carries scrapyd {port, managed} but not a live `running` probe (that lives
-    // only on the agent's own /health, used by the bash dispatch oracle), so
-    // this tag legitimately reads "unknown" here — assert it renders, not green.
-    await expect(page.getByTestId(`node-scrapyd-${agentId}`)).toBeVisible();
+    // The scrapy capability tag renders. Phase 1.8.2 replaced the standalone
+    // scrapyd-subprocess health column with a per-capability tag column, so the
+    // "scrapy-capable" signal is now this cap tag (node-cap-{agentId}-scrapy),
+    // not the removed node-scrapyd-* cell.
+    await expect(
+      page.getByTestId(`node-cap-${agentId}-scrapy`),
+    ).toBeVisible();
   }
   const rendered = await page
     .locator('[data-testid^="node-agent-"]')
@@ -197,22 +200,27 @@ test("nodes page offline/online/delete actions update visible state", async () =
   await expect(page.getByTestId("nodes-table")).toBeVisible();
 
   // Take scrapy-agent-1 offline -> red (danger) badge, online control appears.
+  // Phase 1.8.2: offline is a confirmed (ElMessageBox) action.
   const offlineTarget = "scrapy-agent-1";
   await page.getByTestId(`node-offline-${offlineTarget}`).click();
+  await confirmMessageBox(page);
   await expect(page.getByTestId(`node-badge-${offlineTarget}`)).toHaveClass(
     /el-tag--danger/,
   );
   await expect(page.getByTestId(`node-online-${offlineTarget}`)).toBeVisible();
 
   // Bring it back online -> green (success) badge, schedulable again.
+  // Online is not a confirmed action (no message box).
   await page.getByTestId(`node-online-${offlineTarget}`).click();
   await expect(page.getByTestId(`node-badge-${offlineTarget}`)).toHaveClass(
     /el-tag--success/,
   );
 
   // Soft-delete scrapy-agent-3 -> gray (info) badge, no action controls left.
+  // Phase 1.8.2: delete is a confirmed (ElMessageBox) action.
   const deleteTarget = "scrapy-agent-3";
   await page.getByTestId(`node-delete-${deleteTarget}`).click();
+  await confirmMessageBox(page);
   await expect(page.getByTestId(`node-badge-${deleteTarget}`)).toHaveClass(
     /el-tag--info/,
   );

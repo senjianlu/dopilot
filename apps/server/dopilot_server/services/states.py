@@ -6,9 +6,8 @@ phase-1.5 names — see ``docs/phases/phase-1.7/00-brief.md``):
 - **task**: the parent logical run (was ``execution``). One task fans out to one
   atomic execution per selected healthy node.
 - **execution**: the atomic per-node unit (was ``attempt``). It is the agent's
-  idempotency key on the Redis/disk/agent seam, where it is still called
-  ``attempt_id`` (see the wire seam note in
-  :mod:`dopilot_protocol.streams`).
+  idempotency key on the Redis/disk/agent wire, where it is called
+  ``execution_id`` (see :mod:`dopilot_protocol.streams`).
 
 Server-side states (not the agent's :class:`dopilot_protocol.AttemptStatus`):
 

@@ -46,8 +46,8 @@ async def test_create_run_outbox_same_tx(db_session):
     task, execution = await _seed_task(db_session)
     row = outbox.create_run_outbox(
         db_session,
-        execution_id=task.id,
-        attempt_id=execution.id,
+        task_id=task.id,
+        execution_id=execution.id,
         agent_id="agent-1",
         payload={"project": "demo", "spider": "phase1"},
         manual=True,
@@ -70,16 +70,16 @@ async def test_cancel_unsent_outbox_cas(db_session):
     task, execution = await _seed_task(db_session)
     pending = outbox.create_run_outbox(
         db_session,
-        execution_id=task.id,
-        attempt_id=execution.id,
+        task_id=task.id,
+        execution_id=execution.id,
         agent_id="agent-1",
         payload={},
         manual=False,
     )
     sent = outbox.create_stop_outbox(
         db_session,
-        execution_id=task.id,
-        attempt_id=execution.id,
+        task_id=task.id,
+        execution_id=execution.id,
         agent_id="agent-1",
         intent=StopIntent.cancel,
     )
@@ -95,7 +95,7 @@ async def test_cancel_unsent_outbox_cas(db_session):
         for r in (
             await db_session.execute(
                 select(CommandOutbox).where(
-                    CommandOutbox.execution_id == task.id
+                    CommandOutbox.task_id == task.id
                 )
             )
         ).scalars()
@@ -111,8 +111,8 @@ async def test_coalesce_true_for_undispatched_backlog(db_session):
     )
     outbox.create_run_outbox(
         db_session,
-        execution_id=task.id,
-        attempt_id=execution.id,
+        task_id=task.id,
+        execution_id=execution.id,
         agent_id="agent-1",
         payload={},
         manual=False,
@@ -136,8 +136,8 @@ async def test_coalesce_false_when_running(db_session):
     )
     row = outbox.create_run_outbox(
         db_session,
-        execution_id=task.id,
-        attempt_id=execution.id,
+        task_id=task.id,
+        execution_id=execution.id,
         agent_id="agent-1",
         payload={},
         manual=False,
@@ -158,8 +158,8 @@ async def test_coalesce_false_when_queued_but_dispatched(db_session):
     )
     row = outbox.create_run_outbox(
         db_session,
-        execution_id=task.id,
-        attempt_id=execution.id,
+        task_id=task.id,
+        execution_id=execution.id,
         agent_id="agent-1",
         payload={},
         manual=False,

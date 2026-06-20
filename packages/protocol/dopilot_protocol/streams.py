@@ -19,15 +19,13 @@ server and agent cannot drift: a stream message is a single ``data`` field
 holding the model's JSON body. Everything here is pure (pydantic + stdlib); the
 ``redis`` dependency lives in each app, never in this shared package.
 
-⚠️ **Naming seam (phase 1.7).** The server domain renamed its parent/atomic
-entities to *task* (parent logical run) and *execution* (atomic per-node unit),
-but this wire is a STABLE SEAM and was deliberately NOT renamed: every
-``execution_id`` field below is the **task id**, and every ``attempt_id`` is the
-**atomic execution id** (the agent's idempotency key + state-file name + on-disk
-``{execution_id}/{attempt_id}.log`` path component). The agent is unchanged; the
-server's event/log consumers translate these seam names to the task/execution
-domain at the boundary. Do not rename these fields without also versioning the
-agent.
+Naming (phase 2a clean-cut). The wire ids now match the server domain directly:
+``task_id`` is the **task id** (parent logical run, ``Task.id``) and
+``execution_id`` is the **atomic execution id** (``Execution.id``) — the agent's
+idempotency key + state-file name + on-disk ``{task_id}/{execution_id}.log`` path
+component. There is no longer a seam translation: the server's event/log
+consumers read these names as-is. The wire cannot be half-renamed, so protocol,
+server, and agent ship as one lockstep version.
 """
 
 from __future__ import annotations
@@ -93,7 +91,7 @@ class AgentCommand(BaseModel):
     """A single command on ``dopilot:agent:{agent_id}:commands``.
 
     ``command_id`` is the outbox row / audit id, NOT the agent execution
-    idempotency key — that is always ``attempt_id``. ``intent`` is required when
+    idempotency key — that is always ``execution_id``. ``intent`` is required when
     ``type == stop``. For ``type == run`` the scrapy params live in ``payload``
     (project/spider/version/settings/args).
     """
@@ -101,8 +99,8 @@ class AgentCommand(BaseModel):
     command_id: str
     type: AgentCommandType
     agent_id: str
+    task_id: str
     execution_id: str
-    attempt_id: str
     task_type: str = "scrapy"
     intent: StopIntent | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -191,8 +189,8 @@ class AgentEvent(BaseModel):
 
     event_id: str
     agent_id: str
+    task_id: str
     execution_id: str
-    attempt_id: str
     type: AgentEventType
     remote_job_id: str | None = None
     exit_code: int | None = None
@@ -223,8 +221,8 @@ class AgentLogEvent(BaseModel):
     """
 
     agent_id: str
+    task_id: str
     execution_id: str
-    attempt_id: str
     stream: LogStream = LogStream.log
     offset: int
     content_b64: str

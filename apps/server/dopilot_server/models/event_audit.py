@@ -41,7 +41,7 @@ class EventAudit(Base):
     stream: Mapped[str] = mapped_column(String, nullable=False)
     redis_msg_id: Mapped[str] = mapped_column(String, nullable=False)
     event_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    attempt_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    execution_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String, nullable=False)
     # applied | skipped_dup | skipped_terminal | override_lost
     outcome: Mapped[str] = mapped_column(String, nullable=False)

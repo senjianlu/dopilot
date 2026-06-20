@@ -86,8 +86,8 @@ class CommandDispatcher:
             command_id=row.command_id,
             type=AgentCommandType(row.type),
             agent_id=row.agent_id,
+            task_id=row.task_id,
             execution_id=row.execution_id,
-            attempt_id=row.attempt_id,
             task_type=str((row.payload or {}).get("task_type", "scrapy")),
             intent=StopIntent(row.intent) if row.intent else None,
             payload=dict(row.payload or {}),
@@ -109,9 +109,8 @@ class CommandDispatcher:
             return DispatchResult("skipped", error="canceled")
 
         # run short-circuit: don't (re)start a task for a terminal task.
-        # wire seam: row.execution_id is the parent task id.
         if row.type == "run":
-            task = await svc.get_task(session, row.execution_id)
+            task = await svc.get_task(session, row.task_id)
             if task is None or task.status in states.TASK_TERMINAL:
                 row.status = OUTBOX_CANCELED
                 row.last_error = "execution_not_dispatchable"
@@ -142,14 +141,12 @@ class CommandDispatcher:
     ) -> None:
         """Mark a ``run`` row's execution/task failed with dispatch_timeout."""
         now = datetime.now(UTC)
-        # wire seam: row.attempt_id = atomic execution id, row.execution_id =
-        # parent task id.
-        execution = await svc.get_execution(session, row.attempt_id)
+        execution = await svc.get_execution(session, row.execution_id)
         if execution is not None and execution.status in states.EXEC_ACTIVE:
             execution.status = states.EXEC_FAILED
             execution.error_code = DISPATCH_TIMEOUT
             execution.finished_at = now
-        task = await svc.get_task(session, row.execution_id)
+        task = await svc.get_task(session, row.task_id)
         if task is not None and task.status in states.TASK_ACTIVE:
             task.status = states.TASK_FAILED
             task.finished_at = now

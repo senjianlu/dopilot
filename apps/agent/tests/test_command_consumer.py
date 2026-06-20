@@ -37,8 +37,8 @@ class FakeArtifactCache:
         self.calls: list[tuple[dict, str]] = []
         self.error: ArtifactCacheError | None = None
 
-    async def ensure(self, artifact: dict, *, attempt_id: str) -> None:
-        self.calls.append((artifact, attempt_id))
+    async def ensure(self, artifact: dict, *, execution_id: str) -> None:
+        self.calls.append((artifact, execution_id))
         if self.error is not None:
             raise self.error
 
@@ -74,7 +74,7 @@ def _build(
 
 
 def _run_cmd(
-    attempt_id="a1", execution_id="e1", command="scrapy crawl phase1"
+    execution_id="a1", task_id="e1", command="scrapy crawl phase1"
 ) -> AgentCommand:
     # Command-first payload: the agent parses ``command`` and resolves
     # project/version from the build-artifact context.
@@ -82,15 +82,15 @@ def _run_cmd(
         command_id=uuid.uuid4().hex,
         type=AgentCommandType.run,
         agent_id=AGENT_ID,
+        task_id=task_id,
         execution_id=execution_id,
-        attempt_id=attempt_id,
         payload={"command": command, "artifact": {"project": "demo"}},
         created_at="t",
     )
 
 
-def _artifact_run_cmd(attempt_id="a1", execution_id="e1") -> AgentCommand:
-    cmd = _run_cmd(attempt_id=attempt_id, execution_id=execution_id)
+def _artifact_run_cmd(execution_id="a1", task_id="e1") -> AgentCommand:
+    cmd = _run_cmd(execution_id=execution_id, task_id=task_id)
     cmd.payload = {
         "command": "scrapy crawl phase1",
         "artifact": {
@@ -103,13 +103,13 @@ def _artifact_run_cmd(attempt_id="a1", execution_id="e1") -> AgentCommand:
     return cmd
 
 
-def _stop_cmd(intent: StopIntent, attempt_id="a1", execution_id="e1") -> AgentCommand:
+def _stop_cmd(intent: StopIntent, execution_id="a1", task_id="e1") -> AgentCommand:
     return AgentCommand(
         command_id=uuid.uuid4().hex,
         type=AgentCommandType.stop,
         agent_id=AGENT_ID,
+        task_id=task_id,
         execution_id=execution_id,
-        attempt_id=attempt_id,
         intent=intent,
         created_at="t",
     )
@@ -220,7 +220,7 @@ async def test_run_invalid_command_emits_failed(workdir, fake_redis):
     assert events[-1].error_code == "command_invalid"
 
 
-async def test_duplicate_attempt_id_does_not_restart(workdir, fake_redis):
+async def test_duplicate_execution_id_does_not_restart(workdir, fake_redis):
     fake = fake_redis()
     scrapyd = FakeScrapyd()
     store, _runner, consumer = _build(workdir, scrapyd, fake)
@@ -228,7 +228,7 @@ async def test_duplicate_attempt_id_does_not_restart(workdir, fake_redis):
 
     cmd = _run_cmd()
     await fake.xadd(STREAM, to_stream_entry(cmd))
-    await fake.xadd(STREAM, to_stream_entry(cmd))  # re-delivered same attempt_id
+    await fake.xadd(STREAM, to_stream_entry(cmd))  # re-delivered same execution_id
     await consumer.drain_once()
 
     # scheduled only once; the dup re-emits current status (running)
@@ -272,7 +272,7 @@ async def test_concurrent_same_attempt_one_start(workdir, fake_redis):
     await fake.xadd(STREAM, to_stream_entry(cmd))
     msgs = await fake.xreadgroup(COMMAND_GROUP, AGENT_ID, {STREAM: ">"}, count=10)
     entries = msgs[0][1]
-    # process both concurrently: the per-attempt lock + O_EXCL guarantee one start
+    # process both concurrently: the per-execution lock + O_EXCL guarantee one start
     await asyncio.gather(
         consumer._process(entries[0][0], entries[0][1]),
         consumer._process(entries[1][0], entries[1][1]),
@@ -307,7 +307,7 @@ async def test_reserved_orphan_recovered_as_spawn_aborted(workdir, fake_redis):
 
     # pre-create a reserved file with no spawn (crash between reserve & schedule)
     store.create_reserved(
-        execution_id="e1", attempt_id="a1", project="demo", spider="phase1"
+        task_id="e1", execution_id="a1", project="demo", spider="phase1"
     )
     recovered = await consumer.recover_reserved_orphans()
     assert recovered == 1
@@ -324,7 +324,7 @@ async def test_stop_cancel_emits_canceled_even_if_gone(workdir, fake_redis):
     store, _runner, consumer = _build(workdir, scrapyd, fake)
     await consumer.setup()
 
-    # cancel an attempt with NO local state (process/state already gone)
+    # cancel an execution with NO local state (process/state already gone)
     await fake.xadd(STREAM, to_stream_entry(_stop_cmd(StopIntent.cancel)))
     await consumer.drain_once()
     assert await _event_types(fake) == [AgentEventType.canceled]
@@ -381,8 +381,8 @@ async def test_cleanup_logs_removes_state_and_log(workdir, fake_redis):
         command_id=uuid.uuid4().hex,
         type=AgentCommandType.cleanup_logs,
         agent_id=AGENT_ID,
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         created_at="t",
     )
     await fake.xadd(STREAM, to_stream_entry(cleanup))

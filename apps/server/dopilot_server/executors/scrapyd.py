@@ -12,8 +12,8 @@ synchronously dispatches each ``run`` command to the agent command stream:
 - XADD succeeded but the ``sent`` mark fails to commit -> 202 ``dispatch_unknown``
   (the command may already be running; never report "not delivered").
 
-⚠️ Wire seam unchanged: the command outbox row keys ``execution_id`` = task id
-and ``attempt_id`` = atomic execution id, matching the agent payloads.
+The command outbox row keys ``task_id`` = :class:`Task` id and ``execution_id``
+= atomic :class:`Execution` id, matching the agent payloads.
 
 The agent then drives its local scrapyd; the event/log consumers + reconcile
 loop take over. No server->agent HTTP.
@@ -85,9 +85,8 @@ class ScrapydExecutor(BaseExecutor):
             execution = svc.create_execution(ctx.session, task, node)
             outbox = create_run_outbox(
                 ctx.session,
-                # wire seam: execution_id = task id, attempt_id = execution id.
-                execution_id=task.id,
-                attempt_id=execution.id,
+                task_id=task.id,
+                execution_id=execution.id,
                 agent_id=node.agent_id or "",
                 payload=payload,
                 manual=True,

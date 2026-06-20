@@ -38,8 +38,8 @@ async def test_xadd_read_ack_roundtrip(fake_redis) -> None:
         command_id="c1",
         type=AgentCommandType.run,
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         payload={"project": "demo", "spider": "s1"},
         created_at="t",
     )
@@ -68,8 +68,8 @@ async def test_xautoclaim_recovers_unacked_pending(fake_redis) -> None:
         command_id="c1",
         type=AgentCommandType.run,
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         created_at="t",
     )
     await r.xadd(stream, to_stream_entry(cmd))
@@ -84,7 +84,7 @@ async def test_xautoclaim_recovers_unacked_pending(fake_redis) -> None:
     )
     assert len(claimed) == 1
     _id, fields = claimed[0]
-    assert from_stream_entry(AgentCommand, fields).attempt_id == "a1"
+    assert from_stream_entry(AgentCommand, fields).execution_id == "a1"
 
 
 @pytest.mark.asyncio
@@ -112,8 +112,8 @@ async def test_shared_server_is_visible_across_clients(fake_redis, fake_server) 
         command_id="c1",
         type=AgentCommandType.run,
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         created_at="t",
     )
     await producer.xadd(stream, to_stream_entry(cmd))

@@ -37,8 +37,8 @@ def _store_with_attempts(workdir: Path, n: int) -> StateStore:
     for i in range(n):
         store.write(
             AttemptState(
-                execution_id=f"e{i}",
-                attempt_id=f"a{i}",
+                task_id=f"e{i}",
+                execution_id=f"a{i}",
                 scrapyd_job_id=f"job-{i}",
                 project="demo",
                 spider="phase1",

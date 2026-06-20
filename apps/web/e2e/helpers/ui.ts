@@ -24,6 +24,16 @@ export async function login(page: Page): Promise<void> {
   await expect(page.getByTestId("app-shell")).toBeVisible({ timeout: 30_000 });
 }
 
+// Accept the Element Plus confirmation message box. Phase 1.8.2 routed the
+// node offline/delete actions through @/utils/confirm (ElMessageBox.confirm), so
+// those clicks now open a modal that must be confirmed before the request fires.
+// Target the primary button by its stable EP class so this is locale-independent.
+export async function confirmMessageBox(page: Page): Promise<void> {
+  await page
+    .locator(".el-message-box__btns button.el-button--primary")
+    .click();
+}
+
 // Click an Element Plus el-select (identified by data-testid) and pick an
 // option by its accessible name. EP options are teleported to <body> with
 // role="option". Use `exact` to avoid substring collisions (e.g. the spider

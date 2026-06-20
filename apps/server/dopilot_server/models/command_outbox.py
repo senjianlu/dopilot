@@ -7,7 +7,7 @@ the command dispatcher later XADDs it to the agent command stream and marks it
 transaction; ``XADD`` always happens AFTER the business+outbox commit.
 
 ``command_id`` is the outbox row id / audit key; it is NOT the agent execution
-idempotency key — that is always ``attempt_id``.
+idempotency key — that is always ``execution_id``.
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ class CommandOutbox(Base):
         String(32), primary_key=True, default=_new_id
     )
     agent_id: Mapped[str] = mapped_column(String, nullable=False)
+    task_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     execution_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    attempt_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     # run | stop | cleanup_logs
     type: Mapped[str] = mapped_column(String, nullable=False)
     # cancel | reclaim (only for stop)

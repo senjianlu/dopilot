@@ -13,8 +13,8 @@ from .conftest import FakeScrapyd, make_runner, write_log
 
 def _req(**overrides: object) -> AgentRunRequest:
     base = {
-        "execution_id": "exec-1",
-        "attempt_id": "a1",
+        "task_id": "exec-1",
+        "execution_id": "a1",
         "project": "demo",
         "spider": "phase1",
         "version": "1",
@@ -135,7 +135,7 @@ async def test_status_unknown_when_no_log_and_not_listed(tmp_path: Path) -> None
     assert status.status == AttemptStatus.unknown
 
 
-async def test_stop_unknown_attempt_idempotent(tmp_path: Path) -> None:
+async def test_stop_unknown_execution_idempotent(tmp_path: Path) -> None:
     fake = FakeScrapyd()
     runner = make_runner(tmp_path, fake)
     stop = await runner.stop("nope", "exec-1")

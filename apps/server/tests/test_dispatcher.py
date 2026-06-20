@@ -1,8 +1,8 @@
 """Command dispatcher tests (phase 1.5) — drive try_dispatch/_process_row/_tick.
 
-Phase-1.7 task/execution naming: a parent run is a :class:`Task`, an atomic unit
-is an :class:`Execution`. The outbox row keeps the wire seam columns
-``execution_id`` (= task id) and ``attempt_id`` (= execution id).
+Task/execution naming: a parent run is a :class:`Task`, an atomic unit is an
+:class:`Execution`. The outbox row carries columns ``task_id`` (= Task.id) and
+``execution_id`` (= Execution.id).
 """
 
 from __future__ import annotations
@@ -46,8 +46,8 @@ async def _seed_run(
     session.add(execution)
     row = outbox.create_run_outbox(
         session,
-        execution_id=task.id,
-        attempt_id=execution.id,
+        task_id=task.id,
+        execution_id=execution.id,
         agent_id=agent_id,
         payload={"project": "demo", "spider": "phase1"},
         manual=manual,
@@ -76,8 +76,7 @@ async def test_try_dispatch_happy_path(db_session, fake_redis, test_sessionmaker
     entries = await fake.entries(command_stream("agent-1"))
     assert len(entries) == 1
     cmd = from_stream_entry(AgentCommand, entries[0][1])
-    # wire seam: attempt_id is the atomic execution id
-    assert cmd.attempt_id == execution.id
+    assert cmd.execution_id == execution.id
     assert cmd.type.value == "run"
     assert cmd.payload["spider"] == "phase1"
 
@@ -109,8 +108,8 @@ async def test_manual_give_up_on_fail(db_session, fake_redis, test_sessionmaker)
 async def test_canceled_row_not_dispatched(db_session, fake_redis, test_sessionmaker):
     fake = fake_redis()
     _t, _e, row = await _seed_run(db_session)
-    # cancel before dispatch (row.execution_id is the seam = task id)
-    await outbox.cancel_unsent_outbox(db_session, row.execution_id)
+    # cancel before dispatch (row.task_id is the parent task id)
+    await outbox.cancel_unsent_outbox(db_session, row.task_id)
     await db_session.commit()
     disp = _dispatcher(fake, test_sessionmaker)
 

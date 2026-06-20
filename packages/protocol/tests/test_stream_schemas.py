@@ -47,8 +47,8 @@ def test_agent_command_defaults_and_roundtrip() -> None:
         command_id="c1",
         type=AgentCommandType.run,
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         created_at="2026-06-19T00:00:00Z",
     )
     assert cmd.intent is None
@@ -58,8 +58,8 @@ def test_agent_command_defaults_and_roundtrip() -> None:
         command_id="c2",
         type=AgentCommandType.run,
         agent_id="agent-01",
-        execution_id="e2",
-        attempt_id="a2",
+        task_id="e2",
+        execution_id="a2",
         created_at="2026-06-19T00:00:00Z",
     )
     cmd.payload["project"] = "demo"
@@ -72,8 +72,8 @@ def test_stop_command_carries_intent() -> None:
         command_id="c1",
         type=AgentCommandType.stop,
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         intent=StopIntent.cancel,
         created_at="t",
     )
@@ -109,8 +109,8 @@ def test_agent_event_status_is_computed_from_type() -> None:
     ev = AgentEvent(
         event_id="ev1",
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         type=AgentEventType.running,
         remote_job_id="job-123",
         created_at="t",
@@ -126,8 +126,8 @@ def test_agent_event_lost_reason_roundtrip() -> None:
     ev = AgentEvent(
         event_id="ev1",
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         type=AgentEventType.lost,
         lost_reason=LostReason.process_missing,
         created_at="t",
@@ -142,8 +142,8 @@ def test_agent_log_event_base64_byte_fidelity() -> None:
     raw = b"line one\n\xff\xfe partial-utf8 \x00\x01\x02"
     ev = AgentLogEvent(
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         offset=4096,
         content_b64=base64.b64encode(raw).decode("ascii"),
         size_bytes=len(raw),
@@ -186,8 +186,8 @@ def test_wire_codec_roundtrip_for_each_message() -> None:
         command_id="c1",
         type=AgentCommandType.run,
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         payload={"project": "demo", "spider": "s1"},
         created_at="t",
     )
@@ -198,8 +198,8 @@ def test_wire_codec_roundtrip_for_each_message() -> None:
     ev = AgentEvent(
         event_id="ev1",
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         type=AgentEventType.finished,
         exit_code=0,
         created_at="t",
@@ -208,8 +208,8 @@ def test_wire_codec_roundtrip_for_each_message() -> None:
 
     log = AgentLogEvent(
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         offset=0,
         content_b64=base64.b64encode(b"hi").decode("ascii"),
         size_bytes=2,
@@ -223,8 +223,8 @@ def test_wire_codec_accepts_str_keyed_fields() -> None:
     ev = AgentEvent(
         event_id="ev1",
         agent_id="agent-01",
-        execution_id="e1",
-        attempt_id="a1",
+        task_id="e1",
+        execution_id="a1",
         type=AgentEventType.running,
         created_at="t",
     )

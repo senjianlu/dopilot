@@ -60,7 +60,7 @@ class ReconcileReport:
     event_stall_lost: int = 0
     stalled: int = 0
     reclaim_stops: int = 0
-    lost_attempt_ids: list[str] = field(default_factory=list)
+    lost_execution_ids: list[str] = field(default_factory=list)
 
 
 async def _rollup(session: AsyncSession, task_id: str, now: datetime) -> None:
@@ -97,7 +97,6 @@ async def mark_lost(
     # The log stays drainable (FINALIZING), NOT complete: a later
     # agent-authoritative terminal or a reclaim must still be able to drive the
     # bounded drain -> cleanup_logs. finalize_drained_logs finalizes it.
-    # wire seam: log file keyed by (execution_id=task id, attempt_id=exec id).
     log_file = await svc.get_log_file(session, execution.task_id, execution.id)
     if log_file is not None and log_file.status == states.LOG_ACTIVE:
         log_file.status = states.LOG_FINALIZING
@@ -147,7 +146,7 @@ async def reconcile_once(
         if last_seen is None or (now - last_seen) > timedelta(seconds=hb_timeout):
             if await mark_lost(session, execution, LOST_HEARTBEAT_TIMEOUT, now):
                 report.heartbeat_lost += 1
-                report.lost_attempt_ids.append(execution.id)
+                report.lost_execution_ids.append(execution.id)
             continue
 
         # 2) event stall (heartbeat fresh): measure idle since last event.
@@ -161,13 +160,12 @@ async def reconcile_once(
         if idle >= lost_after:
             if await mark_lost(session, execution, LOST_EVENT_STALL, now):
                 report.event_stall_lost += 1
-                report.lost_attempt_ids.append(execution.id)
-                # process likely alive -> reclaim it. wire seam: execution_id =
-                # task id, attempt_id = atomic execution id.
+                report.lost_execution_ids.append(execution.id)
+                # process likely alive -> reclaim it.
                 outbox_svc.create_stop_outbox(
                     session,
-                    execution_id=execution.task_id,
-                    attempt_id=execution.id,
+                    task_id=execution.task_id,
+                    execution_id=execution.id,
                     agent_id=execution.agent_id or "",
                     intent=StopIntent.reclaim,
                 )
@@ -209,7 +207,7 @@ async def finalize_drained_logs(
             select(ExecutionLogFile, Execution)
             .join(
                 Execution,
-                Execution.id == ExecutionLogFile.attempt_id,
+                Execution.id == ExecutionLogFile.execution_id,
             )
             .where(
                 Execution.status.in_(terminal_statuses),
@@ -233,22 +231,21 @@ async def finalize_drained_logs(
         log_file.status = states.LOG_COMPLETE
         log_file.final_offset = log_file.size_bytes
         log_file.finished_at = now
-        # seam: log_file.execution_id = task id, log_file.attempt_id = exec id.
         outbox_svc.create_cleanup_outbox(
             session,
+            task_id=log_file.task_id,
             execution_id=log_file.execution_id,
-            attempt_id=log_file.attempt_id,
             agent_id=execution.agent_id or "",
         )
         count += 1
     return count
 
 
-async def _reclaim_issued(session: AsyncSession, attempt_id: str) -> bool:
-    """True if a ``stop(intent=reclaim)`` was ever enqueued for this attempt."""
+async def _reclaim_issued(session: AsyncSession, execution_id: str) -> bool:
+    """True if a ``stop(intent=reclaim)`` was ever enqueued for this execution."""
     res = await session.execute(
         select(CommandOutbox.command_id).where(
-            CommandOutbox.attempt_id == attempt_id,
+            CommandOutbox.execution_id == execution_id,
             CommandOutbox.type == "stop",
             CommandOutbox.intent == StopIntent.reclaim.value,
         )

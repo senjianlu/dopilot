@@ -379,6 +379,6 @@ def write_log(workdir: Path, project: str, spider: str, job_id: str, body: str) 
     return path
 
 
-def read_state(workdir: Path, attempt_id: str) -> dict:
-    path = state_dir(workdir) / f"{attempt_id}.json"
+def read_state(workdir: Path, execution_id: str) -> dict:
+    path = state_dir(workdir) / f"{execution_id}.json"
     return json.loads(path.read_text(encoding="utf-8"))

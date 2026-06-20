@@ -12,9 +12,9 @@ Applies one :class:`AgentEvent` to its execution/task with:
   to running (the ``dispatch_unknown`` convergence path); a set of terminal
   executions rolls the task up to its terminal.
 
-⚠️ Wire seam: ``AgentEvent.attempt_id`` is the atomic EXECUTION id and the
-``event_audit`` / outbox ``attempt_id`` columns keep that name. The boundary
-lookups translate ``attempt_id -> Execution.id`` and ``Execution.task_id ->
+Naming (phase 2a clean-cut): ``AgentEvent.execution_id`` is the atomic
+:class:`Execution` id and the ``event_audit`` column has the same name. The
+lookups go straight ``execution_id -> Execution.id`` and ``Execution.task_id ->
 Task``.
 
 ``last_event_at`` is stamped (and ``stalled_at`` cleared) on every applied event
@@ -96,10 +96,10 @@ def _maybe_update_lost_reason(execution: Execution, event: AgentEvent) -> None:
         execution.lost_reason = event.lost_reason.value
 
 
-async def _has_unresolved_reclaim(session: AsyncSession, attempt_id: str) -> bool:
+async def _has_unresolved_reclaim(session: AsyncSession, execution_id: str) -> bool:
     res = await session.execute(
         select(CommandOutbox.command_id).where(
-            CommandOutbox.attempt_id == attempt_id,
+            CommandOutbox.execution_id == execution_id,
             CommandOutbox.type == "stop",
             CommandOutbox.intent == StopIntent.reclaim.value,
             CommandOutbox.status.in_(tuple(OUTBOX_UNRESOLVED)),
@@ -116,9 +116,8 @@ async def _request_reclaim(session: AsyncSession, execution: Execution) -> None:
         return
     outbox_svc.create_stop_outbox(
         session,
-        # wire seam: execution_id = task id, attempt_id = atomic execution id.
-        execution_id=execution.task_id,
-        attempt_id=execution.id,
+        task_id=execution.task_id,
+        execution_id=execution.id,
         agent_id=execution.agent_id or "",
         intent=StopIntent.reclaim,
     )
@@ -158,7 +157,7 @@ def _audit(
             stream=EVENT_STREAM_NAME,
             redis_msg_id=redis_msg_id,
             event_id=event.event_id,
-            attempt_id=event.attempt_id,
+            execution_id=event.execution_id,
             event_type=event.type.value,
             outcome=outcome,
         )
@@ -179,8 +178,7 @@ async def apply_event(
     if dup.scalar_one_or_none() is not None:
         return OUTCOME_SKIPPED_DUP
 
-    # wire seam: event.attempt_id is the atomic Execution id.
-    execution = await svc.get_execution(session, event.attempt_id)
+    execution = await svc.get_execution(session, event.execution_id)
     if execution is None:
         _audit(session, event, redis_msg_id, OUTCOME_SKIPPED_NO_ATTEMPT)
         return OUTCOME_SKIPPED_NO_ATTEMPT

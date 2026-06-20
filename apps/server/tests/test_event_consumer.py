@@ -1,8 +1,8 @@
 """Server event-application + consumer tests (phase 1.5; phase-1.7 naming).
 
 A parent run is a :class:`Task`, an atomic unit is an :class:`Execution`. On the
-agent wire (``AgentEvent``) the atomic id is still ``attempt_id`` and the parent
-id is still ``execution_id``.
+agent wire (``AgentEvent``) the parent id is ``task_id`` and the atomic id is
+``execution_id`` (phase 2a clean-cut).
 """
 
 from __future__ import annotations
@@ -56,9 +56,8 @@ def _event(type_, execution, **kw) -> AgentEvent:
     return AgentEvent(
         event_id=uuid.uuid4().hex,
         agent_id="agent-1",
-        # wire seam: execution_id = task id, attempt_id = atomic execution id
-        execution_id=execution.task_id,
-        attempt_id=execution.id,
+        task_id=execution.task_id,
+        execution_id=execution.id,
         type=type_,
         created_at="t",
         **kw,
@@ -173,12 +172,12 @@ async def test_lost_to_lost_agent_reason_wins(db_session):
     assert (await _reload(db_session, execution)).lost_reason == "state_missing"
 
 
-async def _reclaim_stops(session, attempt_id):
+async def _reclaim_stops(session, execution_id):
     return (
         (
             await session.execute(
                 select(CommandOutbox).where(
-                    CommandOutbox.attempt_id == attempt_id,
+                    CommandOutbox.execution_id == execution_id,
                     CommandOutbox.type == "stop",
                     CommandOutbox.intent == "reclaim",
                 )

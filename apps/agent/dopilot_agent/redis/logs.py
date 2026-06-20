@@ -59,18 +59,18 @@ class LogPublisher:
         self._status = status
 
     # --- cursor persistence ------------------------------------------------
-    def _cursor_path(self, attempt_id: str) -> Path:
-        return self._cursor_dir / f"{attempt_id}.logpos"
+    def _cursor_path(self, execution_id: str) -> Path:
+        return self._cursor_dir / f"{execution_id}.logpos"
 
-    def _read_cursor(self, attempt_id: str) -> int:
+    def _read_cursor(self, execution_id: str) -> int:
         try:
-            return int(self._cursor_path(attempt_id).read_text(encoding="utf-8"))
+            return int(self._cursor_path(execution_id).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return 0
 
-    def _write_cursor(self, attempt_id: str, offset: int) -> None:
+    def _write_cursor(self, execution_id: str, offset: int) -> None:
         self._cursor_dir.mkdir(parents=True, exist_ok=True)
-        final = self._cursor_path(attempt_id)
+        final = self._cursor_path(execution_id)
         tmp = final.with_suffix(f".{os.getpid()}.tmp")
         with tmp.open("w", encoding="utf-8") as fh:
             fh.write(str(offset))
@@ -88,12 +88,12 @@ class LogPublisher:
             return b""
 
     # --- publishing --------------------------------------------------------
-    async def publish_attempt(self, attempt_id: str) -> int:
-        """Publish all currently-available bytes of one attempt. Returns count."""
-        state = self._store.read(attempt_id)
+    async def publish_attempt(self, execution_id: str) -> int:
+        """Publish all currently-available bytes of one execution. Returns count."""
+        state = self._store.read(execution_id)
         if state is None or not state.log_path:
             return 0
-        cursor = self._read_cursor(attempt_id)
+        cursor = self._read_cursor(execution_id)
         total = 0
         while True:
             raw = self._read_raw(state.log_path, cursor, self._max_bytes)
@@ -101,8 +101,8 @@ class LogPublisher:
                 break
             event = AgentLogEvent(
                 agent_id=self._agent_id,
-                execution_id=state.execution_id,
-                attempt_id=attempt_id,
+                task_id=state.task_id,
+                execution_id=execution_id,
                 offset=cursor,
                 content_b64=base64.b64encode(raw).decode("ascii"),
                 size_bytes=len(raw),
@@ -117,22 +117,22 @@ class LogPublisher:
             except Exception as exc:  # noqa: BLE001 - leave cursor; retry next pass
                 if self._status is not None:
                     self._status.mark_error(exc)
-                logger.warning("log XADD failed for %s @ %d", attempt_id, cursor)
+                logger.warning("log XADD failed for %s @ %d", execution_id, cursor)
                 return total
             if self._status is not None:
                 self._status.mark_log_publish()
             cursor += len(raw)
-            self._write_cursor(attempt_id, cursor)
+            self._write_cursor(execution_id, cursor)
             total += len(raw)
             if len(raw) < self._max_bytes:
                 break
 
         # terminal -> emit a single empty eof marker (optimization signal only).
-        if state.phase == "done" and attempt_id not in self._eof_sent:
+        if state.phase == "done" and execution_id not in self._eof_sent:
             eof_event = AgentLogEvent(
                 agent_id=self._agent_id,
-                execution_id=state.execution_id,
-                attempt_id=attempt_id,
+                task_id=state.task_id,
+                execution_id=execution_id,
                 offset=cursor,
                 content_b64="",
                 size_bytes=0,
@@ -144,7 +144,7 @@ class LogPublisher:
                     LOG_STREAM, to_stream_entry(eof_event),
                     maxlen=self._maxlen, approximate=True,
                 )
-                self._eof_sent.add(attempt_id)
+                self._eof_sent.add(execution_id)
             except Exception as exc:  # noqa: BLE001
                 if self._status is not None:
                     self._status.mark_error(exc)
@@ -152,13 +152,13 @@ class LogPublisher:
         return total
 
     async def publish_once(self) -> int:
-        """Publish increments for every attempt that has local state."""
+        """Publish increments for every execution that has local state."""
         total = 0
-        for attempt_id in self._store.list_attempt_ids():
+        for execution_id in self._store.list_execution_ids():
             try:
-                total += await self.publish_attempt(attempt_id)
-            except Exception:  # noqa: BLE001 - isolate one bad attempt
-                logger.warning("log publish failed for %s", attempt_id, exc_info=True)
+                total += await self.publish_attempt(execution_id)
+            except Exception:  # noqa: BLE001 - isolate one bad execution
+                logger.warning("log publish failed for %s", execution_id, exc_info=True)
         return total
 
     # --- background loop ---------------------------------------------------

@@ -321,8 +321,8 @@ async def test_fire_timer_coalesced_when_undispatched_backlog(
     )
     create_run_outbox(
         db_session,
-        execution_id=backlog.id,
-        attempt_id="att-1",
+        task_id=backlog.id,
+        execution_id="att-1",
         agent_id="agent-1",
         payload={},
         manual=False,
