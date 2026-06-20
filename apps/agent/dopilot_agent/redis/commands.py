@@ -3,8 +3,8 @@
 Consumes ``dopilot:agent:{agent_id}:commands`` via a consumer group and drives
 the existing :class:`ScrapyRunner`. Guarantees from refactor/00:
 
-- **idempotency** keyed on ``attempt_id``: a per-attempt in-process lock plus the
-  ``O_CREAT|O_EXCL`` reserved state file (cross-restart) ensure a re-delivered
+- **idempotency** keyed on ``execution_id``: a per-execution in-process lock plus
+  the ``O_CREAT|O_EXCL`` reserved state file (cross-restart) ensure a re-delivered
   ``run`` never starts the spider twice — it re-emits the current event instead;
 - **two-phase CAS**: reserve (O_EXCL) -> schedule on scrapyd -> promote started;
   a crash between reserve and schedule is recovered on boot as
@@ -88,11 +88,11 @@ class CommandConsumer:
         self._status = status
         self._artifact_cache = artifact_cache
 
-    def _lock_for(self, attempt_id: str) -> asyncio.Lock:
-        lock = self._locks.get(attempt_id)
+    def _lock_for(self, execution_id: str) -> asyncio.Lock:
+        lock = self._locks.get(execution_id)
         if lock is None:
             lock = asyncio.Lock()
-            self._locks[attempt_id] = lock
+            self._locks[execution_id] = lock
         return lock
 
     async def setup(self) -> None:
@@ -112,18 +112,18 @@ class CommandConsumer:
         This matches the doc's accepted "reserved == not truly spawned" posture.
         """
         recovered = 0
-        for attempt_id in self._store.list_attempt_ids():
-            state = self._store.read(attempt_id)
+        for execution_id in self._store.list_execution_ids():
+            state = self._store.read(execution_id)
             if state is not None and state.phase == "reserved":
                 await self._events.emit_terminal(
-                    state.execution_id,
-                    attempt_id,
+                    state.task_id,
+                    execution_id,
                     AgentEventType.failed,
                     error_code="spawn_aborted",
                     lost_reason=LostReason.spawn_aborted,
                 )
                 self._store.mark_done(
-                    attempt_id,
+                    execution_id,
                     result="failed",
                     error_code="spawn_aborted",
                     lost_reason="spawn_aborted",
@@ -147,22 +147,22 @@ class CommandConsumer:
         status polling.
         """
         reconciled = 0
-        for attempt_id in self._store.list_attempt_ids():
-            state = self._store.read(attempt_id)
+        for execution_id in self._store.list_execution_ids():
+            state = self._store.read(execution_id)
             if state is None or state.phase != "started":
                 continue
-            resp = await self._runner.status(attempt_id, state.execution_id)
+            resp = await self._runner.status(execution_id, state.task_id)
             terminal = _STATUS_TO_TERMINAL.get(resp.status)
             if terminal is None:
                 continue
             self._store.mark_done(
-                attempt_id,
+                execution_id,
                 result=terminal.short,
                 exit_code=resp.exit_code,
             )
             await self._events.emit_terminal(
-                state.execution_id,
-                attempt_id,
+                state.task_id,
+                execution_id,
                 terminal,
                 exit_code=resp.exit_code,
             )
@@ -208,7 +208,7 @@ class CommandConsumer:
 
     async def _process(self, msg_id: object, fields: object) -> None:
         cmd = from_stream_entry(AgentCommand, fields)
-        async with self._lock_for(cmd.attempt_id):
+        async with self._lock_for(cmd.execution_id):
             try:
                 if cmd.type == AgentCommandType.run:
                     await self._handle_run(cmd)
@@ -224,10 +224,10 @@ class CommandConsumer:
 
     # --- handlers ----------------------------------------------------------
     async def _handle_run(self, cmd: AgentCommand) -> None:
-        existing = self._store.read(cmd.attempt_id)
+        existing = self._store.read(cmd.execution_id)
         if existing is not None:
-            # idempotent: already have this attempt -> re-emit, do not restart.
-            await self._events.republish_current(cmd.execution_id, cmd.attempt_id)
+            # idempotent: already have this execution -> re-emit, do not restart.
+            await self._events.republish_current(cmd.task_id, cmd.execution_id)
             return
 
         payload = cmd.payload or {}
@@ -249,18 +249,18 @@ class CommandConsumer:
         spider = parsed.spider if parsed is not None else ""
 
         reserved = self._store.create_reserved(
+            task_id=cmd.task_id,
             execution_id=cmd.execution_id,
-            attempt_id=cmd.attempt_id,
             project=project,
             spider=spider,
             version=version,
         )
         if reserved is None:
             # lost the O_EXCL race (concurrent claim) -> re-emit, do not restart.
-            await self._events.republish_current(cmd.execution_id, cmd.attempt_id)
+            await self._events.republish_current(cmd.task_id, cmd.execution_id)
             return
 
-        await self._events.emit_accepted(cmd.execution_id, cmd.attempt_id)
+        await self._events.emit_accepted(cmd.task_id, cmd.execution_id)
 
         # Reject an invalid/missing command or missing artifact context with a
         # structured terminal failure (idempotent: state is now reserved).
@@ -269,11 +269,11 @@ class CommandConsumer:
             if not project:
                 detail = {"reason": "artifact_missing", **detail}
             self._store.mark_done(
-                cmd.attempt_id, result="failed", error_code="command_invalid"
+                cmd.execution_id, result="failed", error_code="command_invalid"
             )
             await self._events.emit_terminal(
+                cmd.task_id,
                 cmd.execution_id,
-                cmd.attempt_id,
                 AgentEventType.failed,
                 error_code="command_invalid",
                 error_detail=detail,
@@ -288,32 +288,32 @@ class CommandConsumer:
         if has_fetchable_artifact:
             if self._artifact_cache is None:
                 self._store.mark_done(
-                    cmd.attempt_id, result="failed", error_code="artifact_cache_unavailable"
+                    cmd.execution_id, result="failed", error_code="artifact_cache_unavailable"
                 )
                 await self._events.emit_terminal(
+                    cmd.task_id,
                     cmd.execution_id,
-                    cmd.attempt_id,
                     AgentEventType.failed,
                     error_code="artifact_cache_unavailable",
                 )
                 return
             try:
-                await self._artifact_cache.ensure(artifact, attempt_id=cmd.attempt_id)
+                await self._artifact_cache.ensure(artifact, execution_id=cmd.execution_id)
             except ArtifactCacheError as exc:
                 self._store.mark_done(
-                    cmd.attempt_id, result="failed", error_code="artifact_error"
+                    cmd.execution_id, result="failed", error_code="artifact_error"
                 )
                 await self._events.emit_terminal(
+                    cmd.task_id,
                     cmd.execution_id,
-                    cmd.attempt_id,
                     AgentEventType.failed,
                     error_code="artifact_error",
                     error_detail=exc.detail,
                 )
                 return
         run_req = AgentRunRequest(
+            task_id=cmd.task_id,
             execution_id=cmd.execution_id,
-            attempt_id=cmd.attempt_id,
             project=project,
             spider=parsed.spider,
             version=version,
@@ -324,11 +324,11 @@ class CommandConsumer:
             job_id = await self._runner.schedule(run_req)
         except RunnerError as exc:
             self._store.mark_done(
-                cmd.attempt_id, result="failed", error_code="scrapyd_error"
+                cmd.execution_id, result="failed", error_code="scrapyd_error"
             )
             await self._events.emit_terminal(
+                cmd.task_id,
                 cmd.execution_id,
-                cmd.attempt_id,
                 AgentEventType.failed,
                 error_code="scrapyd_error",
                 error_detail=exc.detail,
@@ -339,62 +339,62 @@ class CommandConsumer:
             self._runner.log_path(run_req.project, run_req.spider, job_id)
         )
         promoted = self._store.promote_started(
-            cmd.attempt_id, scrapyd_job_id=job_id, log_path=log_path
+            cmd.execution_id, scrapyd_job_id=job_id, log_path=log_path
         )
         if promoted is None:
             # The reserved state file vanished between reserve and promote (should
             # not happen under the per-attempt lock). Record a terminal rather than
             # emit a phantom `running` whose state file would later be recovered as
             # spawn_aborted, contradicting it.
-            logger.warning("promote_started lost state for %s", cmd.attempt_id)
+            logger.warning("promote_started lost state for %s", cmd.execution_id)
             self._store.mark_done(
-                cmd.attempt_id, result="failed", error_code="spawn_aborted",
+                cmd.execution_id, result="failed", error_code="spawn_aborted",
                 lost_reason="spawn_aborted",
             )
             await self._events.emit_terminal(
-                cmd.execution_id, cmd.attempt_id, AgentEventType.failed,
+                cmd.task_id, cmd.execution_id, AgentEventType.failed,
                 error_code="spawn_aborted", lost_reason=LostReason.spawn_aborted,
             )
             return
         await self._events.emit_running(
-            cmd.execution_id, cmd.attempt_id, remote_job_id=job_id
+            cmd.task_id, cmd.execution_id, remote_job_id=job_id
         )
 
     async def _handle_stop(self, cmd: AgentCommand) -> None:
         if cmd.intent == StopIntent.cancel:
             # authoritative canceled regardless of process/state presence.
-            await self._runner.stop(cmd.attempt_id, cmd.execution_id)
-            self._store.mark_done(cmd.attempt_id, result="canceled")
+            await self._runner.stop(cmd.execution_id, cmd.task_id)
+            self._store.mark_done(cmd.execution_id, result="canceled")
             await self._events.emit_terminal(
-                cmd.execution_id, cmd.attempt_id, AgentEventType.canceled
+                cmd.task_id, cmd.execution_id, AgentEventType.canceled
             )
             return
 
         # reclaim: kill if running, otherwise stay lost.
-        state = self._store.read(cmd.attempt_id)
+        state = self._store.read(cmd.execution_id)
         if state is None:
             return  # process_missing -> idempotent ignore
-        resp = await self._runner.status(cmd.attempt_id, cmd.execution_id)
+        resp = await self._runner.status(cmd.execution_id, cmd.task_id)
         terminal = _STATUS_TO_TERMINAL.get(resp.status)
         if terminal is not None:
             # a genuine terminal exists -> agent>server override.
-            self._store.mark_done(cmd.attempt_id, result=terminal.short)
+            self._store.mark_done(cmd.execution_id, result=terminal.short)
             await self._events.emit_terminal(
-                cmd.execution_id, cmd.attempt_id, terminal, exit_code=resp.exit_code
+                cmd.task_id, cmd.execution_id, terminal, exit_code=resp.exit_code
             )
         else:
-            # still running -> kill to reclaim resources; attempt stays lost.
-            await self._runner.stop(cmd.attempt_id, cmd.execution_id)
-            self._store.mark_done(cmd.attempt_id, result="lost")
+            # still running -> kill to reclaim resources; execution stays lost.
+            await self._runner.stop(cmd.execution_id, cmd.task_id)
+            self._store.mark_done(cmd.execution_id, result="lost")
 
     async def _handle_cleanup(self, cmd: AgentCommand) -> None:
-        state = self._store.read(cmd.attempt_id)
+        state = self._store.read(cmd.execution_id)
         if state is not None and state.log_path:
             try:
                 Path(state.log_path).unlink()
             except FileNotFoundError:
                 pass
-        self._store.delete(cmd.attempt_id)
+        self._store.delete(cmd.execution_id)
 
     # --- background loop ---------------------------------------------------
     async def _run(self) -> None:

@@ -14,9 +14,9 @@ phase 1.8.2 is explicitly manual cleanup, not automatic retention.
    as the reconcile loop (:func:`dopilot_server.redis.reconcile.mark_lost`), so a
    late agent-authoritative terminal can still override it.
 
-Wire/disk seam (frozen): the log index + command outbox key on
-``execution_id`` (= the parent Task id) and ``attempt_id`` (= the atomic
-Execution id). The queries below pass ``Task.id`` as the seam ``execution_id``.
+Naming (phase 2a clean-cut): the log index + command outbox key on ``task_id``
+(= the parent :class:`Task` id) and ``execution_id`` (= the atomic
+:class:`Execution` id). The queries below filter on ``task_id``.
 """
 
 from __future__ import annotations
@@ -116,12 +116,12 @@ async def cleanup_terminal_data(
     ).all()
     summary.executions = len(exec_rows)
 
-    # Log index rows: seam execution_id == task id.
+    # Log index rows keyed by task_id.
     log_files = (
         (
             await session.execute(
                 select(ExecutionLogFile).where(
-                    ExecutionLogFile.execution_id.in_(task_ids)
+                    ExecutionLogFile.task_id.in_(task_ids)
                 )
             )
         )
@@ -131,12 +131,12 @@ async def cleanup_terminal_data(
     summary.log_files = len(log_files)
     summary.log_bytes = sum(int(lf.size_bytes or 0) for lf in log_files)
 
-    # Command-outbox rows: seam execution_id == task id. Safe to drop wholesale —
-    # the parent task is terminal, so none of its commands are still in flight.
+    # Command-outbox rows keyed by task_id. Safe to drop wholesale — the parent
+    # task is terminal, so none of its commands are still in flight.
     outbox_rows = (
         await session.execute(
             select(CommandOutbox.command_id).where(
-                CommandOutbox.execution_id.in_(task_ids)
+                CommandOutbox.task_id.in_(task_ids)
             )
         )
     ).all()
@@ -153,14 +153,14 @@ async def cleanup_terminal_data(
     # 2) log index, 3) executions, 4) outbox, 5) tasks — FK-safe order.
     await session.execute(
         delete(ExecutionLogFile).where(
-            ExecutionLogFile.execution_id.in_(task_ids)
+            ExecutionLogFile.task_id.in_(task_ids)
         )
     )
     await session.execute(
         delete(Execution).where(Execution.task_id.in_(task_ids))
     )
     await session.execute(
-        delete(CommandOutbox).where(CommandOutbox.execution_id.in_(task_ids))
+        delete(CommandOutbox).where(CommandOutbox.task_id.in_(task_ids))
     )
     await session.execute(delete(Task).where(Task.id.in_(task_ids)))
     return summary

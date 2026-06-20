@@ -1,8 +1,8 @@
 """Heartbeat / event-stall reconcile tests (phase 1.5; phase-1.7 naming).
 
 A parent run is a :class:`Task`; an atomic unit is an :class:`Execution`. The
-``execution_log_files`` index keeps the wire seam columns ``execution_id``
-(= task id) and ``attempt_id`` (= atomic execution id).
+``execution_log_files`` index carries the columns ``task_id`` (= Task.id) and
+``execution_id`` (= Execution.id) (phase 2a clean-cut).
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ async def _seed(
     session.add(execution)
     session.add(
         ExecutionLogFile(
-            execution_id=task.id, attempt_id=execution.id, stream="log",
+            task_id=task.id, execution_id=execution.id, stream="log",
             storage_path="/tmp/x.log", size_bytes=0, last_pulled_offset=0,
             status=states.LOG_ACTIVE,
         )
@@ -73,11 +73,11 @@ async def _seed(
     return node, task, execution
 
 
-async def _stop_outbox(session, attempt_id):
+async def _stop_outbox(session, execution_id):
     return (
         await session.execute(
             select(CommandOutbox).where(
-                CommandOutbox.attempt_id == attempt_id,
+                CommandOutbox.execution_id == execution_id,
                 CommandOutbox.type == "stop",
             )
         )

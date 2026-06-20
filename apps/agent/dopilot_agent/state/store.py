@@ -4,9 +4,13 @@
 :class:`StateStore` reads/writes/deletes/lists those files under
 ``{workdir}/state/executions``.
 
+Naming (phase 2a clean-cut): the state file is keyed by the atomic
+``execution_id`` (= server ``Execution.id``); ``task_id`` (= ``Task.id``) is
+carried for context.
+
 Durability rules:
 - writes go to a temp file in the same directory then ``os.replace`` onto the
-  final path, so a crash never leaves a half-written ``{attempt_id}.json``;
+  final path, so a crash never leaves a half-written ``{execution_id}.json``;
 - reads of a missing OR corrupt/half-written file return ``None`` (never raise
   to the caller), so a torn file behaves exactly like "no state".
 """
@@ -42,8 +46,8 @@ class AttemptState(BaseModel):
       restarting the spider.
     """
 
+    task_id: str
     execution_id: str
-    attempt_id: str
     scrapyd_job_id: str = ""
     project: str
     version: str | None = None
@@ -70,14 +74,14 @@ class StateStore:
     def dir(self) -> Path:
         return self._dir
 
-    def path_for(self, attempt_id: str) -> Path:
-        return self._dir / f"{attempt_id}.json"
+    def path_for(self, execution_id: str) -> Path:
+        return self._dir / f"{execution_id}.json"
 
     def write(self, state: AttemptState) -> AttemptState:
         """Atomically persist ``state`` (refreshing ``updated_at``)."""
         state.updated_at = _utcnow_iso()
         self._dir.mkdir(parents=True, exist_ok=True)
-        final = self.path_for(state.attempt_id)
+        final = self.path_for(state.execution_id)
         tmp = final.with_suffix(f".{os.getpid()}.tmp")
         payload = json.dumps(state.model_dump(), ensure_ascii=False)
         with tmp.open("w", encoding="utf-8") as fh:
@@ -90,24 +94,24 @@ class StateStore:
     def create_reserved(
         self,
         *,
+        task_id: str,
         execution_id: str,
-        attempt_id: str,
         project: str,
         spider: str,
         version: str | None = None,
     ) -> AttemptState | None:
-        """Atomically reserve an attempt (``O_CREAT|O_EXCL``) before spawning.
+        """Atomically reserve an execution (``O_CREAT|O_EXCL``) before spawning.
 
         Returns the reserved state, or ``None`` if a state file already exists
         (a duplicate command / lost race / cross-restart re-delivery). This is
-        the cross-restart "don't start the same attempt twice" guard; the caller
+        the cross-restart "don't start the same execution twice" guard; the caller
         promotes it to ``started`` once scrapyd has the job.
         """
         self._dir.mkdir(parents=True, exist_ok=True)
-        final = self.path_for(attempt_id)
+        final = self.path_for(execution_id)
         state = AttemptState(
+            task_id=task_id,
             execution_id=execution_id,
-            attempt_id=attempt_id,
             project=project,
             spider=spider,
             version=version,
@@ -125,10 +129,10 @@ class StateStore:
         return state
 
     def promote_started(
-        self, attempt_id: str, *, scrapyd_job_id: str, log_path: str
+        self, execution_id: str, *, scrapyd_job_id: str, log_path: str
     ) -> AttemptState | None:
-        """Promote a reserved attempt to ``started`` with its scrapyd job id."""
-        state = self.read(attempt_id)
+        """Promote a reserved execution to ``started`` with its scrapyd job id."""
+        state = self.read(execution_id)
         if state is None:
             return None
         state.phase = "started"
@@ -138,7 +142,7 @@ class StateStore:
 
     def mark_done(
         self,
-        attempt_id: str,
+        execution_id: str,
         *,
         result: str,
         lost_reason: str | None = None,
@@ -146,7 +150,7 @@ class StateStore:
         exit_code: int | None = None,
     ) -> AttemptState | None:
         """Record a reported terminal so a re-delivered command re-emits it."""
-        state = self.read(attempt_id)
+        state = self.read(execution_id)
         if state is None:
             return None
         state.phase = "done"
@@ -158,9 +162,9 @@ class StateStore:
             state.canceled = True
         return self.write(state)
 
-    def read(self, attempt_id: str) -> AttemptState | None:
+    def read(self, execution_id: str) -> AttemptState | None:
         """Return the persisted state, or ``None`` if missing/corrupt."""
-        path = self.path_for(attempt_id)
+        path = self.path_for(execution_id)
         try:
             raw = path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -177,17 +181,17 @@ class StateStore:
         except Exception:
             return None
 
-    def delete(self, attempt_id: str) -> bool:
+    def delete(self, execution_id: str) -> bool:
         """Remove the state file. Returns ``True`` if a file was deleted."""
-        path = self.path_for(attempt_id)
+        path = self.path_for(execution_id)
         try:
             path.unlink()
             return True
         except FileNotFoundError:
             return False
 
-    def list_attempt_ids(self) -> list[str]:
-        """Return attempt ids that currently have a state file on disk."""
+    def list_execution_ids(self) -> list[str]:
+        """Return execution ids that currently have a state file on disk."""
         if not self._dir.is_dir():
             return []
         ids: list[str] = []

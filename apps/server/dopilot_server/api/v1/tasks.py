@@ -1,9 +1,9 @@
 """Task endpoints (phase 1.8): list, detail, cancel, log snapshot + SSE stream.
 
 Public vocabulary clean-cut: the parent run is a TASK and the atomic per-node
-unit is an EXECUTION. Public ids are ``task_id`` / ``execution_id``; the
-Redis/disk/log-index seam still uses ``execution_id`` (= task id) /
-``attempt_id`` (= execution id) internally — mapped at the boundary below.
+unit is an EXECUTION. Public ids are ``task_id`` / ``execution_id``; since the
+phase 2a clean-cut the Redis/disk/log-index ids use the same names, so there is
+no boundary translation here.
 """
 
 from __future__ import annotations
@@ -184,7 +184,6 @@ async def get_logs(
 ) -> LogSnapshot:
     await svc.get_task_or_404(session, task_id)
     execution = await svc.resolve_execution(session, task_id, execution_id)
-    # Seam mapping: log index keys on (execution_id=task id, attempt_id=exec id).
     log_file = await svc.get_log_file(session, task_id, execution.id, stream)
     cap = max_bytes or settings.logs.max_tail_bytes_per_pull
     finished = execution.status in states.EXEC_TERMINAL

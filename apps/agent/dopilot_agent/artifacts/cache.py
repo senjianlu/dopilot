@@ -45,13 +45,13 @@ class ScrapyArtifactCache:
     def _lock_path(self, sha256: str) -> Path:
         return self._dir / f"{sha256}.egg.lock"
 
-    def _tmp_path(self, sha256: str, attempt_id: str) -> Path:
-        return self._dir / f"{sha256}.egg.tmp.{os.getpid()}.{attempt_id}"
+    def _tmp_path(self, sha256: str, execution_id: str) -> Path:
+        return self._dir / f"{sha256}.egg.tmp.{os.getpid()}.{execution_id}"
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"} if self._token else {}
 
-    async def ensure(self, artifact: dict[str, Any], *, attempt_id: str) -> None:
+    async def ensure(self, artifact: dict[str, Any], *, execution_id: str) -> None:
         sha256 = str(artifact.get("hash") or artifact.get("sha256") or "")
         if not sha256:
             raise ArtifactCacheError("artifact hash is required")
@@ -80,7 +80,7 @@ class ScrapyArtifactCache:
                         project=project,
                         version=version,
                         fetch_path=fetch_path,
-                        attempt_id=attempt_id,
+                        execution_id=execution_id,
                     )
                     self._ready_path(sha256).write_text("", encoding="utf-8")
                     return
@@ -111,11 +111,11 @@ class ScrapyArtifactCache:
         project: str,
         version: str,
         fetch_path: str,
-        attempt_id: str,
+        execution_id: str,
     ) -> None:
         egg_path = self._egg_path(sha256)
         if not egg_path.is_file() or self._sha256(egg_path) != sha256:
-            tmp = self._tmp_path(sha256, attempt_id)
+            tmp = self._tmp_path(sha256, execution_id)
             tmp.unlink(missing_ok=True)
             url = urljoin(self._server_url, fetch_path.lstrip("/"))
             try:

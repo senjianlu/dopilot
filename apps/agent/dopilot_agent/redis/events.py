@@ -163,8 +163,8 @@ class EventPublisher:
     def _event(
         self,
         *,
+        task_id: str,
         execution_id: str,
-        attempt_id: str,
         type: AgentEventType,
         remote_job_id: str | None = None,
         exit_code: int | None = None,
@@ -175,8 +175,8 @@ class EventPublisher:
         return AgentEvent(
             event_id=uuid.uuid4().hex,
             agent_id=self._agent_id,
+            task_id=task_id,
             execution_id=execution_id,
-            attempt_id=attempt_id,
             type=type,
             remote_job_id=remote_job_id,
             exit_code=exit_code,
@@ -187,22 +187,22 @@ class EventPublisher:
         )
 
     # --- convenience emits -------------------------------------------------
-    async def emit_accepted(self, execution_id: str, attempt_id: str) -> None:
+    async def emit_accepted(self, task_id: str, execution_id: str) -> None:
         await self.emit(
             self._event(
+                task_id=task_id,
                 execution_id=execution_id,
-                attempt_id=attempt_id,
                 type=AgentEventType.accepted,
             )
         )
 
     async def emit_running(
-        self, execution_id: str, attempt_id: str, remote_job_id: str | None = None
+        self, task_id: str, execution_id: str, remote_job_id: str | None = None
     ) -> None:
         await self.emit(
             self._event(
+                task_id=task_id,
                 execution_id=execution_id,
-                attempt_id=attempt_id,
                 type=AgentEventType.running,
                 remote_job_id=remote_job_id,
             )
@@ -210,8 +210,8 @@ class EventPublisher:
 
     async def emit_terminal(
         self,
+        task_id: str,
         execution_id: str,
-        attempt_id: str,
         event_type: AgentEventType,
         *,
         exit_code: int | None = None,
@@ -221,8 +221,8 @@ class EventPublisher:
     ) -> None:
         await self.emit(
             self._event(
+                task_id=task_id,
                 execution_id=execution_id,
-                attempt_id=attempt_id,
                 type=event_type,
                 exit_code=exit_code,
                 error_code=error_code,
@@ -232,19 +232,19 @@ class EventPublisher:
         )
 
     # --- republish from local state ---------------------------------------
-    async def republish_current(self, execution_id: str, attempt_id: str) -> None:
-        """Re-emit an attempt's current event from its local state file."""
-        state = self._store.read(attempt_id)
+    async def republish_current(self, task_id: str, execution_id: str) -> None:
+        """Re-emit an execution's current event from its local state file."""
+        state = self._store.read(execution_id)
         if state is None:
             await self.emit_terminal(
-                execution_id, attempt_id, AgentEventType.lost,
+                task_id, execution_id, AgentEventType.lost,
                 lost_reason=LostReason.state_missing,
             )
             return
         if state.phase == "reserved":
             # reserved but never spawned -> startup orphan
             await self.emit_terminal(
-                execution_id, attempt_id, AgentEventType.failed,
+                task_id, execution_id, AgentEventType.failed,
                 error_code="spawn_aborted", lost_reason=LostReason.spawn_aborted,
             )
             return
@@ -255,8 +255,8 @@ class EventPublisher:
                 else None
             )
             await self.emit_terminal(
+                task_id,
                 execution_id,
-                attempt_id,
                 _RESULT_TO_EVENT[state.result],
                 exit_code=state.exit_code,
                 error_code=state.error_code,
@@ -264,13 +264,13 @@ class EventPublisher:
             )
             return
         # started: resolve live status, never finalize on unknown.
-        resp = await self._runner.status(attempt_id, execution_id)
+        resp = await self._runner.status(execution_id, task_id)
         terminal = _STATUS_TO_TERMINAL.get(resp.status)
         if terminal is not None:
             await self.emit_terminal(
-                execution_id, attempt_id, terminal, exit_code=resp.exit_code
+                task_id, execution_id, terminal, exit_code=resp.exit_code
             )
         else:
             await self.emit_running(
-                execution_id, attempt_id, remote_job_id=state.scrapyd_job_id or None
+                task_id, execution_id, remote_job_id=state.scrapyd_job_id or None
             )

@@ -9,8 +9,6 @@ from dopilot_protocol import (
     ExecutionRunResponse,
     HealthResponse,
     LogStream,
-    TailRequest,
-    TailResponse,
     __version__,
 )
 
@@ -82,39 +80,6 @@ def test_log_stream_enum_values() -> None:
     assert LogStream.stderr.value == "stderr"
     assert LogStream.system.value == "system"
     assert LogStream("log") is LogStream.log
-
-
-def test_tail_request_defaults_and_roundtrip() -> None:
-    req = TailRequest(execution_id="e1", attempt_id="a1")
-    assert req.stream is LogStream.log
-    assert req.offset == 0
-    assert req.max_bytes == 262144
-
-    dumped = req.model_dump()
-    assert dumped["stream"] == "log"
-    assert dumped["offset"] == 0
-    assert dumped["max_bytes"] == 262144
-    assert TailRequest.model_validate(dumped) == req
-
-    explicit = TailRequest(
-        execution_id="e2",
-        attempt_id="a2",
-        stream=LogStream.stderr,
-        offset=128,
-        max_bytes=4096,
-    )
-    assert TailRequest.model_validate(explicit.model_dump()) == explicit
-
-
-def test_tail_response_roundtrip() -> None:
-    resp = TailResponse(
-        start_offset=0,
-        end_offset=10,
-        content="hello\nbye\n",
-        eof=False,
-        finished=False,
-    )
-    assert TailResponse.model_validate(resp.model_dump()) == resp
 
 
 def test_execution_run_request_defaults_and_roundtrip() -> None:

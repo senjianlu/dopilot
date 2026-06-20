@@ -3,16 +3,13 @@
 Phase 1.7 domain vocabulary: a :class:`Task` is the parent logical run and an
 :class:`Execution` is the atomic per-node unit (see ``models/execution.py``).
 
-Two seams are crossed here and are documented at each call site:
-
-- **Wire/disk/agent seam (frozen)** — the log-file index, command outbox and
-  Redis payloads still key on ``execution_id`` (= task id) and ``attempt_id``
-  (= execution id). Functions touching those (``create_log_file`` /
-  ``get_log_file``) keep the seam parameter names.
-- **Public API/web (phase 1.8 clean-cut)** — the public JSON uses Task for the
-  parent run (``TaskView`` with ``executions[]``) and Execution for the atomic
-  per-node unit (``ExecutionView`` with a ``task_id`` back-reference). The view
-  builders below emit those keys; there is no public ``attempts[]`` array.
+Naming (phase 2a clean-cut): the wire/disk/DB ids now match the domain — the
+log-file index, command outbox and Redis payloads key on ``task_id`` (=
+:class:`Task` id) and ``execution_id`` (= :class:`Execution` id), the same names
+the public API/web already use. The public JSON uses Task for the parent run
+(``TaskView`` with ``executions[]``) and Execution for the atomic per-node unit
+(``ExecutionView`` with a ``task_id`` back-reference); there is no public
+``attempts[]`` array.
 
 Endpoints stay thin; the create/query/view logic lives here so it can be unit
 tested directly against a session.
@@ -181,14 +178,13 @@ def create_log_file(
     stream: str = "log",
 ) -> ExecutionLogFile:
     now = datetime.now(UTC)
-    # Wire/disk seam: the log path + index key on (execution_id=task.id,
-    # attempt_id=execution.id). Do not rename these path components.
+    # Log path + index key on (task_id=task.id, execution_id=execution.id).
     path = files.log_path(
         settings.logs.root_dir, now, task.id, execution.id, stream
     )
     log_file = ExecutionLogFile(
-        execution_id=task.id,
-        attempt_id=execution.id,
+        task_id=task.id,
+        execution_id=execution.id,
         stream=stream,
         storage_path=path,
         size_bytes=0,
@@ -316,16 +312,16 @@ async def list_task_spiders(session: AsyncSession) -> list[str]:
 
 async def get_log_file(
     session: AsyncSession,
+    task_id: str,
     execution_id: str,
-    attempt_id: str,
     stream: str = "log",
 ) -> ExecutionLogFile | None:
-    # Wire/disk seam parameters: execution_id = task id, attempt_id = execution
-    # id. They map straight onto the ExecutionLogFile seam columns.
+    # task_id = Task.id, execution_id = Execution.id — they map straight onto the
+    # ExecutionLogFile index columns.
     result = await session.execute(
         select(ExecutionLogFile).where(
+            ExecutionLogFile.task_id == task_id,
             ExecutionLogFile.execution_id == execution_id,
-            ExecutionLogFile.attempt_id == attempt_id,
             ExecutionLogFile.stream == stream,
         )
     )
@@ -344,8 +340,8 @@ async def resolve_execution(
 ) -> Execution:
     """Resolve a task's atomic execution by id (or the primary one).
 
-    ``execution_id`` is the public atomic execution id (web query param
-    ``execution_id``); it maps to the seam ``attempt_id`` on the log index.
+    ``execution_id`` is the atomic :class:`Execution` id (web query param
+    ``execution_id``), the same name used on the log index.
     """
     executions = await list_executions(session, task_id)
     if execution_id:
@@ -374,8 +370,8 @@ async def resolve_execution(
 # ---------------------------------------------------------------------------
 # Public vocabulary: a parent run is a TASK (``TaskView`` with ``executions[]``);
 # an atomic per-node row is an EXECUTION (``ExecutionView`` with a ``task_id``
-# back-reference). The Redis/disk/agent seam still uses ``execution_id`` (= task
-# id) / ``attempt_id`` (= execution id) internally — that is NOT exposed here.
+# back-reference). The Redis/disk/agent ids use the same ``task_id`` /
+# ``execution_id`` names internally.
 
 
 def execution_view(execution: Execution) -> dict[str, Any]:

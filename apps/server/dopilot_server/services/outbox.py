@@ -5,10 +5,10 @@ task/execution (the transactional producer-outbox), cancels unsent rows on
 cancel (CAS), and provides the coalesce primitive the scheduler will use to
 avoid piling up same-source commands while Redis is unavailable.
 
-⚠️ Wire seam: the ``CommandOutbox`` row keeps the columns ``execution_id``
-(= task id) and ``attempt_id`` (= atomic execution id); the create/cancel
-helpers below take those seam names as parameters. Callers pass ``task.id`` as
-``execution_id`` and ``execution.id`` as ``attempt_id``.
+The ``CommandOutbox`` row carries the columns ``task_id`` (= :class:`Task` id)
+and ``execution_id`` (= atomic :class:`Execution` id); the create/cancel helpers
+below take those names as parameters. Callers pass ``task.id`` as ``task_id`` and
+``execution.id`` as ``execution_id``.
 
 The actual XADD to Redis happens later, in the dispatcher — never here. This
 keeps the outbox a PG-internal producer-outbox, not a cross-resource pseudo-tx.
@@ -51,19 +51,19 @@ def _windows(manual: bool) -> tuple[datetime, datetime]:
 def create_run_outbox(
     session: AsyncSession,
     *,
+    task_id: str,
     execution_id: str,
-    attempt_id: str,
     agent_id: str,
     payload: dict,
     manual: bool,
 ) -> CommandOutbox:
-    """Create a pending ``run`` command row (same tx as execution/attempt)."""
+    """Create a pending ``run`` command row (same tx as the execution)."""
     expire_at, give_up_at = _windows(manual)
     row = CommandOutbox(
         command_id=_new_id(),
         agent_id=agent_id,
+        task_id=task_id,
         execution_id=execution_id,
-        attempt_id=attempt_id,
         type="run",
         payload=dict(payload),
         status=OUTBOX_PENDING,
@@ -77,8 +77,8 @@ def create_run_outbox(
 def create_stop_outbox(
     session: AsyncSession,
     *,
+    task_id: str,
     execution_id: str,
-    attempt_id: str,
     agent_id: str,
     intent: StopIntent,
 ) -> CommandOutbox:
@@ -87,8 +87,8 @@ def create_stop_outbox(
     row = CommandOutbox(
         command_id=_new_id(),
         agent_id=agent_id,
+        task_id=task_id,
         execution_id=execution_id,
-        attempt_id=attempt_id,
         type="stop",
         intent=intent.value,
         payload={},
@@ -103,8 +103,8 @@ def create_stop_outbox(
 def create_cleanup_outbox(
     session: AsyncSession,
     *,
+    task_id: str,
     execution_id: str,
-    attempt_id: str,
     agent_id: str,
 ) -> CommandOutbox:
     """Create a ``cleanup_logs`` command (idempotent on the agent)."""
@@ -112,8 +112,8 @@ def create_cleanup_outbox(
     row = CommandOutbox(
         command_id=_new_id(),
         agent_id=agent_id,
+        task_id=task_id,
         execution_id=execution_id,
-        attempt_id=attempt_id,
         type="cleanup_logs",
         payload={},
         status=OUTBOX_PENDING,
@@ -124,8 +124,8 @@ def create_cleanup_outbox(
     return row
 
 
-async def cancel_unsent_outbox(session: AsyncSession, execution_id: str) -> int:
-    """CAS every still-unsent outbox row of an execution to ``canceled``.
+async def cancel_unsent_outbox(session: AsyncSession, task_id: str) -> int:
+    """CAS every still-unsent outbox row of a task to ``canceled``.
 
     Returns the number of rows transitioned. Any delivery path MUST re-read the
     row status before XADD, so a canceled row is never dispatched. "Unsent"
@@ -135,7 +135,7 @@ async def cancel_unsent_outbox(session: AsyncSession, execution_id: str) -> int:
     result = await session.execute(
         update(CommandOutbox)
         .where(
-            CommandOutbox.execution_id == execution_id,
+            CommandOutbox.task_id == task_id,
             CommandOutbox.status.in_(tuple(OUTBOX_UNRESOLVED)),
         )
         .values(status=OUTBOX_CANCELED)
@@ -162,12 +162,11 @@ async def has_undispatched_backlog_for_schedule(
       command reached Redis, so it is dispatched, not backlog;
     - manual + trigger-now never call this (only the timer firing does).
 
-    The seam column ``CommandOutbox.execution_id`` holds the task id, so it joins
-    on ``Task.id``.
+    ``CommandOutbox.task_id`` is the task id, so it joins on ``Task.id``.
     """
     result = await session.execute(
         select(Task.id)
-        .join(CommandOutbox, CommandOutbox.execution_id == Task.id)
+        .join(CommandOutbox, CommandOutbox.task_id == Task.id)
         .where(
             Task.schedule_id == schedule_id,
             Task.status == TASK_QUEUED,

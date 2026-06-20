@@ -54,7 +54,7 @@ class HeartbeatWorker:
             script=s.capabilities.script,
             docker=s.capabilities.docker,
         )
-        running = len(self._store.list_attempt_ids())
+        running = len(self._store.list_execution_ids())
         detail = {
             "scrapyd": {
                 "port": s.scrapyd.port,

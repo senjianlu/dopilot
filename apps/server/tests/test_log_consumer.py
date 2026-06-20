@@ -1,9 +1,8 @@
 """Server log-consumer / log-apply tests (phase 1.5; phase-1.7 naming).
 
 A parent run is a :class:`Task`; an atomic unit is an :class:`Execution`. On the
-agent wire (``AgentLogEvent``) the atomic id is still ``attempt_id`` and the
-parent id is still ``execution_id``; the ``execution_log_files`` index keeps
-those seam column names too.
+agent wire (``AgentLogEvent``) and the ``execution_log_files`` index the parent
+id is ``task_id`` and the atomic id is ``execution_id`` (phase 2a clean-cut).
 """
 
 from __future__ import annotations
@@ -59,9 +58,8 @@ async def _seed(session, settings, *, agent_id="agent-1"):
 def _log_event(execution, offset, content: bytes, *, eof=False):
     return AgentLogEvent(
         agent_id=execution.agent_id,
-        # wire seam: execution_id = task id, attempt_id = atomic execution id
-        execution_id=execution.task_id,
-        attempt_id=execution.id,
+        task_id=execution.task_id,
+        execution_id=execution.id,
         offset=offset,
         content_b64=base64.b64encode(content).decode("ascii"),
         size_bytes=len(content),
@@ -74,16 +72,16 @@ async def _reload_lf(session, log_file):
     return (
         await session.execute(
             select(ExecutionLogFile).where(
+                ExecutionLogFile.task_id == log_file.task_id,
                 ExecutionLogFile.execution_id == log_file.execution_id,
-                ExecutionLogFile.attempt_id == log_file.attempt_id,
             )
         )
     ).scalar_one()
 
 
-async def _lf_by_attempt(session, attempt_id):
+async def _lf_by_execution(session, execution_id):
     res = await session.execute(
-        select(ExecutionLogFile).where(ExecutionLogFile.attempt_id == attempt_id)
+        select(ExecutionLogFile).where(ExecutionLogFile.execution_id == execution_id)
     )
     return res.scalar_one()
 
@@ -169,8 +167,8 @@ async def test_gap_does_not_block_task_terminal(db_session, exec_settings):
     await _apply(db_session, exec_settings, execution, 200, b"partial\n")
     # a finished event still rolls the task up despite the partial log
     ev = AgentEvent(
-        event_id="ev1", agent_id="agent-1", execution_id=task.id,
-        attempt_id=execution.id, type=AgentEventType.finished, exit_code=0, created_at="t",
+        event_id="ev1", agent_id="agent-1", task_id=task.id,
+        execution_id=execution.id, type=AgentEventType.finished, exit_code=0, created_at="t",
     )
     await apply_event(db_session, ev, "m1")
     await db_session.commit()
@@ -204,7 +202,7 @@ async def test_finalize_drained_logs_enqueues_cleanup(db_session, exec_settings)
     cleanups = (
         await db_session.execute(
             select(CommandOutbox).where(
-                CommandOutbox.attempt_id == execution.id,
+                CommandOutbox.execution_id == execution.id,
                 CommandOutbox.type == "cleanup_logs",
             )
         )
@@ -244,7 +242,7 @@ async def test_finalize_cleans_reclaimed_lost(db_session, exec_settings):
     execution.finished_at = now - timedelta(seconds=30)
     lf.status = states.LOG_FINALIZING
     create_stop_outbox(
-        db_session, execution_id=execution.task_id, attempt_id=execution.id,
+        db_session, task_id=execution.task_id, execution_id=execution.id,
         agent_id="agent-1", intent=StopIntent.reclaim,
     )
     await db_session.commit()
@@ -257,7 +255,7 @@ async def test_finalize_cleans_reclaimed_lost(db_session, exec_settings):
     cleanups = (
         await db_session.execute(
             select(CommandOutbox).where(
-                CommandOutbox.attempt_id == execution.id,
+                CommandOutbox.execution_id == execution.id,
                 CommandOutbox.type == "cleanup_logs",
             )
         )
@@ -278,6 +276,6 @@ async def test_log_consumer_drains_stream(db_session, exec_settings, fake_redis,
     assert n == 2
 
     async with test_sessionmaker() as s:
-        lf2 = await _lf_by_attempt(s, execution.id)
+        lf2 = await _lf_by_execution(s, execution.id)
         assert lf2.last_pulled_offset == 8
         assert Path(lf2.storage_path).read_bytes() == b"one\ntwo\n"

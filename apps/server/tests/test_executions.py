@@ -226,11 +226,10 @@ async def test_cancel_sends_stop_and_converges_via_event(
     stop = [c for c in cmds if c.type.value == "stop"]
     assert len(stop) == 1 and stop[0].intent.value == "cancel"
 
-    # the agent replies attempt.canceled -> task converges to canceled. wire
-    # seam: execution_id = task id, attempt_id = atomic execution id.
+    # the agent replies attempt.canceled -> task converges to canceled.
     ev = AgentEvent(
-        event_id="ev1", agent_id="agent-1", execution_id=task.id,
-        attempt_id=execution.id, type=AgentEventType.canceled, created_at="t",
+        event_id="ev1", agent_id="agent-1", task_id=task.id,
+        execution_id=execution.id, type=AgentEventType.canceled, created_at="t",
     )
     await apply_event(db_session, ev, "m1")
     await db_session.commit()

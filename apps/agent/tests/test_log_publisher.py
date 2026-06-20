@@ -15,7 +15,7 @@ AGENT_ID = "agent-x"
 
 def _started(workdir: Path, log_path: Path) -> StateStore:
     store = StateStore(state_dir(workdir))
-    store.create_reserved(execution_id="e1", attempt_id="a1", project="demo", spider="phase1")
+    store.create_reserved(task_id="e1", execution_id="a1", project="demo", spider="phase1")
     store.promote_started("a1", scrapyd_job_id="job-1", log_path=str(log_path))
     return store
 

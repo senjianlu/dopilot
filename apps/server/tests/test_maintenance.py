@@ -69,8 +69,8 @@ async def _make_task(
         )
         files.append(path, b"phase1 demo spider started\nphase1 demo spider done\n")
         log_file = ExecutionLogFile(
-            execution_id=task.id,
-            attempt_id=execution.id,
+            task_id=task.id,
+            execution_id=execution.id,
             stream="log",
             storage_path=path,
             size_bytes=files.size(path),
@@ -153,7 +153,7 @@ async def test_cleanup_unlinks_log_files_and_rows(
     remaining_logs = (
         await db_session.execute(
             select(ExecutionLogFile).where(
-                ExecutionLogFile.execution_id == task.id
+                ExecutionLogFile.task_id == task.id
             )
         )
     ).scalars().all()
@@ -174,14 +174,14 @@ async def test_cleanup_deletes_only_safe_outbox_rows(
         status=states.TASK_RUNNING, age_days=40, exec_status=states.EXEC_RUNNING,
         with_log=False,
     )
-    # one resolved outbox row per task (seam execution_id == task id).
+    # one resolved outbox row per task (task_id == the parent task id).
     for tid in (old_done.id, active.id):
         db_session.add(
             CommandOutbox(
                 command_id=_new_id(),
                 agent_id="agent-1",
-                execution_id=tid,
-                attempt_id=_new_id(),
+                task_id=tid,
+                execution_id=_new_id(),
                 type="run",
                 payload={},
                 status=OUTBOX_SENT,
@@ -197,7 +197,7 @@ async def test_cleanup_deletes_only_safe_outbox_rows(
 
     # only the deleted (terminal) task's outbox row is removed.
     assert summary.command_outbox == 1
-    rows = (await db_session.execute(select(CommandOutbox.execution_id))).all()
+    rows = (await db_session.execute(select(CommandOutbox.task_id))).all()
     assert [r[0] for r in rows] == [active.id]
 
 

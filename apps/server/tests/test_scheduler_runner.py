@@ -252,8 +252,8 @@ async def test_fire_creates_timer_task_with_one_run_command(
     cmds = await _run_commands(exec_redis)
     assert len(cmds) == 1
     assert cmds[0].type.value == "run"
-    # Wire seam: the run command carries execution_id == the TASK id.
-    assert cmds[0].execution_id == task.id
+    # The run command carries task_id == the TASK id.
+    assert cmds[0].task_id == task.id
 
 
 async def test_fire_unknown_schedule_is_noop(

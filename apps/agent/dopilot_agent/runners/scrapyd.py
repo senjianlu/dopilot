@@ -75,12 +75,12 @@ class ScrapyRunner:
             ) from exc
 
     async def run(self, req: AgentRunRequest) -> AgentRunResponse:
-        """Schedule a spider, persist attempt state, return the remote job id."""
+        """Schedule a spider, persist execution state, return the remote job id."""
         job_id = await self.schedule(req)
 
         state = AttemptState(
+            task_id=req.task_id,
             execution_id=req.execution_id,
-            attempt_id=req.attempt_id,
             scrapyd_job_id=job_id,
             project=req.project,
             version=req.version,
@@ -90,20 +90,20 @@ class ScrapyRunner:
         self._store.write(state)
 
         return AgentRunResponse(
+            task_id=req.task_id,
             execution_id=req.execution_id,
-            attempt_id=req.attempt_id,
             remote_job_id=job_id,
             status=AttemptStatus.running,
         )
 
-    async def stop(self, attempt_id: str, execution_id: str) -> AgentStopResponse:
-        """Cancel an attempt. Idempotent: stopping a gone job is not an error."""
-        state = self._store.read(attempt_id)
+    async def stop(self, execution_id: str, task_id: str) -> AgentStopResponse:
+        """Cancel an execution. Idempotent: stopping a gone job is not an error."""
+        state = self._store.read(execution_id)
         if state is None:
             # No mapping: nothing we can cancel. Report unknown, not an error.
             return AgentStopResponse(
+                task_id=task_id,
                 execution_id=execution_id,
-                attempt_id=attempt_id,
                 status=AttemptStatus.unknown,
                 stopped=False,
                 detail={"reason": "no_state"},
@@ -115,8 +115,8 @@ class ScrapyRunner:
             # Job already gone/finished on scrapyd's side: resolve, don't error.
             status = await self._resolve_status(state)
             return AgentStopResponse(
+                task_id=task_id,
                 execution_id=execution_id,
-                attempt_id=attempt_id,
                 status=status,
                 stopped=False,
                 detail={"reason": "cancel_failed", "scrapyd": exc.detail},
@@ -129,8 +129,8 @@ class ScrapyRunner:
             state.canceled = True
             self._store.write(state)
             return AgentStopResponse(
+                task_id=task_id,
                 execution_id=execution_id,
-                attempt_id=attempt_id,
                 status=AttemptStatus.canceled,
                 stopped=True,
                 detail={"prevstate": prevstate},
@@ -138,23 +138,23 @@ class ScrapyRunner:
 
         status = await self._resolve_status(state)
         return AgentStopResponse(
+            task_id=task_id,
             execution_id=execution_id,
-            attempt_id=attempt_id,
             status=status,
             stopped=False,
             detail={"prevstate": prevstate},
         )
 
     async def status(
-        self, attempt_id: str, execution_id: str
+        self, execution_id: str, task_id: str
     ) -> AgentStatusResponse:
-        """Resolve an attempt's current status from the state file + scrapyd."""
-        state = self._store.read(attempt_id)
+        """Resolve an execution's current status from the state file + scrapyd."""
+        state = self._store.read(execution_id)
         if state is None:
             # No state mapping at all: the server treats unknown as "lost".
             return AgentStatusResponse(
+                task_id=task_id,
                 execution_id=execution_id,
-                attempt_id=attempt_id,
                 remote_job_id=None,
                 status=AttemptStatus.unknown,
                 detail={"reason": "no_state"},
@@ -162,8 +162,8 @@ class ScrapyRunner:
 
         status = await self._resolve_status(state)
         return AgentStatusResponse(
+            task_id=task_id,
             execution_id=execution_id,
-            attempt_id=attempt_id,
             remote_job_id=state.scrapyd_job_id,
             status=status,
             exit_code=None,  # scrapyd 1.x does not expose exit codes.

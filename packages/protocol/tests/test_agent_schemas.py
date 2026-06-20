@@ -6,10 +6,8 @@ from dopilot_protocol import (
     AgentRunRequest,
     AgentRunResponse,
     AgentStatusResponse,
-    AgentStopRequest,
     AgentStopResponse,
     AttemptStatus,
-    CleanupResponse,
     EggDeployResponse,
 )
 
@@ -29,8 +27,8 @@ def test_attempt_status_values() -> None:
 
 def test_agent_run_request_defaults_and_roundtrip() -> None:
     req = AgentRunRequest(
+        task_id="t1",
         execution_id="e1",
-        attempt_id="a1",
         project="demo",
         spider="phase1",
     )
@@ -39,7 +37,7 @@ def test_agent_run_request_defaults_and_roundtrip() -> None:
     assert req.task_type == "scrapy"
     # mutable defaults must not be shared across instances
     other = AgentRunRequest(
-        execution_id="e2", attempt_id="a2", project="demo", spider="phase1"
+        task_id="t2", execution_id="e2", project="demo", spider="phase1"
     )
     req.settings["LOG_LEVEL"] = "DEBUG"
     assert other.settings == {}
@@ -48,18 +46,16 @@ def test_agent_run_request_defaults_and_roundtrip() -> None:
 
 def test_agent_run_response_status_default() -> None:
     resp = AgentRunResponse(
-        execution_id="e1", attempt_id="a1", remote_job_id="job-123"
+        task_id="t1", execution_id="e1", remote_job_id="job-123"
     )
     assert resp.status is AttemptStatus.running
     assert AgentRunResponse.model_validate(resp.model_dump()) == resp
 
 
-def test_agent_stop_roundtrip() -> None:
-    req = AgentStopRequest(execution_id="e1", attempt_id="a1")
-    assert AgentStopRequest.model_validate(req.model_dump()) == req
+def test_agent_stop_response_roundtrip() -> None:
     resp = AgentStopResponse(
+        task_id="t1",
         execution_id="e1",
-        attempt_id="a1",
         status=AttemptStatus.canceled,
         stopped=True,
     )
@@ -69,8 +65,8 @@ def test_agent_stop_roundtrip() -> None:
 
 def test_agent_status_response_roundtrip() -> None:
     resp = AgentStatusResponse(
+        task_id="t1",
         execution_id="e1",
-        attempt_id="a1",
         remote_job_id="job-123",
         status=AttemptStatus.finished,
         exit_code=0,
@@ -78,17 +74,10 @@ def test_agent_status_response_roundtrip() -> None:
     assert AgentStatusResponse.model_validate(resp.model_dump()) == resp
     # remote_job_id/exit_code optional
     minimal = AgentStatusResponse(
-        execution_id="e1", attempt_id="a1", status=AttemptStatus.unknown
+        task_id="t1", execution_id="e1", status=AttemptStatus.unknown
     )
     assert minimal.remote_job_id is None
     assert minimal.exit_code is None
-
-
-def test_cleanup_response_defaults() -> None:
-    resp = CleanupResponse(attempt_id="a1")
-    assert resp.removed is False
-    assert resp.detail == {}
-    assert CleanupResponse.model_validate(resp.model_dump()) == resp
 
 
 def test_egg_deploy_response_roundtrip() -> None:

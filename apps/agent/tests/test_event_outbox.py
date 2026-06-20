@@ -90,7 +90,7 @@ async def test_republish_started_resolves_live_status(workdir, fake_redis):
     scrapyd = FakeScrapyd()
     store, _runner, pub = _publisher(workdir, fake, scrapyd)
     # a started attempt whose job is running on scrapyd
-    store.create_reserved(execution_id="e1", attempt_id="a1", project="demo", spider="phase1")
+    store.create_reserved(task_id="e1", execution_id="a1", project="demo", spider="phase1")
     store.promote_started("a1", scrapyd_job_id="job-1", log_path="/l/a1.log")
     scrapyd.add_running("job-1", "demo", "phase1")
 
@@ -106,7 +106,7 @@ async def test_republish_started_resolves_live_status(workdir, fake_redis):
 async def test_republish_done_replays_recorded_terminal(workdir, fake_redis):
     fake = fake_redis()
     store, _runner, pub = _publisher(workdir, fake, FakeScrapyd())
-    store.create_reserved(execution_id="e1", attempt_id="a1", project="demo", spider="phase1")
+    store.create_reserved(task_id="e1", execution_id="a1", project="demo", spider="phase1")
     store.mark_done("a1", result="failed", error_code="spawn_aborted", lost_reason="spawn_aborted")
 
     await pub.republish_current("e1", "a1")

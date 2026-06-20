@@ -10,16 +10,14 @@ from .agent import (
     AgentRunRequest,
     AgentRunResponse,
     AgentStatusResponse,
-    AgentStopRequest,
     AgentStopResponse,
     AttemptStatus,
-    CleanupResponse,
     EggDeployResponse,
 )
 from .common import CapabilitySet, ErrorResponse
 from .execution import ExecutionRunRequest, ExecutionRunResponse, ScrapyRunPayload
 from .health import HealthResponse
-from .logs import LogStream, TailRequest, TailResponse
+from .logs import LogStream
 from .scrapy_command import (
     ParsedScrapyCommand,
     ScrapyCommandError,
@@ -54,8 +52,6 @@ __all__ = [
     "ErrorResponse",
     "HealthResponse",
     "LogStream",
-    "TailRequest",
-    "TailResponse",
     "ExecutionRunRequest",
     "ExecutionRunResponse",
     "ScrapyRunPayload",
@@ -69,10 +65,8 @@ __all__ = [
     "AttemptStatus",
     "AgentRunRequest",
     "AgentRunResponse",
-    "AgentStopRequest",
     "AgentStopResponse",
     "AgentStatusResponse",
-    "CleanupResponse",
     "EggDeployResponse",
     # Redis Streams communication (phase 1.5)
     "AgentCommand",
