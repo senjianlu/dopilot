@@ -2,48 +2,18 @@
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { deleteNode, listNodes, offlineNode, onlineNode } from "@/api/nodes";
-import type { NodeInfo, NodeStatus } from "@/api/types";
+import type { NodeInfo } from "@/api/types";
 import { badgeTagType, isOperable, nodeBadge } from "@/utils/nodeBadge";
+import { confirmAction } from "@/utils/confirm";
 
 const { t } = useI18n();
 const nodes = ref<NodeInfo[]>([]);
 const loading = ref(false);
 const busyId = ref("");
 
-const statusTagType: Record<NodeStatus, "success" | "warning" | "danger" | "info"> = {
-  healthy: "success",
-  degraded: "warning",
-  unhealthy: "danger",
-  unknown: "info",
-};
-
-type ScrapydHealth = "running" | "stopped" | "unknown";
-
-// Read the agent-reported scrapyd subprocess health out of health.scrapyd.
-function scrapydHealthOf(node: NodeInfo): ScrapydHealth {
-  const scrapyd = node.health?.scrapyd as
-    | { running?: unknown }
-    | undefined
-    | null;
-  if (scrapyd == null || scrapyd.running == null) {
-    return "unknown";
-  }
-  return scrapyd.running ? "running" : "stopped";
-}
-
-const scrapydTagType: Record<ScrapydHealth, "success" | "danger" | "info"> = {
-  running: "success",
-  stopped: "danger",
-  unknown: "info",
-};
-
-const scrapydLabel: Record<ScrapydHealth, string> = {
-  running: "nodes.scrapydRunning",
-  stopped: "nodes.scrapydStopped",
-  unknown: "nodes.scrapydUnknown",
-};
-
-// Precedence badge label: deleted/offline win over the raw health status.
+// Phase 1.8.2: a single status column. The badge already folds the backend
+// aggregate `node.status` (heartbeat freshness + Redis + command consumer) and
+// the offline/deleted precedence into one displayed state.
 function badgeLabel(node: NodeInfo): string {
   const badge = nodeBadge(node);
   if (badge === "deleted") {
@@ -57,6 +27,13 @@ function badgeLabel(node: NodeInfo): string {
 
 function badgeType(node: NodeInfo): "success" | "warning" | "danger" | "info" {
   return badgeTagType[nodeBadge(node)];
+}
+
+// Phase 1.8.2: capability tags. Only `scrapy` is expected green in normal
+// deployments; `script` / `docker` are reserved and stay gray until supported.
+const CAPABILITY_KEYS = ["scrapy", "script", "docker"] as const;
+function capActive(node: NodeInfo, key: string): boolean {
+  return node.capabilities?.[key] === true;
 }
 
 // id == null -> configured-but-unseen, no DB row, no scheduling ops yet.
@@ -94,6 +71,13 @@ async function withBusy(id: string, fn: () => Promise<unknown>): Promise<void> {
 
 async function onOffline(node: NodeInfo): Promise<void> {
   if (!node.id) return;
+  const ok = await confirmAction({
+    title: t("confirm.title"),
+    message: t("nodes.confirmOffline", { node: node.agent_id ?? node.endpoint }),
+    confirmText: t("confirm.confirm"),
+    cancelText: t("confirm.cancel"),
+  });
+  if (!ok) return;
   await withBusy(node.id, () => offlineNode(node.id as string));
 }
 async function onOnline(node: NodeInfo): Promise<void> {
@@ -102,6 +86,13 @@ async function onOnline(node: NodeInfo): Promise<void> {
 }
 async function onDelete(node: NodeInfo): Promise<void> {
   if (!node.id) return;
+  const ok = await confirmAction({
+    title: t("confirm.title"),
+    message: t("nodes.confirmDelete", { node: node.agent_id ?? node.endpoint }),
+    confirmText: t("confirm.confirm"),
+    cancelText: t("confirm.cancel"),
+  });
+  if (!ok) return;
   await withBusy(node.id, () => deleteNode(node.id as string));
 }
 
@@ -140,21 +131,19 @@ onMounted(load);
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column :label="t('health.status')">
+      <el-table-column :label="t('nodes.capabilities')">
         <template #default="{ row }">
-          <el-tag :type="statusTagType[(row as NodeInfo).status]">
-            {{ (row as NodeInfo).status }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column :label="t('nodes.scrapyd')">
-        <template #default="{ row }">
-          <el-tag
-            :type="scrapydTagType[scrapydHealthOf(row as NodeInfo)]"
-            :data-testid="`node-scrapyd-${(row as NodeInfo).agent_id}`"
-          >
-            {{ t(scrapydLabel[scrapydHealthOf(row as NodeInfo)]) }}
-          </el-tag>
+          <span class="node-caps">
+            <el-tag
+              v-for="cap in CAPABILITY_KEYS"
+              :key="cap"
+              :type="capActive(row as NodeInfo, cap) ? 'success' : 'info'"
+              :data-testid="`node-cap-${(row as NodeInfo).agent_id}-${cap}`"
+              disable-transitions
+            >
+              {{ cap }}
+            </el-tag>
+          </span>
         </template>
       </el-table-column>
       <el-table-column :label="t('nodes.lastSeen')" prop="last_seen_at" />
@@ -185,7 +174,6 @@ onMounted(load);
             type="danger"
             link
             :data-testid="`node-delete-${(row as NodeInfo).agent_id}`"
-            :title="t('nodes.confirmDelete')"
             :loading="busyId === (row as NodeInfo).id"
             @click="onDelete(row as NodeInfo)"
           >
@@ -202,5 +190,10 @@ onMounted(load);
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.node-caps {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 </style>

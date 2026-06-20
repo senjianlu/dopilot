@@ -327,6 +327,34 @@ export interface StreamTokenResponse {
   expires_at: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Manual maintenance (phase 1.8.2)
+// ---------------------------------------------------------------------------
+
+export interface TerminalCleanupRequest {
+  older_than_days?: number | null;
+  before?: string | null;
+  dry_run?: boolean;
+}
+
+export interface TerminalCleanupResponse {
+  dry_run: boolean;
+  cutoff: string;
+  tasks: number;
+  executions: number;
+  log_files: number;
+  log_files_removed: number;
+  log_bytes: number;
+  command_outbox: number;
+}
+
+export interface MarkTaskLostResponse {
+  task_id: string;
+  task_status: string;
+  executions_marked: number;
+  already_terminal: string[];
+}
+
 // Universal error envelope: { code, message_key, detail }.
 export interface ApiError {
   code: string;

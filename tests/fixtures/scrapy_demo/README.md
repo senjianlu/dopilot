@@ -45,6 +45,36 @@ implements `start()` (preferred) and keeps `start_requests()` as a fallback for
 older Scrapy (2.11..2.12), so the markers and item count are emitted on any
 Scrapy 2.11..2.16.
 
+## `duration_seconds` argument (phase 1.8.2)
+
+The spider accepts a `duration_seconds` argument so the same fixture backs both
+near-instant automated tests and long-running operational checks:
+
+```bash
+scrapy crawl phase1 -a duration_seconds=10
+```
+
+| Value | Behavior |
+|---|---|
+| omitted | default **60** seconds |
+| `0` | near-instant (the original phase-1 behavior) |
+| any positive number | spider stays alive that many seconds before `done` |
+| negative / non-numeric | raises a clear `ValueError` early |
+
+The delay is **reactor-safe**. The async `start()` path (Scrapy >= 2.13, what
+this fixture runs under) `await`s `asyncio.sleep` on the same event loop as the
+configured `AsyncioSelectorReactor`, so it never blocks the Twisted reactor —
+there is **no `time.sleep`** on the reactor path. The marker lines and the exact
+2-item count are preserved at every duration (including `0`).
+
+The legacy synchronous `start_requests()` fallback (Scrapy 2.11..2.12) keeps the
+markers + item count but does **not** delay, because a sync generator cannot
+`await` without blocking the reactor.
+
+> **CI note.** dopilot in-repo tests, the compose smoke, and E2E pass an explicit
+> short value (`-a duration_seconds=0`) so they never wait for the 60-second
+> default.
+
 ## Layout
 
 ```text
@@ -103,7 +133,9 @@ Equivalent: `scrapyd-deploy --build-egg eggs/demo_phase1.egg` also works because
 - Build source: this directory's `setup.py` + `demo/` package, via
   `build_egg.sh` (`python setup.py bdist_egg`).
 - Built with: Scrapy 2.16.0, scrapyd 1.6.0, setuptools 80.10.2, CPython 3.12.3.
-- **sha256:** `be59e2c12a5771cb9950a0c170392be98750b29db5d3a2b4fe0c1bc145229bc7`
+- **sha256:** `b573a96eb258a4f42f9ac435642637a1d28c6b8052d714ab4aa2bc3ad9496017`
+  (phase 1.8.2 rebuild — the `phase1` spider source now carries the
+  `duration_seconds` argument).
 
 Note: the egg bundles compiled `.pyc` files whose embedded timestamps make the
 sha256 vary across rebuilds. The committed `eggs/demo_phase1.egg` above is the
@@ -118,9 +150,9 @@ the project source changes.
 # Spider discovery (prints: phase1)
 cd tests/fixtures/scrapy_demo && /home/rabbir/dopilot/.venv/bin/scrapy list
 
-# Full run (markers + 2 items)
+# Full run (markers + 2 items). Pass duration_seconds=0 to avoid the 60s default.
 cd tests/fixtures/scrapy_demo && \
-  /home/rabbir/dopilot/.venv/bin/scrapy crawl phase1 --loglevel=INFO 2>&1 | \
+  /home/rabbir/dopilot/.venv/bin/scrapy crawl phase1 -a duration_seconds=0 --loglevel=INFO 2>&1 | \
   grep -E "phase1 demo spider (started|done)|item_scraped_count"
 ```
 

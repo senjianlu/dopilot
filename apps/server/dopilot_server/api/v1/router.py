@@ -9,6 +9,7 @@ from . import (
     auth,
     health,
     heartbeat,
+    maintenance,
     nodes,
     schedules,
     stats,
@@ -26,3 +27,4 @@ router.include_router(artifacts.router)
 router.include_router(templates.router)
 router.include_router(schedules.router)
 router.include_router(stats.router)
+router.include_router(maintenance.router)

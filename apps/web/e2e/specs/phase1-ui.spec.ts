@@ -124,7 +124,9 @@ test("execution templates page creates a command template and runs it", async ()
   // the artifact's first spider and can be replaced with a full command.
   const command = page.getByTestId("template-command-input");
   await expect(command).toHaveValue(/scrapy crawl/);
-  await command.fill("scrapy crawl phase1");
+  // Phase 1.8.2: pass duration_seconds=0 so the demo spider runs near-instantly
+  // instead of waiting for its new 60-second default.
+  await command.fill("scrapy crawl phase1 -a duration_seconds=0");
 
   await page.getByTestId("template-submit").click();
   await expect(page.getByTestId("template-dialog")).toBeHidden();

@@ -86,6 +86,27 @@ def append(path: str, data: bytes) -> int:
     return size(path)
 
 
+def remove(path: str) -> bool:
+    """Delete one log body file; return True if a file was removed.
+
+    Best-effort: a missing file is not an error (returns False). After removing
+    the file, the now-possibly-empty per-execution parent directory is pruned
+    (also best-effort) so manual cleanup does not leave empty ``{execution_id}/``
+    shells behind. Higher directories (YYYY/MM) are left intact.
+    """
+    removed = False
+    try:
+        os.remove(path)
+        removed = True
+    except OSError:
+        return False
+    try:
+        os.rmdir(Path(path).parent)
+    except OSError:
+        pass  # directory not empty / already gone — leave it.
+    return removed
+
+
 def read_slice(path: str, offset: int, max_bytes: int) -> tuple[int, int, str]:
     """Read up to ``max_bytes`` from ``offset``.
 

@@ -84,6 +84,11 @@ vi.mock("@/api/nodes", () => ({
   listNodes: () => listNodes(),
 }));
 
+const confirmAction = vi.fn(async () => true);
+vi.mock("@/utils/confirm", () => ({
+  confirmAction: () => confirmAction(),
+}));
+
 const push = vi.fn();
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push }),
@@ -134,6 +139,26 @@ describe("SchedulesPage", () => {
     listTemplates.mockClear();
     listNodes.mockClear();
     push.mockClear();
+    confirmAction.mockClear();
+    confirmAction.mockResolvedValue(true);
+  });
+
+  it("deletes a schedule only after confirmation", async () => {
+    const wrapper = mount(SchedulesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      onDelete: (s: { id: string; name: string }) => Promise<void>;
+    };
+    await vm.onDelete({ id: "sch-1", name: "nightly" });
+    expect(confirmAction).toHaveBeenCalledTimes(1);
+    expect(deleteSchedule).toHaveBeenCalledWith("sch-1");
+
+    confirmAction.mockResolvedValue(false);
+    deleteSchedule.mockClear();
+    await vm.onDelete({ id: "sch-2", name: "other" });
+    expect(deleteSchedule).not.toHaveBeenCalled();
   });
 
   it("renders trigger time and next run", async () => {
