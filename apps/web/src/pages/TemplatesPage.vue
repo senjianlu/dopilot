@@ -1,19 +1,29 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { listScrapyArtifacts } from "@/api/artifacts";
+import { listNodes } from "@/api/nodes";
 import {
   createTemplate,
   deleteTemplate,
   listTemplates,
   runTemplate,
 } from "@/api/templates";
-import type { NodeStrategy, TaskTemplate } from "@/api/types";
+import type {
+  NodeInfo,
+  NodeStrategy,
+  ScrapyArtifact,
+  TaskTemplate,
+} from "@/api/types";
+import { badgeTagType, nodeBadge } from "@/utils/nodeBadge";
 
 const { t } = useI18n();
 const router = useRouter();
 
 const templates = ref<TaskTemplate[]>([]);
+const artifacts = ref<ScrapyArtifact[]>([]);
+const nodes = ref<NodeInfo[]>([]);
 const loading = ref(false);
 const runningId = ref("");
 const dialogVisible = ref(false);
@@ -22,16 +32,93 @@ const createError = ref("");
 
 const form = reactive({
   name: "",
-  project: "",
+  artifactHash: "",
   spider: "",
-  version: "",
   node_strategy: "all" as NodeStrategy,
+  node_ids: [] as string[],
 });
+
+function nodeKey(node: NodeInfo): string {
+  return (node.id ?? node.agent_id ?? node.endpoint) as string;
+}
+
+// Configured-but-unseen endpoints (id == null) have never produced a DB row, so
+// backend selected-node resolution (matches DB id or agent_id) can never target
+// them — selecting one persists a value that yields `no_target`. Exclude them
+// from both the all/random involvement display and the `selected` pick list.
+const isSeen = (n: NodeInfo): boolean => n.id != null;
+
+// non-deleted + schedulable (= eligible for all/random involvement display).
+const schedulableNodes = computed(() =>
+  nodes.value.filter((n) => isSeen(n) && !n.deleted_at && n.scheduling_enabled),
+);
+// selectable for `selected`: non-deleted + non-offline (regardless of health).
+// Offline/deleted/unseen nodes may NOT be newly selected.
+const selectableNodes = computed(() =>
+  nodes.value.filter((n) => isSeen(n) && !n.deleted_at && n.scheduling_enabled),
+);
+
+const isSelectedStrategy = computed(() => form.node_strategy === "selected");
+
+// Options shown in the multi-select; for all/random it is informational.
+const nodeOptions = computed(() =>
+  isSelectedStrategy.value ? selectableNodes.value : schedulableNodes.value,
+);
+
+// The multi-select's bound value. For all/random the model is the full
+// schedulable set (disabled/read-only). For selected it is the user's choice.
+const selectedNodeIds = computed<string[]>({
+  get() {
+    return isSelectedStrategy.value
+      ? form.node_ids
+      : schedulableNodes.value.map(nodeKey);
+  },
+  set(value: string[]) {
+    if (isSelectedStrategy.value) {
+      form.node_ids = value;
+    }
+  },
+});
+
+// Resolve a node id back to its row so we can colour the selected chips.
+function nodeByKey(key: string): NodeInfo | undefined {
+  return nodes.value.find((n) => nodeKey(n) === key);
+}
+
+const selectedArtifact = computed(() =>
+  artifacts.value.find((a) => a.sha256 === form.artifactHash),
+);
+const availableSpiders = computed(() => selectedArtifact.value?.spiders ?? []);
+
+// Reset the spider when the artifact changes (keep it if still valid).
+watch(
+  () => form.artifactHash,
+  () => {
+    if (!availableSpiders.value.includes(form.spider)) {
+      form.spider = availableSpiders.value[0] ?? "";
+    }
+  },
+);
+
+// Drop selected nodes that are no longer selectable when switching to selected.
+watch(
+  () => form.node_strategy,
+  () => {
+    if (isSelectedStrategy.value) {
+      const allowed = new Set(selectableNodes.value.map(nodeKey));
+      form.node_ids = form.node_ids.filter((id) => allowed.has(id));
+    }
+  },
+);
 
 async function load(): Promise<void> {
   loading.value = true;
   try {
-    templates.value = await listTemplates();
+    [templates.value, artifacts.value, nodes.value] = await Promise.all([
+      listTemplates(),
+      listScrapyArtifacts(),
+      listNodes(),
+    ]);
   } finally {
     loading.value = false;
   }
@@ -39,24 +126,39 @@ async function load(): Promise<void> {
 
 function openCreate(): void {
   form.name = "";
-  form.project = "";
-  form.spider = "";
-  form.version = "";
+  form.artifactHash = artifacts.value[0]?.sha256 ?? "";
+  form.spider = artifacts.value[0]?.spiders?.[0] ?? "";
   form.node_strategy = "all";
+  form.node_ids = [];
   createError.value = "";
   dialogVisible.value = true;
 }
 
 async function submitCreate(): Promise<void> {
+  const art = selectedArtifact.value;
+  if (!art) {
+    createError.value = t("templates.createError");
+    return;
+  }
   creating.value = true;
   createError.value = "";
   try {
     await createTemplate({
       name: form.name,
-      project: form.project,
+      project: art.project,
+      version: art.version,
       spider: form.spider,
-      version: form.version || null,
+      artifact: {
+        hash: art.sha256,
+        sha256: art.sha256,
+        filename: art.filename,
+        project: art.project,
+        version: art.version,
+        size_bytes: art.size_bytes,
+        fetch_path: `/api/v1/artifacts/scrapy/${art.sha256}/egg`,
+      },
       node_strategy: form.node_strategy,
+      node_ids: isSelectedStrategy.value ? form.node_ids : [],
     });
     dialogVisible.value = false;
     await load();
@@ -101,7 +203,6 @@ onMounted(load);
 
     <el-table :data="templates" :empty-text="t('templates.empty')">
       <el-table-column :label="t('templates.name')" prop="name" />
-      <el-table-column :label="t('templates.project')" prop="project" />
       <el-table-column :label="t('templates.spider')" prop="spider" />
       <el-table-column :label="t('templates.version')" prop="version" />
       <el-table-column
@@ -134,17 +235,32 @@ onMounted(load);
         <el-form-item :label="t('templates.name')">
           <el-input v-model="form.name" />
         </el-form-item>
-        <el-form-item :label="t('templates.project')">
-          <el-input v-model="form.project" />
+        <el-form-item :label="t('templates.artifact')">
+          <el-select
+            v-model="form.artifactHash"
+            :placeholder="t('templates.selectArtifact')"
+            :no-data-text="t('templates.noArtifacts')"
+          >
+            <el-option
+              v-for="a in artifacts"
+              :key="a.sha256"
+              :label="`${a.project} · ${a.filename}`"
+              :value="a.sha256"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item :label="t('templates.spider')">
-          <el-input v-model="form.spider" />
-        </el-form-item>
-        <el-form-item :label="t('templates.version')">
-          <el-input
-            v-model="form.version"
-            :placeholder="t('templates.versionPlaceholder')"
-          />
+          <el-select
+            v-model="form.spider"
+            :placeholder="t('templates.selectSpider')"
+          >
+            <el-option
+              v-for="s in availableSpiders"
+              :key="s"
+              :label="s"
+              :value="s"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item :label="t('templates.strategy')">
           <el-select v-model="form.node_strategy">
@@ -152,6 +268,35 @@ onMounted(load);
             <el-option label="random" value="random" />
             <el-option label="selected" value="selected" />
           </el-select>
+        </el-form-item>
+        <el-form-item :label="t('templates.involvedNodes')">
+          <el-select
+            v-model="selectedNodeIds"
+            multiple
+            :disabled="!isSelectedStrategy"
+            :placeholder="
+              isSelectedStrategy
+                ? t('templates.selectNodes')
+                : t('templates.involvedNodesAuto')
+            "
+          >
+            <el-option
+              v-for="n in nodeOptions"
+              :key="nodeKey(n)"
+              :label="n.agent_id ?? n.endpoint"
+              :value="nodeKey(n)"
+            />
+          </el-select>
+          <div class="node-chips">
+            <el-tag
+              v-for="id in selectedNodeIds"
+              :key="id"
+              :type="badgeTagType[nodeBadge(nodeByKey(id) ?? { status: 'unknown', scheduling_enabled: true, deleted_at: null })]"
+              class="node-chip"
+            >
+              {{ nodeByKey(id)?.agent_id ?? id }}
+            </el-tag>
+          </div>
         </el-form-item>
         <el-alert
           v-if="createError"
@@ -183,5 +328,11 @@ onMounted(load);
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.node-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
 }
 </style>

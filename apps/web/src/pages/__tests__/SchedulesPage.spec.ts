@@ -34,6 +34,7 @@ const sampleSchedules: Schedule[] = [
     trigger_type: "interval",
     interval_seconds: 60,
     cron: null,
+    next_run_at: "2026-06-20T12:01:00Z",
     created_at: "2026-06-19T00:00:00Z",
     updated_at: "2026-06-19T00:00:00Z",
   },
@@ -46,6 +47,9 @@ const triggerSchedule = vi.fn(async (_id: string) => ({
   status: "queued",
 }));
 const deleteSchedule = vi.fn(async (_id: string) => undefined);
+const previewNextRun = vi.fn(async (_payload: unknown) => ({
+  next_run_at: "2026-06-20T12:05:00Z",
+}));
 const listTemplates = vi.fn(async () => sampleTemplates);
 
 vi.mock("@/api/schedules", () => ({
@@ -53,6 +57,7 @@ vi.mock("@/api/schedules", () => ({
   createSchedule: (payload: unknown) => createSchedule(payload),
   triggerSchedule: (id: string) => triggerSchedule(id),
   deleteSchedule: (id: string) => deleteSchedule(id),
+  previewNextRun: (payload: unknown) => previewNextRun(payload),
 }));
 
 vi.mock("@/api/templates", () => ({
@@ -103,20 +108,62 @@ describe("SchedulesPage", () => {
     listSchedules.mockClear();
     createSchedule.mockClear();
     triggerSchedule.mockClear();
+    deleteSchedule.mockClear();
+    previewNextRun.mockClear();
     listTemplates.mockClear();
     push.mockClear();
   });
 
-  it("renders fetched schedules", async () => {
+  it("renders trigger time and next run", async () => {
     const wrapper = mount(SchedulesPage, {
       global: { plugins: [makeI18n()], stubs: makeStubs() },
     });
     await flushPromises();
 
-    expect(wrapper.text()).toContain(zh.schedules.title);
-    const vm = wrapper.vm as unknown as { schedules: Schedule[] };
+    const vm = wrapper.vm as unknown as {
+      schedules: Schedule[];
+      triggerTimeText: (s: Schedule) => string;
+      formatTime: (iso: string | null) => string;
+    };
     expect(vm.schedules).toHaveLength(1);
-    expect(vm.schedules[0].name).toBe("every-minute");
+    // interval -> "every 60 seconds" (zh: 每 60 秒)
+    expect(vm.triggerTimeText(sampleSchedules[0])).toContain("60");
+    expect(vm.formatTime(sampleSchedules[0].next_run_at)).not.toBe("-");
+  });
+
+  it("shows a local interval estimate on create open", async () => {
+    const wrapper = mount(SchedulesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      openCreate: () => void;
+      estimatedNextRun: string;
+    };
+    vm.openCreate();
+    await flushPromises();
+    // interval estimate is computed locally (now + interval), no network call
+    expect(vm.estimatedNextRun).not.toBe("");
+    expect(previewNextRun).not.toHaveBeenCalled();
+  });
+
+  it("fetches a cron estimate from the backend preview", async () => {
+    const wrapper = mount(SchedulesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      form: { trigger_type: string; cron: string };
+      updateEstimate: () => Promise<void>;
+      estimatedNextRun: string;
+    };
+    vm.form.trigger_type = "cron";
+    vm.form.cron = "*/5 * * * *";
+    await vm.updateEstimate();
+    expect(previewNextRun).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger_type: "cron", cron: "*/5 * * * *" }),
+    );
+    expect(vm.estimatedNextRun).not.toBe("");
   });
 
   it("submits an interval create referencing the template", async () => {

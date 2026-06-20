@@ -19,6 +19,12 @@ export interface HealthInfo {
     online: number;
     healthy: number;
   };
+  // Phase 1.7.1: dashboard scheduling-health light over schedulable nodes.
+  agent?: {
+    status: "green" | "yellow" | "red";
+    schedulable: number;
+    healthy: number;
+  };
 }
 
 export interface LoginResponse {
@@ -46,7 +52,15 @@ export interface NodeInfo {
   // health.scrapyd carries { running, port, pid } when the agent reports it.
   health: Record<string, unknown>;
   last_seen_at: string | null;
+  // Phase 1.7.1: scheduling-control state, independent of health `status`.
+  // offline = !scheduling_enabled; deleted = deleted_at != null.
+  scheduling_enabled: boolean;
+  scheduling_disabled_at: string | null;
+  deleted_at: string | null;
 }
+
+// Phase 1.7.1 badge state. Precedence: deleted > offline > healthy > warning.
+export type NodeBadge = "deleted" | "offline" | "healthy" | "warning" | "unknown";
 
 export interface NodesResponse {
   nodes: NodeInfo[];
@@ -134,6 +148,7 @@ export interface ExecutionSummary {
   id: string;
   task_type: string;
   target: string;
+  spider?: string | null;
   status: ExecutionStatus;
   status_reason?: string | null;
   node_strategy: NodeStrategy;
@@ -148,6 +163,22 @@ export interface ExecutionSummary {
 
 export interface ExecutionsResponse {
   executions: ExecutionSummary[];
+  // Phase 1.7.1: server-side pagination metadata + known spider values.
+  page: number;
+  page_size: number;
+  total: number;
+  spiders: string[];
+}
+
+// Allowed backend page sizes. The UI picks the closest from table height but
+// may only request one of these.
+export const EXECUTION_PAGE_SIZES = [5, 10, 20, 50, 100] as const;
+export type ExecutionPageSize = (typeof EXECUTION_PAGE_SIZES)[number];
+
+export interface ListExecutionsParams {
+  page?: number;
+  pageSize?: ExecutionPageSize;
+  spider?: string | null;
 }
 
 // A single attempt against an agent/node.
@@ -234,12 +265,40 @@ export interface Schedule {
   trigger_type: TriggerType;
   interval_seconds: number | null;
   cron: string | null;
+  // Phase 1.7.1: estimated next fire time (interval = estimate, cron = exact).
+  next_run_at: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
 
 export interface SchedulesResponse {
   schedules: Schedule[];
+}
+
+export interface NextRunPreviewRequest {
+  trigger_type: TriggerType;
+  interval_seconds?: number | null;
+  cron?: string | null;
+}
+
+export interface NextRunPreviewResponse {
+  next_run_at: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// phase 1.7.1: dashboard daily task/run stats
+// ---------------------------------------------------------------------------
+
+export interface DailyTaskCount {
+  date: string; // YYYY-MM-DD
+  tasks: number;
+  executions: number;
+}
+
+export interface DailyTaskStatsResponse {
+  days: number;
+  timezone: string;
+  buckets: DailyTaskCount[];
 }
 
 export interface CreateScheduleRequest {

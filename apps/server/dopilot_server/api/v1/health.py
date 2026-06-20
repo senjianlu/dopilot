@@ -53,6 +53,25 @@ async def health(
     online_count = sum(1 for node in nodes if node["status"] in {"healthy", "degraded"})
     healthy_count = sum(1 for node in nodes if node["status"] == "healthy")
 
+    # Phase 1.7.1: agent (scheduling) health is judged ONLY over schedulable,
+    # non-deleted nodes — offline/deleted nodes still report health on the Nodes
+    # page but never colour the dashboard scheduling light.
+    schedulable = [
+        n
+        for n in nodes
+        if n.get("scheduling_enabled", True) and not n.get("deleted_at")
+    ]
+    schedulable_healthy = sum(1 for n in schedulable if n["status"] == "healthy")
+    if schedulable_healthy == 0:
+        # no schedulable healthy node (incl. the no-nodes case) -> red.
+        agent_status = "red"
+    elif schedulable_healthy == len(schedulable):
+        # every schedulable node is healthy -> green.
+        agent_status = "green"
+    else:
+        # some healthy, some degraded/unhealthy/unknown -> yellow.
+        agent_status = "yellow"
+
     dependency_statuses = [
         "ok" if reachable else "error",
         redis_status if redis_status != "disabled" else "ok",
@@ -83,5 +102,11 @@ async def health(
             "total": len(nodes),
             "online": online_count,
             "healthy": healthy_count,
+        },
+        # Phase 1.7.1: dashboard scheduling-health light (schedulable nodes only).
+        "agent": {
+            "status": agent_status,
+            "schedulable": len(schedulable),
+            "healthy": schedulable_healthy,
         },
     }

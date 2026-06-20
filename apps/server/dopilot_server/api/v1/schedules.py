@@ -23,6 +23,8 @@ from ...redis.dispatcher import CommandDispatcher
 from ...services import schedules as svc
 from .executions import get_dispatcher
 from .schemas import (
+    NextRunPreviewRequest,
+    NextRunPreviewResponse,
     ScheduleCreateRequest,
     SchedulesResponse,
     ScheduleUpdateRequest,
@@ -30,6 +32,10 @@ from .schemas import (
 )
 
 router = APIRouter(tags=["schedules"])
+
+
+def _tz(settings: Settings) -> str:
+    return settings.scheduler.timezone or "UTC"
 
 
 async def _reload_runner(request: Request) -> None:
@@ -44,22 +50,40 @@ async def create_schedule(
     body: ScheduleCreateRequest,
     request: Request,
     _admin: AdminContext = Depends(get_current_admin),
+    settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> ScheduleView:
     schedule = await svc.create_schedule(session, body.model_dump())
     await session.commit()
     await _reload_runner(request)
-    return ScheduleView(**svc.schedule_view(schedule))
+    return ScheduleView(**svc.schedule_view(schedule, timezone=_tz(settings)))
+
+
+@router.post("/schedules/preview-next-run", response_model=NextRunPreviewResponse)
+async def preview_next_run(
+    body: NextRunPreviewRequest,
+    _admin: AdminContext = Depends(get_current_admin),
+    settings: Settings = Depends(get_settings),
+) -> NextRunPreviewResponse:
+    """Estimate the next run for an unsaved trigger (backs the create dialog)."""
+    next_run = svc.preview_next_run(body.model_dump(), timezone=_tz(settings))
+    return NextRunPreviewResponse(
+        next_run_at=next_run.isoformat() if next_run else None
+    )
 
 
 @router.get("/schedules", response_model=SchedulesResponse)
 async def list_schedules(
     _admin: AdminContext = Depends(get_current_admin),
+    settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> SchedulesResponse:
     schedules = await svc.list_schedules(session)
+    tz = _tz(settings)
     return SchedulesResponse(
-        schedules=[ScheduleView(**svc.schedule_view(s)) for s in schedules]
+        schedules=[
+            ScheduleView(**svc.schedule_view(s, timezone=tz)) for s in schedules
+        ]
     )
 
 
@@ -67,10 +91,11 @@ async def list_schedules(
 async def get_schedule(
     schedule_id: str,
     _admin: AdminContext = Depends(get_current_admin),
+    settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> ScheduleView:
     schedule = await svc.get_schedule_or_404(session, schedule_id)
-    return ScheduleView(**svc.schedule_view(schedule))
+    return ScheduleView(**svc.schedule_view(schedule, timezone=_tz(settings)))
 
 
 @router.put("/schedules/{schedule_id}", response_model=ScheduleView)
@@ -79,6 +104,7 @@ async def update_schedule(
     body: ScheduleUpdateRequest,
     request: Request,
     _admin: AdminContext = Depends(get_current_admin),
+    settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> ScheduleView:
     schedule = await svc.get_schedule_or_404(session, schedule_id)
@@ -89,7 +115,7 @@ async def update_schedule(
     # refresh the server-generated onupdate `updated_at` before viewing.
     await session.refresh(schedule)
     await _reload_runner(request)
-    return ScheduleView(**svc.schedule_view(schedule))
+    return ScheduleView(**svc.schedule_view(schedule, timezone=_tz(settings)))
 
 
 @router.delete("/schedules/{schedule_id}")

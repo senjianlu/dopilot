@@ -104,17 +104,41 @@ async def run_execution(
 
 @router.get("/executions", response_model=ExecutionsResponse)
 async def list_executions(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20),
+    spider: str | None = Query(default=None),
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> ExecutionsResponse:
-    tasks = await svc.list_tasks(session)
-    summaries: list[ExecutionSummary] = []
-    for task in tasks:
-        executions = await svc.list_executions(session, task.id)
-        summaries.append(
-            ExecutionSummary(**svc.task_summary(task, len(executions)))
+    """Backend-paginated tasks/runs list with an optional spider filter.
+
+    ``page_size`` must be one of :data:`svc.ALLOWED_PAGE_SIZES`; child execution
+    counts for the page are fetched in ONE aggregate query (no per-row N+1).
+    """
+    if page_size not in svc.ALLOWED_PAGE_SIZES:
+        raise ApiError(
+            400,
+            "execution.invalid_page_size",
+            "errors.invalidPageSize",
+            {"page_size": page_size, "allowed": list(svc.ALLOWED_PAGE_SIZES)},
         )
-    return ExecutionsResponse(executions=summaries)
+    spider_filter = spider or None
+    tasks, total = await svc.list_tasks_page(
+        session, page=page, page_size=page_size, spider=spider_filter
+    )
+    counts = await svc.child_execution_counts(session, [t.id for t in tasks])
+    summaries = [
+        ExecutionSummary(**svc.task_summary(task, counts.get(task.id, 0)))
+        for task in tasks
+    ]
+    spiders = await svc.list_task_spiders(session)
+    return ExecutionsResponse(
+        executions=summaries,
+        page=page,
+        page_size=page_size,
+        total=total,
+        spiders=spiders,
+    )
 
 
 @router.get("/executions/{execution_id}", response_model=ExecutionView)
