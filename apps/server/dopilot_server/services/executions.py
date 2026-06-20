@@ -25,7 +25,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from dopilot_protocol import ExecutionRunRequest
+from dopilot_protocol import (
+    ExecutionRunRequest,
+    ScrapyCommandError,
+    parse_scrapy_command,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,32 +70,39 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def parse_scrapy_params(request: ExecutionRunRequest) -> dict[str, Any]:
-    """Validate + normalize the scrapy inputs carried in ``params``.
+    """Validate the command-first scrapy inputs carried in ``params``.
 
-    Raises a 400 ``ApiError`` when project or spider is missing.
+    Re-validates the ``command`` with the shared parser at the dispatch boundary
+    (the server is authoritative) and requires the build-artifact ``artifact``
+    context (project, since the command alone names no scrapyd project). Returns
+    the ``command`` + ``artifact`` the Redis run payload carries plus the DERIVED
+    ``spider`` (for ``Task.spider``). Raises a 400 ``ApiError`` on an invalid
+    command or missing artifact context.
     """
     params = request.params or {}
     artifact = params.get("artifact") if isinstance(params.get("artifact"), dict) else None
+    command = params.get("command")
     project = params.get("project") or (artifact or {}).get("project")
-    spider = params.get("spider")
-    missing = [k for k, v in (("project", project), ("spider", spider)) if not v]
-    if missing:
+    try:
+        parsed = parse_scrapy_command(command)
+    except ScrapyCommandError as exc:
+        raise ApiError(400, exc.code, exc.message_key, exc.detail) from exc
+    if not project:
         raise ApiError(
             400,
             "execution.invalid_params",
             "errors.invalidParams",
-            {"missing": missing},
+            {"missing": ["project"]},
         )
     return {
+        "command": str(command),
         "project": str(project),
-        "spider": str(spider),
+        "spider": parsed.spider,
         "version": (
             str(params["version"])
             if params.get("version")
             else (str(artifact["version"]) if (artifact or {}).get("version") else None)
         ),
-        "settings": {str(k): str(v) for k, v in (params.get("settings") or {}).items()},
-        "args": {str(k): str(v) for k, v in (params.get("args") or {}).items()},
         "artifact": dict(artifact or {}),
     }
 

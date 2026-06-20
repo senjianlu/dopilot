@@ -1,20 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import {
-  listBuildArtifacts,
-  runBuildArtifact,
-  uploadEgg,
-} from "@/api/artifacts";
+import { listBuildArtifacts, uploadEgg } from "@/api/artifacts";
 import type { BuildArtifact } from "@/api/types";
 
 const { t } = useI18n();
-const router = useRouter();
 const artifacts = ref<BuildArtifact[]>([]);
 const loading = ref(false);
 const uploading = ref(false);
-const runningId = ref("");
 const uploadRef = ref();
 
 async function load(): Promise<void> {
@@ -40,23 +33,6 @@ async function onUpload(options: { file: File }): Promise<void> {
 function shortHash(hash: string | null): string {
   if (!hash) return "-";
   return `${hash.slice(0, 12)}…`;
-}
-
-async function runArtifact(artifact: BuildArtifact): Promise<void> {
-  const spider = artifact.spiders[0];
-  if (!spider) {
-    return;
-  }
-  runningId.value = artifact.id;
-  try {
-    const res = await runBuildArtifact(artifact.id, {
-      spider,
-      node_strategy: "all",
-    });
-    await router.push(`/tasks/${res.task_id}`);
-  } finally {
-    runningId.value = "";
-  }
 }
 
 onMounted(load);
@@ -123,20 +99,6 @@ onMounted(load);
           <el-tag :type="(row as BuildArtifact).runnable ? 'success' : 'info'">
             {{ (row as BuildArtifact).runnable ? "runnable" : "n/a" }}
           </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column :label="t('artifacts.actions')" width="120">
-        <template #default="{ row }">
-          <el-button
-            type="primary"
-            link
-            :data-testid="`artifact-run-${(row as BuildArtifact).name}`"
-            :loading="runningId === (row as BuildArtifact).id"
-            :disabled="!(row as BuildArtifact).runnable || !(row as BuildArtifact).spiders.length"
-            @click="runArtifact(row as BuildArtifact)"
-          >
-            {{ t("artifacts.run") }}
-          </el-button>
         </template>
       </el-table-column>
     </el-table>

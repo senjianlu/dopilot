@@ -54,14 +54,18 @@ class ExecutionTemplate(Base):
     build_artifact_id: Mapped[str | None] = mapped_column(
         String(32), ForeignKey("build_artifacts.id"), nullable=True, index=True
     )
-    # Scrapy-specific run defaults. ``project`` / ``version`` are resolved from
-    # the bound build artifact (NOT user-editable); they are kept here as the
-    # snapshot default and for legacy data. ``spider`` is the user's choice.
+    # ``project`` / ``version`` are resolved from the bound build artifact (NOT
+    # user-editable); they are kept here as the snapshot default and for legacy
+    # data. Phase 1.8.1: command-first — the authoritative execution input is a
+    # single ``scrapy crawl ...`` command (see
+    # :mod:`dopilot_protocol.scrapy_command`). The legacy decomposed
+    # ``spider`` / ``settings`` / ``args`` columns were dropped (migration 0008).
+    # ``command`` is nullable in the DB so a legacy template whose command could
+    # not be synthesized during migration stays READABLE; application validation
+    # requires a valid command for every new/updated template.
     project: Mapped[str | None] = mapped_column(String, nullable=True)
     version: Mapped[str | None] = mapped_column(String, nullable=True)
-    spider: Mapped[str | None] = mapped_column(String, nullable=True)
-    settings: Mapped[dict] = mapped_column(_JSON, nullable=False, default=dict)
-    args: Mapped[dict] = mapped_column(_JSON, nullable=False, default=dict)
+    command: Mapped[str | None] = mapped_column(String, nullable=True)
     node_strategy: Mapped[str] = mapped_column(
         String, nullable=False, default="all"
     )
@@ -82,11 +86,13 @@ class Schedule(Base):
 
     ``trigger_type`` is ``interval`` (uses ``interval_seconds``) or ``cron``
     (uses the ``cron`` 5-field crontab expression). Pause/resume is out of scope
-    — there is no paused state. ``overrides`` (phase 1.8) is a bounded JSONB
+    — there is no paused state. ``overrides`` (phase 1.8.1) is a bounded JSONB
     payload merged over the template defaults at firing time (precedence:
-    schedule override > execution template default > build artifact default); it
-    may carry ``settings`` / ``args`` / ``spider`` / ``node_strategy`` /
-    ``node_ids`` but NEVER ``build_artifact_id``.
+    schedule override > execution template default > build artifact default). It
+    may carry only ``command`` / ``node_strategy`` / ``node_ids`` — a ``command``
+    override FULLY replaces the template command (no arg/setting merge) — and
+    NEVER ``build_artifact_id``. The legacy ``spider`` / ``settings`` / ``args``
+    override keys were stripped by migration 0008.
     """
 
     __tablename__ = "schedules"

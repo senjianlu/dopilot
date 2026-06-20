@@ -17,6 +17,7 @@ import type {
   NodeStrategy,
 } from "@/api/types";
 import { badgeTagType, nodeBadge } from "@/utils/nodeBadge";
+import { checkScrapyCommand } from "@/utils/scrapyCommand";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -33,7 +34,7 @@ const createError = ref("");
 const form = reactive({
   name: "",
   buildArtifactId: "",
-  spider: "",
+  command: "",
   node_strategy: "all" as NodeStrategy,
   node_ids: [] as string[],
 });
@@ -80,9 +81,20 @@ const selectedNodeIds = computed<string[]>({
   },
 });
 
-// Resolve a node id back to its row so we can colour the selected chips.
+// Resolve a node id back to its row so we can colour the selected tags.
 function nodeByKey(key: string): NodeInfo | undefined {
   return nodes.value.find((n) => nodeKey(n) === key);
+}
+
+const FALLBACK_NODE = {
+  status: "unknown" as const,
+  scheduling_enabled: true,
+  deleted_at: null,
+};
+
+// Element Plus tag type for a selected node id (status colour inside the input).
+function nodeTagType(key: string) {
+  return badgeTagType[nodeBadge(nodeByKey(key) ?? FALLBACK_NODE)];
 }
 
 // Only runnable artifacts can back a template.
@@ -99,21 +111,29 @@ const availableSpiders = computed(() => selectedArtifact.value?.spiders ?? []);
 const resolvedProject = computed(() => selectedArtifact.value?.project ?? "-");
 const resolvedVersion = computed(() => selectedArtifact.value?.version ?? "-");
 
-// Read-only Scrapy entrypoint/command preview; users may NOT edit this.
-const commandPreview = computed(() => {
-  const art = selectedArtifact.value;
-  if (!art) return "-";
-  const project = art.project ?? "?";
-  const spider = form.spider || "<spider>";
-  return `scrapy crawl ${spider} (project=${project})`;
-});
+// Phase 1.8.1: command-first. UX validation of the command (backend remains
+// authoritative). `commandError` blocks submit and shows an inline reason.
+const commandCheck = computed(() => checkScrapyCommand(form.command));
+const commandError = computed(() =>
+  form.command && !commandCheck.value.valid
+    ? t(`commandErrors.${commandCheck.value.reason}`, t("commandErrors.invalid"))
+    : "",
+);
 
-// Reset the spider when the artifact changes (keep it if still valid).
+// Default the command from the artifact's first spider when it changes and the
+// user has not typed a custom command yet.
+function defaultCommand(art: BuildArtifact | undefined): string {
+  const spider = art?.spiders?.[0];
+  return spider ? `scrapy crawl ${spider}` : "";
+}
 watch(
   () => form.buildArtifactId,
-  () => {
-    if (!availableSpiders.value.includes(form.spider)) {
-      form.spider = availableSpiders.value[0] ?? "";
+  (_id, prev) => {
+    const wasDefault =
+      !form.command ||
+      form.command === defaultCommand(artifacts.value.find((a) => a.id === prev));
+    if (wasDefault) {
+      form.command = defaultCommand(selectedArtifact.value);
     }
   },
 );
@@ -146,17 +166,26 @@ function openCreate(): void {
   form.name = "";
   const first = runnableArtifacts.value[0];
   form.buildArtifactId = first?.id ?? "";
-  form.spider = first?.spiders?.[0] ?? "";
+  form.command = defaultCommand(first);
   form.node_strategy = "all";
   form.node_ids = [];
   createError.value = "";
   dialogVisible.value = true;
 }
 
+// Block submit on an empty/invalid command (UX only).
+const canSubmit = computed(
+  () => !!form.command && commandCheck.value.valid && !!selectedArtifact.value,
+);
+
 async function submitCreate(): Promise<void> {
   const art = selectedArtifact.value;
   if (!art) {
     createError.value = t("templates.createError");
+    return;
+  }
+  if (!commandCheck.value.valid) {
+    createError.value = t("templates.invalidCommand");
     return;
   }
   creating.value = true;
@@ -165,7 +194,7 @@ async function submitCreate(): Promise<void> {
     await createTemplate({
       name: form.name,
       build_artifact_id: art.id,
-      spider: form.spider,
+      command: form.command.trim(),
       node_strategy: form.node_strategy,
       node_ids: isSelectedStrategy.value ? form.node_ids : [],
     });
@@ -218,7 +247,13 @@ onMounted(load);
           </span>
         </template>
       </el-table-column>
-      <el-table-column :label="t('templates.spider')" prop="spider" />
+      <el-table-column :label="t('templates.command')">
+        <template #default="{ row }">
+          <code :data-testid="`template-command-${(row as ExecutionTemplate).name}`">
+            {{ (row as ExecutionTemplate).command ?? "-" }}
+          </code>
+        </template>
+      </el-table-column>
       <el-table-column :label="t('templates.version')" prop="version" />
       <el-table-column
         :label="t('templates.strategy')"
@@ -284,26 +319,22 @@ onMounted(load);
             disabled
           />
         </el-form-item>
-        <el-form-item :label="t('templates.spider')">
-          <el-select
-            v-model="form.spider"
-            data-testid="template-spider-select"
-            :placeholder="t('templates.selectSpider')"
-          >
-            <el-option
-              v-for="s in availableSpiders"
-              :key="s"
-              :label="s"
-              :value="s"
-            />
-          </el-select>
-        </el-form-item>
         <el-form-item :label="t('templates.command')">
           <el-input
-            :model-value="commandPreview"
-            data-testid="template-command"
-            disabled
+            v-model="form.command"
+            data-testid="template-command-input"
+            :placeholder="t('templates.commandPlaceholder')"
           />
+          <div
+            v-if="commandError"
+            class="command-error"
+            data-testid="template-command-error"
+          >
+            {{ commandError }}
+          </div>
+          <div v-else-if="availableSpiders.length" class="command-hint">
+            {{ t("templates.commandSpiders", { spiders: availableSpiders.join(", ") }) }}
+          </div>
         </el-form-item>
         <el-form-item :label="t('templates.strategy')">
           <el-select v-model="form.node_strategy">
@@ -323,6 +354,20 @@ onMounted(load);
                 : t('templates.involvedNodesAuto')
             "
           >
+            <!-- status colour rendered on the tags INSIDE the input (no
+                 duplicate chips below). -->
+            <template #tag="{ data, deleteTag }">
+              <el-tag
+                v-for="item in data"
+                :key="item.value"
+                :type="nodeTagType(item.value)"
+                :closable="isSelectedStrategy"
+                disable-transitions
+                @close="deleteTag($event, item)"
+              >
+                {{ nodeByKey(item.value)?.agent_id ?? item.currentLabel }}
+              </el-tag>
+            </template>
             <el-option
               v-for="n in nodeOptions"
               :key="nodeKey(n)"
@@ -330,16 +375,6 @@ onMounted(load);
               :value="nodeKey(n)"
             />
           </el-select>
-          <div class="node-chips">
-            <el-tag
-              v-for="id in selectedNodeIds"
-              :key="id"
-              :type="badgeTagType[nodeBadge(nodeByKey(id) ?? { status: 'unknown', scheduling_enabled: true, deleted_at: null })]"
-              class="node-chip"
-            >
-              {{ nodeByKey(id)?.agent_id ?? id }}
-            </el-tag>
-          </div>
         </el-form-item>
         <el-alert
           v-if="createError"
@@ -356,6 +391,7 @@ onMounted(load);
           type="primary"
           data-testid="template-submit"
           :loading="creating"
+          :disabled="!canSubmit"
           @click="submitCreate"
         >
           {{ t("templates.submit") }}
@@ -377,10 +413,14 @@ onMounted(load);
   align-items: center;
   gap: 8px;
 }
-.node-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
+.command-error {
+  color: var(--el-color-danger);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.command-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  margin-top: 4px;
 }
 </style>

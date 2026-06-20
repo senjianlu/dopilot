@@ -107,7 +107,7 @@ async def test_schedule_views_include_next_run_at(exec_client, seeder):
         json={
             "name": "t",
             "build_artifact_id": artifact.id,
-            "spider": "phase1",
+            "command": "scrapy crawl phase1",
             "node_strategy": "all",
         },
     )

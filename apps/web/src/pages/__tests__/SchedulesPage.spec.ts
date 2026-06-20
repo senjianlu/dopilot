@@ -15,9 +15,7 @@ const sampleTemplates: ExecutionTemplate[] = [
     artifact_type: "scrapy",
     project: "demo",
     version: null,
-    spider: "phase1",
-    settings: {},
-    args: {},
+    command: "scrapy crawl phase1",
     node_strategy: "all",
     node_ids: [],
     created_at: "2026-06-19T00:00:00Z",
@@ -120,6 +118,7 @@ function makeStubs() {
     "el-input-number": { template: "<input type='number' />" },
     "el-select": { template: "<select><slot /></select>" },
     "el-option": { template: "<option><slot /></option>" },
+    "el-tag": { template: "<span><slot /></span>" },
     "el-alert": { props: ["title"], template: "<div>{{ title }}</div>" },
   };
 }
@@ -284,6 +283,54 @@ describe("SchedulesPage", () => {
         overrides: { node_strategy: "selected", node_ids: ["node-1"] },
       }),
     );
+  });
+
+  it("includes a command override when one is entered", async () => {
+    const wrapper = mount(SchedulesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+
+    const vm = wrapper.vm as unknown as {
+      openCreate: () => void;
+      submitCreate: () => Promise<void>;
+      form: {
+        name: string;
+        execution_template_id: string;
+        override_command: string;
+      };
+    };
+    vm.openCreate();
+    vm.form.name = "override-cmd";
+    vm.form.execution_template_id = "tpl-1";
+    vm.form.override_command = "scrapy crawl phase2 -s LOG_LEVEL=DEBUG";
+    await vm.submitCreate();
+
+    expect(createSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        overrides: { command: "scrapy crawl phase2 -s LOG_LEVEL=DEBUG" },
+      }),
+    );
+  });
+
+  it("blocks submit on an invalid command override", async () => {
+    const wrapper = mount(SchedulesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+
+    const vm = wrapper.vm as unknown as {
+      openCreate: () => void;
+      submitCreate: () => Promise<void>;
+      form: { override_command: string };
+      canSubmit: boolean;
+    };
+    vm.openCreate();
+    vm.form.override_command = "scrapy crawl phase2 | cat";
+    await flushPromises();
+    expect(vm.canSubmit).toBe(false);
+    await vm.submitCreate();
+    expect(createSchedule).not.toHaveBeenCalled();
   });
 
   it("triggers now and navigates to the created task", async () => {

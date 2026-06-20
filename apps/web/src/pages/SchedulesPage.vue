@@ -19,6 +19,8 @@ import type {
   ScheduleOverrides,
   TriggerType,
 } from "@/api/types";
+import { badgeTagType, nodeBadge } from "@/utils/nodeBadge";
+import { checkScrapyCommand } from "@/utils/scrapyCommand";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -39,13 +41,29 @@ const form = reactive({
   trigger_type: "interval" as TriggerType,
   interval_seconds: 60,
   cron: "",
-  // override controls (build artifact may NOT be overridden).
+  // override controls (build artifact may NOT be overridden). Phase 1.8.1:
+  // command-first — a command override FULLY replaces the template command.
+  override_command: "",
   override_node_strategy: "" as "" | NodeStrategy,
   override_node_ids: [] as string[],
 });
 
 function nodeKey(node: NodeInfo): string {
   return (node.id ?? node.agent_id ?? node.endpoint) as string;
+}
+
+function nodeByKey(key: string): NodeInfo | undefined {
+  return nodes.value.find((n) => nodeKey(n) === key);
+}
+
+const FALLBACK_NODE = {
+  status: "unknown" as const,
+  scheduling_enabled: true,
+  deleted_at: null,
+};
+
+function nodeTagType(key: string) {
+  return badgeTagType[nodeBadge(nodeByKey(key) ?? FALLBACK_NODE)];
 }
 
 const isSeen = (n: NodeInfo): boolean => n.id != null;
@@ -56,6 +74,19 @@ const selectableNodes = computed(() =>
 
 const overrideSelectedStrategy = computed(
   () => form.override_node_strategy === "selected",
+);
+
+// UX validation for the optional command override (backend authoritative).
+const overrideCommandCheck = computed(() =>
+  checkScrapyCommand(form.override_command),
+);
+const overrideCommandError = computed(() =>
+  form.override_command && !overrideCommandCheck.value.valid
+    ? t(
+        `commandErrors.${overrideCommandCheck.value.reason}`,
+        t("commandErrors.invalid"),
+      )
+    : "",
 );
 
 function templateName(id: string): string {
@@ -127,6 +158,7 @@ function openCreate(): void {
   form.trigger_type = "interval";
   form.interval_seconds = 60;
   form.cron = "";
+  form.override_command = "";
   form.override_node_strategy = "";
   form.override_node_ids = [];
   createError.value = "";
@@ -137,6 +169,9 @@ function openCreate(): void {
 // Assemble the optional overrides object (omit empty controls).
 function buildOverrides(): ScheduleOverrides | undefined {
   const overrides: ScheduleOverrides = {};
+  if (form.override_command.trim()) {
+    overrides.command = form.override_command.trim();
+  }
   if (form.override_node_strategy) {
     overrides.node_strategy = form.override_node_strategy;
     if (overrideSelectedStrategy.value) {
@@ -146,7 +181,15 @@ function buildOverrides(): ScheduleOverrides | undefined {
   return Object.keys(overrides).length ? overrides : undefined;
 }
 
+const canSubmit = computed(
+  () => !form.override_command || overrideCommandCheck.value.valid,
+);
+
 async function submitCreate(): Promise<void> {
+  if (form.override_command && !overrideCommandCheck.value.valid) {
+    createError.value = t("schedules.invalidCommand");
+    return;
+  }
   creating.value = true;
   createError.value = "";
   try {
@@ -291,6 +334,20 @@ onMounted(load);
             @input="updateEstimate"
           />
         </el-form-item>
+        <el-form-item :label="t('schedules.overrideCommand')">
+          <el-input
+            v-model="form.override_command"
+            data-testid="schedule-command-input"
+            :placeholder="t('schedules.overrideCommandNone')"
+          />
+          <div
+            v-if="overrideCommandError"
+            class="command-error"
+            data-testid="schedule-command-error"
+          >
+            {{ overrideCommandError }}
+          </div>
+        </el-form-item>
         <el-form-item :label="t('schedules.overrideStrategy')">
           <el-select
             v-model="form.override_node_strategy"
@@ -308,6 +365,18 @@ onMounted(load);
           :label="t('schedules.overrideNodes')"
         >
           <el-select v-model="form.override_node_ids" multiple>
+            <template #tag="{ data, deleteTag }">
+              <el-tag
+                v-for="item in data"
+                :key="item.value"
+                :type="nodeTagType(item.value)"
+                closable
+                disable-transitions
+                @close="deleteTag($event, item)"
+              >
+                {{ nodeByKey(item.value)?.agent_id ?? item.currentLabel }}
+              </el-tag>
+            </template>
             <el-option
               v-for="n in selectableNodes"
               :key="nodeKey(n)"
@@ -334,6 +403,7 @@ onMounted(load);
           type="primary"
           data-testid="schedule-submit"
           :loading="creating"
+          :disabled="!canSubmit"
           @click="submitCreate"
         >
           {{ t("schedules.submit") }}
@@ -357,5 +427,10 @@ onMounted(load);
 }
 .next-run-estimate {
   color: var(--el-text-color-secondary);
+}
+.command-error {
+  color: var(--el-color-danger);
+  font-size: 12px;
+  margin-top: 4px;
 }
 </style>

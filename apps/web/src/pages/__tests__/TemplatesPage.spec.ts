@@ -15,9 +15,7 @@ const sampleTemplates: ExecutionTemplate[] = [
     artifact_type: "scrapy",
     project: "demo",
     version: "v1",
-    spider: "phase1",
-    settings: {},
-    args: {},
+    command: "scrapy crawl phase1",
     node_strategy: "all",
     node_ids: [],
     created_at: "2026-06-19T00:00:00Z",
@@ -155,7 +153,7 @@ describe("TemplatesPage", () => {
     expect(vm.templates).toHaveLength(1);
   });
 
-  it("submits a build_artifact_id payload from the chosen artifact + spider", async () => {
+  it("submits a build_artifact_id + command payload", async () => {
     const wrapper = mount(TemplatesPage, {
       global: { plugins: [makeI18n()], stubs: makeStubs() },
     });
@@ -164,21 +162,71 @@ describe("TemplatesPage", () => {
     const vm = wrapper.vm as unknown as {
       openCreate: () => void;
       submitCreate: () => Promise<void>;
-      form: { name: string; buildArtifactId: string; spider: string };
+      form: { name: string; buildArtifactId: string; command: string };
     };
     vm.openCreate();
     vm.form.name = "t2";
     vm.form.buildArtifactId = "art-1";
-    vm.form.spider = "phase2";
+    vm.form.command = "scrapy crawl phase2 -s LOG_LEVEL=DEBUG";
     await vm.submitCreate();
 
     expect(createTemplate).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "t2",
         build_artifact_id: "art-1",
-        spider: "phase2",
+        command: "scrapy crawl phase2 -s LOG_LEVEL=DEBUG",
       }),
     );
+  });
+
+  it("defaults the command from the artifact's first spider on open", async () => {
+    const wrapper = mount(TemplatesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      openCreate: () => void;
+      form: { command: string };
+    };
+    vm.openCreate();
+    expect(vm.form.command).toBe("scrapy crawl phase1");
+  });
+
+  it("blocks submit on an invalid command", async () => {
+    const wrapper = mount(TemplatesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      openCreate: () => void;
+      submitCreate: () => Promise<void>;
+      form: { command: string };
+      canSubmit: boolean;
+      commandError: string;
+    };
+    vm.openCreate();
+    vm.form.command = "scrapy crawl phase1; rm -rf /";
+    await flushPromises();
+    expect(vm.canSubmit).toBe(false);
+    expect(vm.commandError).not.toBe("");
+    await vm.submitCreate();
+    expect(createTemplate).not.toHaveBeenCalled();
+  });
+
+  it("colors node tags via nodeTagType and renders no chips below the select", async () => {
+    const wrapper = mount(TemplatesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      nodeTagType: (key: string) => string;
+    };
+    // healthy node -> success, offline -> danger, deleted -> info.
+    expect(vm.nodeTagType("node-1")).toBe("success");
+    expect(vm.nodeTagType("node-2")).toBe("danger");
+    expect(vm.nodeTagType("node-3")).toBe("info");
+    // the old duplicate chips-below block is gone.
+    expect(wrapper.find(".node-chips").exists()).toBe(false);
   });
 
   it("node selector locks for all/random and unlocks for selected", async () => {

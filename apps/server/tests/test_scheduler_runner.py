@@ -73,7 +73,7 @@ async def _seed_schedule(session, **overrides):
         {
             "name": "runner-template",
             "build_artifact_id": artifact.id,
-            "spider": "phase1",
+            "command": "scrapy crawl phase1",
             "node_strategy": "all",
         },
     )

@@ -17,7 +17,7 @@ async def _create_template(client, seeder, **overrides) -> dict:
     body = {
         "name": "sched-template",
         "build_artifact_id": artifact.id,
-        "spider": "phase1",
+        "command": "scrapy crawl phase1",
         "node_strategy": "all",
     }
     body.update(overrides)
@@ -32,7 +32,7 @@ async def _template_row(session, seeder, **fields):
     data = {
         "name": "s",
         "build_artifact_id": artifact.id,
-        "spider": "phase1",
+        "command": "scrapy crawl phase1",
         "node_strategy": "all",
     }
     data.update(fields)
@@ -162,20 +162,25 @@ async def test_trigger_now_creates_task_from_snapshot(exec_client, seeder):
     assert len(detail["executions"]) == 1
 
 
-async def test_trigger_now_applies_overrides(exec_client, seeder):
+async def test_trigger_now_applies_command_override(exec_client, seeder):
     node = await seeder.healthy_node(agent_id="a1")
+    # Artifact exposes both spiders so the phase2 override is a valid member.
+    artifact = await seeder.build_artifact(spiders=("phase1", "phase2"))
     template = await _create_template(
-        exec_client, seeder, node_strategy="all", spider="phase1"
+        exec_client,
+        seeder,
+        _artifact=artifact,
+        node_strategy="all",
+        command="scrapy crawl phase1",
     )
-    # override spider + node selection + a setting.
+    # override command (fully replaces) + node selection.
     schedule = await _create_schedule(
         exec_client,
         template["id"],
         overrides={
-            "spider": "phase2",
+            "command": "scrapy crawl phase2 -s DOWNLOAD_DELAY=2",
             "node_strategy": "selected",
             "node_ids": [str(node.id)],
-            "settings": {"DOWNLOAD_DELAY": "2"},
         },
     )
     r = await exec_client.post(f"/api/v1/schedules/{schedule['id']}/trigger-now")
@@ -183,10 +188,71 @@ async def test_trigger_now_applies_overrides(exec_client, seeder):
     detail = (await exec_client.get(f"/api/v1/tasks/{r.json()['task_id']}")).json()
     # overrides won precedence over the template defaults.
     assert detail["node_strategy"] == "selected"
-    assert detail["params"]["spider"] == "phase2"
-    assert detail["params"]["settings"]["DOWNLOAD_DELAY"] == "2"
+    assert detail["params"]["command"] == "scrapy crawl phase2 -s DOWNLOAD_DELAY=2"
+    assert detail["params"]["spider"] == "phase2"  # derived from the command
     # the build artifact is unchanged (never overridable).
     assert detail["build_artifact"]["project"] == "demo"
+
+
+async def test_schedule_rejects_legacy_override_keys_422(exec_client, seeder):
+    template = await _create_template(exec_client, seeder)
+    r = await exec_client.post(
+        "/api/v1/schedules",
+        json={
+            "name": "x",
+            "execution_template_id": template["id"],
+            "interval_seconds": 30,
+            "overrides": {"spider": "phase2", "settings": {"A": "1"}},
+        },
+    )
+    # spider/settings are no longer allowed override keys (extra=forbid -> 422).
+    assert r.status_code == 422
+
+
+async def test_schedule_rejects_invalid_command_override_400(exec_client, seeder):
+    template = await _create_template(exec_client, seeder)
+    r = await exec_client.post(
+        "/api/v1/schedules",
+        json={
+            "name": "x",
+            "execution_template_id": template["id"],
+            "interval_seconds": 30,
+            "overrides": {"command": "scrapy crawl phase2; rm -rf /"},
+        },
+    )
+    assert r.status_code == 400
+    assert r.json()["code"] == "command.invalid"
+
+
+async def test_trigger_now_rejects_unknown_spider_override(exec_client, seeder):
+    await seeder.healthy_node()
+    template = await _create_template(exec_client, seeder)
+    # Grammar-valid override whose spider the artifact does not expose: it passes
+    # schedule create (grammar only) but is rejected at trigger resolution.
+    schedule = await _create_schedule(
+        exec_client,
+        template["id"],
+        overrides={"command": "scrapy crawl typo_spider"},
+    )
+    r = await exec_client.post(f"/api/v1/schedules/{schedule['id']}/trigger-now")
+    assert r.status_code == 400
+    assert r.json()["code"] == "command.unknown_spider"
+
+
+async def test_blank_command_override_inherits_template(exec_client, seeder):
+    await seeder.healthy_node()
+    template = await _create_template(exec_client, seeder)
+    schedule = await _create_schedule(
+        exec_client, template["id"], overrides={"command": "   "}
+    )
+    # A blank command override is not persisted as an override.
+    assert "command" not in schedule["overrides"]
+
+    r = await exec_client.post(f"/api/v1/schedules/{schedule['id']}/trigger-now")
+    assert r.status_code == 200, r.text
+    detail = (await exec_client.get(f"/api/v1/tasks/{r.json()['task_id']}")).json()
+    # The run inherits the template command.
+    assert detail["params"]["command"] == "scrapy crawl phase1"
 
 
 async def test_repeated_trigger_now_not_coalesced(exec_client, seeder):

@@ -91,25 +91,20 @@ class BuildArtifactUploadResponse(BaseModel):
 
 
 class RunOverrides(BaseModel):
-    """Bounded run overrides (never the build artifact).
+    """Bounded schedule run overrides (phase 1.8.1, command-first).
 
-    ``extra="forbid"`` so an attempt to override a disallowed key (notably
-    ``build_artifact_id``) is rejected at the schema boundary with a 422.
+    Only ``command`` / ``node_strategy`` / ``node_ids`` may be overridden — a
+    ``command`` override FULLY replaces the template command. ``extra="forbid"``
+    so an attempt to override a disallowed key (notably ``build_artifact_id`` or
+    the legacy ``spider`` / ``settings`` / ``args``) is rejected at the schema
+    boundary with a 422.
     """
 
     model_config = {"extra": "forbid"}
 
-    spider: str | None = None
-    settings: dict[str, str] | None = None
-    args: dict[str, str] | None = None
+    command: str | None = None
     node_strategy: str | None = None
     node_ids: list[str] | None = None
-
-
-class ArtifactRunRequest(RunOverrides):
-    """Body of ``POST /api/v1/artifacts/{id}/run`` (direct build-artifact run)."""
-
-    name: str | None = None
 
 
 class TaskRunResponse(BaseModel):
@@ -204,7 +199,7 @@ class TasksResponse(BaseModel):
 
 
 class ExecutionTemplateView(BaseModel):
-    """A reusable run definition bound to one build artifact."""
+    """A reusable run definition bound to one build artifact (command-first)."""
 
     id: str
     name: str
@@ -214,9 +209,9 @@ class ExecutionTemplateView(BaseModel):
     # project/version are resolved from the bound artifact (read-only).
     project: str | None = None
     version: str | None = None
-    spider: str | None = None
-    settings: dict[str, str] = Field(default_factory=dict)
-    args: dict[str, str] = Field(default_factory=dict)
+    # Phase 1.8.1: the authoritative execution input. NULL only for a legacy
+    # template whose command could not be synthesized during migration.
+    command: str | None = None
     node_strategy: str = "all"
     node_ids: list[str] = Field(default_factory=list)
     created_at: str | None = None
@@ -227,9 +222,7 @@ class ExecutionTemplateCreateRequest(BaseModel):
     name: str
     description: str | None = None
     build_artifact_id: str
-    spider: str | None = None
-    settings: dict[str, str] = Field(default_factory=dict)
-    args: dict[str, str] = Field(default_factory=dict)
+    command: str
     node_strategy: str = "all"
     node_ids: list[str] = Field(default_factory=list)
 
@@ -240,9 +233,7 @@ class ExecutionTemplateUpdateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     build_artifact_id: str | None = None
-    spider: str | None = None
-    settings: dict[str, str] | None = None
-    args: dict[str, str] | None = None
+    command: str | None = None
     node_strategy: str | None = None
     node_ids: list[str] | None = None
 

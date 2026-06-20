@@ -15,26 +15,64 @@ from __future__ import annotations
 
 from typing import Any
 
-from dopilot_protocol import ExecutionRunRequest
+from dopilot_protocol import (
+    ExecutionRunRequest,
+    ScrapyCommandError,
+    parse_scrapy_command,
+)
 
 from ..errors import ApiError
 from ..models.execution import BuildArtifact
 from . import artifacts as artifact_svc
 
-# Override keys a schedule / direct run may set (build_artifact_id excluded).
-OVERRIDE_KEYS = ("spider", "settings", "args", "node_strategy", "node_ids")
+# Override keys a schedule may set (build_artifact_id excluded). Phase 1.8.1:
+# command-first — a ``command`` override fully replaces the template command;
+# legacy ``spider`` / ``settings`` / ``args`` keys are no longer accepted.
+OVERRIDE_KEYS = ("command", "node_strategy", "node_ids")
 
 
-def _merge_str_map(*maps: Any) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for m in maps:
-        if isinstance(m, dict):
-            out.update({str(k): str(v) for k, v in m.items()})
-    return out
+def validate_command(command: str | None):
+    """Validate a ``scrapy crawl`` command, raising a structured 400 if invalid.
+
+    Returns the parsed command so callers can reuse the derived spider.
+    """
+    try:
+        return parse_scrapy_command(command)
+    except ScrapyCommandError as exc:
+        raise ApiError(400, exc.code, exc.message_key, exc.detail) from exc
+
+
+def ensure_spider_in_artifact(spider: str, spiders: Any) -> None:
+    """Reject a command whose spider is not exposed by the build artifact.
+
+    The artifact metadata/snapshot ``spiders`` list is authoritative for what the
+    egg can run, so a typo'd spider (``scrapy crawl typo_spider``) is caught here
+    instead of failing only at the agent. Enforced whenever the artifact lists
+    spiders (every uploaded Scrapy egg does); an empty/absent list cannot be
+    validated against and is left to the agent.
+    """
+    allowed = [str(s) for s in (spiders or [])]
+    if allowed and spider not in allowed:
+        raise ApiError(
+            400,
+            "command.unknown_spider",
+            "errors.unknownSpider",
+            {"spider": spider, "spiders": allowed},
+        )
+
+
+def validate_command_for_artifact(command: str | None, spiders: Any) -> None:
+    """Validate command grammar AND that its spider belongs to the artifact."""
+    parsed = validate_command(command)
+    ensure_spider_in_artifact(parsed.spider, spiders)
 
 
 def sanitize_overrides(data: dict[str, Any] | None) -> dict[str, Any]:
-    """Keep only allowed override keys; reject any build-artifact override."""
+    """Keep only allowed override keys; reject any build-artifact override.
+
+    A ``command`` override is validated here too so an invalid override is
+    rejected at create/update time, not only at firing time.
+    """
     data = data or {}
     if "build_artifact_id" in data:
         raise ApiError(
@@ -47,12 +85,16 @@ def sanitize_overrides(data: dict[str, Any] | None) -> dict[str, Any]:
     for key in OVERRIDE_KEYS:
         if key not in data or data[key] is None:
             continue
-        if key == "settings":
-            out[key] = _merge_str_map(data[key])
-        elif key == "args":
-            out[key] = _merge_str_map(data[key])
-        elif key == "node_ids":
+        if key == "node_ids":
             out[key] = [str(n) for n in (data[key] or [])]
+        elif key == "command":
+            command = str(data[key]).strip()
+            # A blank command override is treated as absent: the run inherits the
+            # template command, so it is neither validated nor persisted here.
+            if not command:
+                continue
+            validate_command(command)
+            out[key] = command
         else:
             out[key] = str(data[key])
     return out
@@ -68,11 +110,11 @@ def resolve_run(
 ) -> tuple[ExecutionRunRequest, dict[str, Any]]:
     """Resolve a run from a build artifact + template defaults + overrides.
 
-    ``template_defaults`` carries the execution-template fields (spider /
-    settings / args / node_strategy / node_ids / project / version); pass ``{}``
-    for a direct ad-hoc artifact run. ``overrides`` is the sanitized schedule /
-    direct-run override payload. Raises a 400 when the resolved scrapy run is
-    missing a spider.
+    ``template_defaults`` carries the execution-template fields (command /
+    node_strategy / node_ids / project / version). ``overrides`` is the sanitized
+    schedule override payload. Command-first precedence: a ``command`` override
+    FULLY replaces the template command (no arg/setting merge). Raises a 400 when
+    the resolved scrapy run has no valid command.
     """
     defaults = template_defaults or {}
     overrides = overrides or {}
@@ -83,9 +125,8 @@ def resolve_run(
     # falling back to any template-stored value for legacy rows.
     project = snap.get("project") or defaults.get("project")
     version = snap.get("version") or defaults.get("version")
-    spider = overrides.get("spider") or defaults.get("spider")
-    settings = _merge_str_map(defaults.get("settings"), overrides.get("settings"))
-    args = _merge_str_map(defaults.get("args"), overrides.get("args"))
+    # command-first: an override command fully replaces the template command.
+    command = overrides.get("command") or defaults.get("command")
     node_strategy = (
         overrides.get("node_strategy") or defaults.get("node_strategy") or "all"
     )
@@ -95,13 +136,18 @@ def resolve_run(
         else list(defaults.get("node_ids") or [])
     )
 
-    if artifact_type == "scrapy" and not spider:
-        raise ApiError(
-            400,
-            "execution.invalid_params",
-            "errors.invalidParams",
-            {"missing": ["spider"]},
-        )
+    spider: str | None = None
+    if artifact_type == "scrapy":
+        # Validate + parse the authoritative command. The spider is DERIVED for
+        # Task.spider/target convenience; the command stays the execution model.
+        try:
+            parsed = parse_scrapy_command(command)
+        except ScrapyCommandError as exc:
+            raise ApiError(400, exc.code, exc.message_key, exc.detail) from exc
+        # The command spider must belong to the bound artifact. This covers
+        # schedule command overrides at run/trigger resolution, before dispatch.
+        ensure_spider_in_artifact(parsed.spider, snap.get("spiders"))
+        spider = parsed.spider
 
     target = name or f"{project}:{spider}"
     artifact_descriptor = {
@@ -114,11 +160,10 @@ def resolve_run(
         "fetch_path": snap.get("fetch_path"),
     }
     params: dict[str, Any] = {
+        "command": command,
         "project": project,
-        "spider": spider,
         "version": version,
-        "settings": settings,
-        "args": args,
+        "spider": spider,
         "artifact": artifact_descriptor,
     }
     snapshot: dict[str, Any] = {
@@ -128,9 +173,8 @@ def resolve_run(
         "artifact_type": artifact_type,
         "project": project,
         "version": version,
+        "command": command,
         "spider": spider,
-        "settings": settings,
-        "args": args,
         "node_strategy": node_strategy,
         "node_ids": list(node_ids or []),
         "overrides": dict(overrides),
