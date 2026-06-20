@@ -118,12 +118,24 @@ onMounted(load);
         </el-button>
       </div>
     </template>
-    <el-table :data="nodes" :empty-text="t('nodes.empty')">
+    <el-table :data="nodes" :empty-text="t('nodes.empty')" data-testid="nodes-table">
       <el-table-column :label="t('nodes.endpoint')" prop="endpoint" />
-      <el-table-column :label="t('nodes.agentId')" prop="agent_id" />
+      <el-table-column :label="t('nodes.agentId')">
+        <template #default="{ row }">
+          <span
+            class="node-agent-id"
+            :data-testid="`node-agent-${(row as NodeInfo).agent_id}`"
+          >
+            {{ (row as NodeInfo).agent_id }}
+          </span>
+        </template>
+      </el-table-column>
       <el-table-column :label="t('nodes.status')">
         <template #default="{ row }">
-          <el-tag :type="badgeType(row as NodeInfo)">
+          <el-tag
+            :type="badgeType(row as NodeInfo)"
+            :data-testid="`node-badge-${(row as NodeInfo).agent_id}`"
+          >
             {{ badgeLabel(row as NodeInfo) }}
           </el-tag>
         </template>
@@ -137,7 +149,10 @@ onMounted(load);
       </el-table-column>
       <el-table-column :label="t('nodes.scrapyd')">
         <template #default="{ row }">
-          <el-tag :type="scrapydTagType[scrapydHealthOf(row as NodeInfo)]">
+          <el-tag
+            :type="scrapydTagType[scrapydHealthOf(row as NodeInfo)]"
+            :data-testid="`node-scrapyd-${(row as NodeInfo).agent_id}`"
+          >
             {{ t(scrapydLabel[scrapydHealthOf(row as NodeInfo)]) }}
           </el-tag>
         </template>
@@ -149,6 +164,7 @@ onMounted(load);
             v-if="canOffline(row as NodeInfo)"
             type="warning"
             link
+            :data-testid="`node-offline-${(row as NodeInfo).agent_id}`"
             :loading="busyId === (row as NodeInfo).id"
             @click="onOffline(row as NodeInfo)"
           >
@@ -158,6 +174,7 @@ onMounted(load);
             v-if="canOnline(row as NodeInfo)"
             type="success"
             link
+            :data-testid="`node-online-${(row as NodeInfo).agent_id}`"
             :loading="busyId === (row as NodeInfo).id"
             @click="onOnline(row as NodeInfo)"
           >
@@ -167,6 +184,7 @@ onMounted(load);
             v-if="canDelete(row as NodeInfo)"
             type="danger"
             link
+            :data-testid="`node-delete-${(row as NodeInfo).agent_id}`"
             :title="t('nodes.confirmDelete')"
             :loading="busyId === (row as NodeInfo).id"
             @click="onDelete(row as NodeInfo)"

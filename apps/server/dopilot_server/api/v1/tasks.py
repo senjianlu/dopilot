@@ -1,4 +1,10 @@
-"""Execution endpoints: run, list, detail, cancel, log snapshot + SSE stream."""
+"""Task endpoints (phase 1.8): list, detail, cancel, log snapshot + SSE stream.
+
+Public vocabulary clean-cut: the parent run is a TASK and the atomic per-node
+unit is an EXECUTION. Public ids are ``task_id`` / ``execution_id``; the
+Redis/disk/log-index seam still uses ``execution_id`` (= task id) /
+``attempt_id`` (= execution id) internally — mapped at the boundary below.
+"""
 
 from __future__ import annotations
 
@@ -7,8 +13,7 @@ import json
 import time
 from datetime import UTC, datetime
 
-from dopilot_protocol import ExecutionRunRequest, ExecutionRunResponse
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -17,8 +22,6 @@ from ...config.loader import get_settings
 from ...config.settings import Settings
 from ...db.engine import get_session
 from ...errors import ApiError
-from ...executors.base import DispatchUnknownError, ExecutorContext
-from ...executors.registry import get_executor
 from ...logs import files
 from ...logs.sse import CLOSE, SubscriptionManager, get_subscriptions
 from ...logs.stream_token import issue_stream_token, verify_stream_token
@@ -27,14 +30,14 @@ from ...services import executions as svc
 from ...services import states
 from ...services.cancel import request_cancel
 from .schemas import (
-    ExecutionsResponse,
-    ExecutionSummary,
-    ExecutionView,
     LogSnapshot,
     StreamTokenResponse,
+    TasksResponse,
+    TaskSummary,
+    TaskView,
 )
 
-router = APIRouter(tags=["executions"])
+router = APIRouter(tags=["tasks"])
 
 
 def get_request_sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -67,6 +70,7 @@ def get_dispatcher(request: Request) -> CommandDispatcher:
         )
     return dispatcher
 
+
 _SSE_HEADERS = {
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
@@ -76,41 +80,15 @@ _SSE_HEARTBEAT_SECONDS = 15.0
 _SSE_MAX_LIFETIME_SECONDS = 1800.0  # 30 min connection cap
 
 
-@router.post("/executions/run", response_model=ExecutionRunResponse)
-async def run_execution(
-    body: ExecutionRunRequest,
-    response: Response,
-    _admin: AdminContext = Depends(get_current_admin),
-    settings: Settings = Depends(get_settings),
-    session: AsyncSession = Depends(get_session),
-    dispatcher: CommandDispatcher = Depends(get_dispatcher),
-) -> ExecutionRunResponse:
-    """Resolve the executor and dispatch a run over the Redis command stream.
-
-    Returns 200 (execution ``queued``, command dispatched), 503
-    ``dispatch_unavailable`` (Redis down), or 202 ``dispatch_unknown`` (command
-    XADDed but the sent-mark commit was lost — convergence via the running event).
-    """
-    executor = get_executor(body.task_type)
-    ctx = ExecutorContext(
-        session=session, settings=settings, dispatcher=dispatcher
-    )
-    try:
-        return await executor.run(body, ctx)
-    except DispatchUnknownError as exc:
-        response.status_code = 202
-        return ExecutionRunResponse(execution_id=exc.execution_id, status="queued")
-
-
-@router.get("/executions", response_model=ExecutionsResponse)
-async def list_executions(
+@router.get("/tasks", response_model=TasksResponse)
+async def list_tasks(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20),
     spider: str | None = Query(default=None),
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
-) -> ExecutionsResponse:
-    """Backend-paginated tasks/runs list with an optional spider filter.
+) -> TasksResponse:
+    """Backend-paginated tasks list with an optional spider filter.
 
     ``page_size`` must be one of :data:`svc.ALLOWED_PAGE_SIZES`; child execution
     counts for the page are fetched in ONE aggregate query (no per-row N+1).
@@ -118,7 +96,7 @@ async def list_executions(
     if page_size not in svc.ALLOWED_PAGE_SIZES:
         raise ApiError(
             400,
-            "execution.invalid_page_size",
+            "task.invalid_page_size",
             "errors.invalidPageSize",
             {"page_size": page_size, "allowed": list(svc.ALLOWED_PAGE_SIZES)},
         )
@@ -128,12 +106,12 @@ async def list_executions(
     )
     counts = await svc.child_execution_counts(session, [t.id for t in tasks])
     summaries = [
-        ExecutionSummary(**svc.task_summary(task, counts.get(task.id, 0)))
+        TaskSummary(**svc.task_summary(task, counts.get(task.id, 0)))
         for task in tasks
     ]
     spiders = await svc.list_task_spiders(session)
-    return ExecutionsResponse(
-        executions=summaries,
+    return TasksResponse(
+        tasks=summaries,
         page=page,
         page_size=page_size,
         total=total,
@@ -141,43 +119,41 @@ async def list_executions(
     )
 
 
-@router.get("/executions/{execution_id}", response_model=ExecutionView)
-async def get_execution(
-    execution_id: str,
+@router.get("/tasks/{task_id}", response_model=TaskView)
+async def get_task(
+    task_id: str,
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
-) -> ExecutionView:
-    # Web seam: the route's ``execution_id`` is the parent (task) id.
-    task = await svc.get_task_or_404(session, execution_id)
-    executions = await svc.list_executions(session, execution_id)
-    return ExecutionView(**svc.task_view(task, executions))
+) -> TaskView:
+    task = await svc.get_task_or_404(session, task_id)
+    executions = await svc.list_executions(session, task_id)
+    return TaskView(**svc.task_view(task, executions))
 
 
-@router.post("/executions/{execution_id}/cancel", response_model=ExecutionView)
-async def cancel_execution(
-    execution_id: str,
+@router.post("/tasks/{task_id}/cancel", response_model=TaskView)
+async def cancel_task(
+    task_id: str,
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
     dispatcher: CommandDispatcher = Depends(get_dispatcher),
-) -> ExecutionView:
+) -> TaskView:
     """Request cancel: CAS unsent commands + send stop(intent=cancel) to agents.
 
     Convergence to ``canceled`` is asynchronous (the agent's ``attempt.canceled``
-    events roll the execution up), so the returned view may still show an active
-    status.
+    events roll the task up), so the returned view may still show an active status.
     """
-    task = await svc.get_task_or_404(session, execution_id)
+    task = await svc.get_task_or_404(session, task_id)
     if task.status not in states.TASK_TERMINAL:
         await request_cancel(session, dispatcher, task)
-        task = await svc.get_task_or_404(session, execution_id)
-    executions = await svc.list_executions(session, execution_id)
-    return ExecutionView(**svc.task_view(task, executions))
+        task = await svc.get_task_or_404(session, task_id)
+    executions = await svc.list_executions(session, task_id)
+    return TaskView(**svc.task_view(task, executions))
 
 
-@router.get("/executions/{execution_id}/logs", response_model=LogSnapshot)
+@router.get("/tasks/{task_id}/logs", response_model=LogSnapshot)
 async def get_logs(
-    execution_id: str,
-    attempt_id: str | None = Query(default=None),
+    task_id: str,
+    execution_id: str | None = Query(default=None),
     stream: str = Query(default="log"),
     offset: int = Query(default=0, ge=0),
     max_bytes: int | None = Query(default=None, ge=1),
@@ -185,15 +161,16 @@ async def get_logs(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> LogSnapshot:
-    await svc.get_task_or_404(session, execution_id)
-    execution = await svc.resolve_execution(session, execution_id, attempt_id)
-    log_file = await svc.get_log_file(session, execution_id, execution.id, stream)
+    await svc.get_task_or_404(session, task_id)
+    execution = await svc.resolve_execution(session, task_id, execution_id)
+    # Seam mapping: log index keys on (execution_id=task id, attempt_id=exec id).
+    log_file = await svc.get_log_file(session, task_id, execution.id, stream)
     cap = max_bytes or settings.logs.max_tail_bytes_per_pull
     finished = execution.status in states.EXEC_TERMINAL
     if log_file is None:
         return LogSnapshot(
-            execution_id=execution_id,
-            attempt_id=execution.id,
+            task_id=task_id,
+            execution_id=execution.id,
             stream=stream,
             start_offset=offset,
             end_offset=offset,
@@ -203,8 +180,8 @@ async def get_logs(
         )
     start, end, content = files.read_slice(log_file.storage_path, offset, cap)
     return LogSnapshot(
-        execution_id=execution_id,
-        attempt_id=execution.id,
+        task_id=task_id,
+        execution_id=execution.id,
         stream=stream,
         start_offset=start,
         end_offset=end,
@@ -215,11 +192,11 @@ async def get_logs(
 
 
 @router.post(
-    "/executions/{execution_id}/logs/stream-token",
+    "/tasks/{task_id}/logs/stream-token",
     response_model=StreamTokenResponse,
 )
 async def issue_log_stream_token(
-    execution_id: str,
+    task_id: str,
     _admin: AdminContext = Depends(get_current_admin),
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
@@ -236,10 +213,10 @@ async def issue_log_stream_token(
             "errors.streamTokenNotRequired",
             {},
         )
-    await svc.get_task_or_404(session, execution_id)
+    await svc.get_task_or_404(session, task_id)
     token, exp = issue_stream_token(
         settings.auth.token_secret or "",
-        execution_id,
+        task_id,
         settings.auth.stream_token_ttl_seconds,
     )
     return StreamTokenResponse(
@@ -257,11 +234,11 @@ def _sse_event(event: str, data: dict, *, event_id: int | None = None) -> str:
     return "\n".join(lines) + "\n\n"
 
 
-@router.get("/executions/{execution_id}/logs/stream")
+@router.get("/tasks/{task_id}/logs/stream")
 async def stream_logs(
-    execution_id: str,
+    task_id: str,
     request: Request,
-    attempt_id: str | None = Query(default=None),
+    execution_id: str | None = Query(default=None),
     stream: str = Query(default="log"),
     stream_token: str | None = Query(default=None),
     settings: Settings = Depends(get_settings),
@@ -273,29 +250,29 @@ async def stream_logs(
     """Realtime log stream (server->web SSE).
 
     Auth: when web auth is ON, a valid short-lived ``stream_token`` (bound to
-    this execution) is required because ``EventSource`` cannot send a bearer.
-    Reconnect: the browser sends ``Last-Event-ID`` (the last server-file
-    offset); the server backfills from there. Multiple windows on the same
-    execution share one pull loop + this fan-out.
+    this task) is required because ``EventSource`` cannot send a bearer.
+    Reconnect: the browser sends ``Last-Event-ID`` (the last server-file offset);
+    the server backfills from there. Multiple windows on the same task share one
+    pull loop + this fan-out.
 
     The preflight lookups run in a SHORT-LIVED session that is closed before the
     (possibly 30-min) stream starts, so the stream never pins a pooled DB
-    connection; the generator below touches only the on-disk file + the
-    in-memory SSE queue, never the DB.
+    connection; the generator below touches only the on-disk file + the in-memory
+    SSE queue, never the DB.
     """
     if settings.auth.enabled and not (
         stream_token
         and verify_stream_token(
-            settings.auth.token_secret or "", stream_token, execution_id
+            settings.auth.token_secret or "", stream_token, task_id
         )
     ):
         raise ApiError(401, "auth.stream_unauthorized", "errors.unauthorized", {})
 
     async with sessionmaker() as session:
-        task = await svc.get_task_or_404(session, execution_id)
-        execution = await svc.resolve_execution(session, execution_id, attempt_id)
+        task = await svc.get_task_or_404(session, task_id)
+        execution = await svc.resolve_execution(session, task_id, execution_id)
         log_file = await svc.get_log_file(
-            session, execution_id, execution.id, stream
+            session, task_id, execution.id, stream
         )
         path = log_file.storage_path if log_file is not None else None
         already_terminal = task.status in states.TASK_TERMINAL
@@ -310,7 +287,7 @@ async def stream_logs(
     async def generator():
         # Subscribe BEFORE backfilling so nothing produced during backfill is
         # lost; dedup forwarded events by server-file offset.
-        queue = manager.subscribe(execution_id)
+        queue = manager.subscribe(task_id)
         cursor = 0
         try:
             if path is not None:
@@ -384,7 +361,7 @@ async def stream_logs(
                 )
                 cursor = end
         finally:
-            manager.unsubscribe(execution_id, queue)
+            manager.unsubscribe(task_id, queue)
 
     return StreamingResponse(
         generator(),

@@ -2,11 +2,11 @@
 import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "@/stores/auth";
-import { buildStreamUrl, fetchStreamToken } from "@/api/executions";
+import { buildStreamUrl, fetchStreamToken } from "@/api/tasks";
 
 const props = defineProps<{
-  executionId: string;
-  attemptId?: string;
+  taskId: string;
+  executionId?: string;
   stream?: string;
 }>();
 
@@ -71,7 +71,7 @@ async function connect(): Promise<void> {
   let streamToken: string | undefined;
   if (auth.isAuthenticated) {
     try {
-      const res = await fetchStreamToken(props.executionId);
+      const res = await fetchStreamToken(props.taskId);
       streamToken = res.stream_token;
     } catch {
       errored.value = true;
@@ -79,8 +79,8 @@ async function connect(): Promise<void> {
     }
   }
 
-  const url = buildStreamUrl(props.executionId, {
-    attemptId: props.attemptId,
+  const url = buildStreamUrl(props.taskId, {
+    executionId: props.executionId,
     stream: props.stream,
     streamToken,
   });
@@ -91,7 +91,7 @@ async function connect(): Promise<void> {
 }
 
 watch(
-  () => [props.executionId, props.attemptId, props.stream],
+  () => [props.taskId, props.executionId, props.stream],
   () => {
     void connect();
   },
@@ -112,7 +112,7 @@ onBeforeUnmount(close);
         {{ t("logs.error") }}
       </el-tag>
     </div>
-    <pre ref="bodyRef" class="log-body">{{
+    <pre ref="bodyRef" class="log-body" data-testid="log-body">{{
       content || t("logs.waiting")
     }}</pre>
   </div>

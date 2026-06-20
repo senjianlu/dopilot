@@ -10,7 +10,6 @@ reloaded so its live job set stays in sync without a server restart.
 
 from __future__ import annotations
 
-from dopilot_protocol import ExecutionRunResponse
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +20,6 @@ from ...db.engine import get_session
 from ...executors.base import DispatchUnknownError
 from ...redis.dispatcher import CommandDispatcher
 from ...services import schedules as svc
-from .executions import get_dispatcher
 from .schemas import (
     NextRunPreviewRequest,
     NextRunPreviewResponse,
@@ -29,7 +27,9 @@ from .schemas import (
     SchedulesResponse,
     ScheduleUpdateRequest,
     ScheduleView,
+    TaskRunResponse,
 )
+from .tasks import get_dispatcher
 
 router = APIRouter(tags=["schedules"])
 
@@ -133,7 +133,7 @@ async def delete_schedule(
 
 
 @router.post(
-    "/schedules/{schedule_id}/trigger-now", response_model=ExecutionRunResponse
+    "/schedules/{schedule_id}/trigger-now", response_model=TaskRunResponse
 )
 async def trigger_now(
     schedule_id: str,
@@ -142,11 +142,12 @@ async def trigger_now(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
     dispatcher: CommandDispatcher = Depends(get_dispatcher),
-) -> ExecutionRunResponse:
+) -> TaskRunResponse:
     """Immediately create + dispatch a task from the referenced template."""
     schedule = await svc.get_schedule_or_404(session, schedule_id)
     try:
-        return await svc.trigger_now(session, settings, dispatcher, schedule)
+        result = await svc.trigger_now(session, settings, dispatcher, schedule)
+        return TaskRunResponse(task_id=result.task_id, status=result.status)
     except DispatchUnknownError as exc:
         response.status_code = 202
-        return ExecutionRunResponse(execution_id=exc.execution_id, status="queued")
+        return TaskRunResponse(task_id=exc.task_id, status="queued")

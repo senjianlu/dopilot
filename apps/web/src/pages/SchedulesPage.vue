@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import {
@@ -10,13 +10,22 @@ import {
   triggerSchedule,
 } from "@/api/schedules";
 import { listTemplates } from "@/api/templates";
-import type { Schedule, TaskTemplate, TriggerType } from "@/api/types";
+import { listNodes } from "@/api/nodes";
+import type {
+  ExecutionTemplate,
+  NodeInfo,
+  NodeStrategy,
+  Schedule,
+  ScheduleOverrides,
+  TriggerType,
+} from "@/api/types";
 
 const { t } = useI18n();
 const router = useRouter();
 
 const schedules = ref<Schedule[]>([]);
-const templates = ref<TaskTemplate[]>([]);
+const templates = ref<ExecutionTemplate[]>([]);
+const nodes = ref<NodeInfo[]>([]);
 const loading = ref(false);
 const triggeringId = ref("");
 const dialogVisible = ref(false);
@@ -26,11 +35,28 @@ const estimatedNextRun = ref("");
 
 const form = reactive({
   name: "",
-  template_id: "",
+  execution_template_id: "",
   trigger_type: "interval" as TriggerType,
   interval_seconds: 60,
   cron: "",
+  // override controls (build artifact may NOT be overridden).
+  override_node_strategy: "" as "" | NodeStrategy,
+  override_node_ids: [] as string[],
 });
+
+function nodeKey(node: NodeInfo): string {
+  return (node.id ?? node.agent_id ?? node.endpoint) as string;
+}
+
+const isSeen = (n: NodeInfo): boolean => n.id != null;
+
+const selectableNodes = computed(() =>
+  nodes.value.filter((n) => isSeen(n) && !n.deleted_at && n.scheduling_enabled),
+);
+
+const overrideSelectedStrategy = computed(
+  () => form.override_node_strategy === "selected",
+);
 
 function templateName(id: string): string {
   return templates.value.find((tpl) => tpl.id === id)?.name ?? id;
@@ -85,9 +111,10 @@ async function updateEstimate(): Promise<void> {
 async function load(): Promise<void> {
   loading.value = true;
   try {
-    [schedules.value, templates.value] = await Promise.all([
+    [schedules.value, templates.value, nodes.value] = await Promise.all([
       listSchedules(),
       listTemplates(),
+      listNodes(),
     ]);
   } finally {
     loading.value = false;
@@ -96,13 +123,27 @@ async function load(): Promise<void> {
 
 function openCreate(): void {
   form.name = "";
-  form.template_id = templates.value[0]?.id ?? "";
+  form.execution_template_id = templates.value[0]?.id ?? "";
   form.trigger_type = "interval";
   form.interval_seconds = 60;
   form.cron = "";
+  form.override_node_strategy = "";
+  form.override_node_ids = [];
   createError.value = "";
   dialogVisible.value = true;
   void updateEstimate();
+}
+
+// Assemble the optional overrides object (omit empty controls).
+function buildOverrides(): ScheduleOverrides | undefined {
+  const overrides: ScheduleOverrides = {};
+  if (form.override_node_strategy) {
+    overrides.node_strategy = form.override_node_strategy;
+    if (overrideSelectedStrategy.value) {
+      overrides.node_ids = form.override_node_ids;
+    }
+  }
+  return Object.keys(overrides).length ? overrides : undefined;
 }
 
 async function submitCreate(): Promise<void> {
@@ -111,11 +152,12 @@ async function submitCreate(): Promise<void> {
   try {
     await createSchedule({
       name: form.name,
-      template_id: form.template_id,
+      execution_template_id: form.execution_template_id,
       trigger_type: form.trigger_type,
       interval_seconds:
         form.trigger_type === "interval" ? form.interval_seconds : null,
       cron: form.trigger_type === "cron" ? form.cron : null,
+      overrides: buildOverrides(),
     });
     dialogVisible.value = false;
     await load();
@@ -130,7 +172,7 @@ async function onTrigger(schedule: Schedule): Promise<void> {
   triggeringId.value = schedule.id;
   try {
     const res = await triggerSchedule(schedule.id);
-    await router.push(`/executions/${res.execution_id}`);
+    await router.push(`/tasks/${res.task_id}`);
   } finally {
     triggeringId.value = "";
   }
@@ -150,7 +192,7 @@ onMounted(load);
       <div class="schedules-header">
         <span>{{ t("schedules.title") }}</span>
         <div class="schedules-actions">
-          <el-button type="primary" @click="openCreate">
+          <el-button type="primary" data-testid="schedule-create" @click="openCreate">
             {{ t("schedules.create") }}
           </el-button>
           <el-button @click="load">{{ t("schedules.refresh") }}</el-button>
@@ -158,11 +200,17 @@ onMounted(load);
       </div>
     </template>
 
-    <el-table :data="schedules" :empty-text="t('schedules.empty')">
-      <el-table-column :label="t('schedules.name')" prop="name" />
+    <el-table :data="schedules" :empty-text="t('schedules.empty')" data-testid="schedules-table">
+      <el-table-column :label="t('schedules.name')">
+        <template #default="{ row }">
+          <span :data-testid="`schedule-name-${(row as Schedule).name}`">
+            {{ (row as Schedule).name }}
+          </span>
+        </template>
+      </el-table-column>
       <el-table-column :label="t('schedules.template')">
         <template #default="{ row }">
-          {{ templateName((row as Schedule).template_id) }}
+          {{ templateName((row as Schedule).execution_template_id) }}
         </template>
       </el-table-column>
       <el-table-column
@@ -184,6 +232,7 @@ onMounted(load);
           <el-button
             type="primary"
             link
+            :data-testid="`schedule-trigger-${(row as Schedule).name}`"
             :loading="triggeringId === (row as Schedule).id"
             @click="onTrigger(row as Schedule)"
           >
@@ -196,13 +245,20 @@ onMounted(load);
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="t('schedules.createTitle')">
-      <el-form label-width="120px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="t('schedules.createTitle')"
+      data-testid="schedule-dialog"
+    >
+      <el-form label-width="140px">
         <el-form-item :label="t('schedules.name')">
-          <el-input v-model="form.name" />
+          <el-input v-model="form.name" data-testid="schedule-name-input" />
         </el-form-item>
         <el-form-item :label="t('schedules.template')">
-          <el-select v-model="form.template_id">
+          <el-select
+            v-model="form.execution_template_id"
+            data-testid="schedule-template-select"
+          >
             <el-option
               v-for="tpl in templates"
               :key="tpl.id"
@@ -223,6 +279,7 @@ onMounted(load);
         >
           <el-input-number
             v-model="form.interval_seconds"
+            data-testid="schedule-interval"
             :min="1"
             @change="updateEstimate"
           />
@@ -233,6 +290,31 @@ onMounted(load);
             :placeholder="t('schedules.cronPlaceholder')"
             @input="updateEstimate"
           />
+        </el-form-item>
+        <el-form-item :label="t('schedules.overrideStrategy')">
+          <el-select
+            v-model="form.override_node_strategy"
+            :placeholder="t('schedules.overrideStrategyNone')"
+            clearable
+          >
+            <el-option :label="t('schedules.overrideStrategyNone')" value="" />
+            <el-option label="all" value="all" />
+            <el-option label="random" value="random" />
+            <el-option label="selected" value="selected" />
+          </el-select>
+        </el-form-item>
+        <el-form-item
+          v-if="overrideSelectedStrategy"
+          :label="t('schedules.overrideNodes')"
+        >
+          <el-select v-model="form.override_node_ids" multiple>
+            <el-option
+              v-for="n in selectableNodes"
+              :key="nodeKey(n)"
+              :label="n.agent_id ?? n.endpoint"
+              :value="nodeKey(n)"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item :label="t('schedules.estimatedNextRun')">
           <span class="next-run-estimate">{{ estimatedNextRun || "-" }}</span>
@@ -248,7 +330,12 @@ onMounted(load);
         <el-button @click="dialogVisible = false">
           {{ t("schedules.cancel") }}
         </el-button>
-        <el-button type="primary" :loading="creating" @click="submitCreate">
+        <el-button
+          type="primary"
+          data-testid="schedule-submit"
+          :loading="creating"
+          @click="submitCreate"
+        >
           {{ t("schedules.submit") }}
         </el-button>
       </template>

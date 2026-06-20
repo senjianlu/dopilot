@@ -38,7 +38,7 @@ from .base import BaseExecutor, DispatchUnknownError, ExecutorContext
 class ScrapydExecutor(BaseExecutor):
     """Dispatches Scrapy jobs to agents over the Redis command stream."""
 
-    task_type = "scrapy"
+    artifact_type = "scrapy"
 
     async def run(
         self,
@@ -57,6 +57,7 @@ class ScrapydExecutor(BaseExecutor):
             ctx.session,
             request.node_strategy,
             request.node_ids,
+            capability=states.ARTIFACT_CAPABILITY[self.artifact_type],
             timeout_seconds=ctx.settings.agents.heartbeat_timeout_seconds,
         )
         if not nodes:
@@ -67,10 +68,7 @@ class ScrapydExecutor(BaseExecutor):
                 healthy_count=healthy_count,
             )
             await ctx.session.commit()
-            # web seam: response ``execution_id`` carries the task id.
-            return ExecutionRunResponse(
-                execution_id=task.id, status=task.status
-            )
+            return ExecutionRunResponse(task_id=task.id, status=task.status)
 
         outboxes = []
         payload = {
@@ -117,8 +115,7 @@ class ScrapydExecutor(BaseExecutor):
                 503,
                 "execution.dispatch_unavailable",
                 "errors.dispatchUnavailable",
-                # web seam: response ``execution_id`` carries the task id.
-                {"execution_id": task.id, "reason": DISPATCH_UNAVAILABLE},
+                {"task_id": task.id, "reason": DISPATCH_UNAVAILABLE},
             )
 
         # At least one command reached Redis. Persist the sent/failed marks.
@@ -128,9 +125,7 @@ class ScrapydExecutor(BaseExecutor):
             raise DispatchUnknownError(task.id) from exc
 
         # Task stays queued; agent's attempt.running converges it.
-        return ExecutionRunResponse(
-            execution_id=task.id, status=task.status
-        )
+        return ExecutionRunResponse(task_id=task.id, status=task.status)
 
     async def _fail_dispatch_unavailable(self, session, task) -> None:
         now = datetime.now(UTC)

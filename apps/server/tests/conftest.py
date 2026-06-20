@@ -23,7 +23,7 @@ import fakeredis.aioredis as fakeaioredis
 import pytest
 import pytest_asyncio
 from dopilot_protocol import EggDeployResponse, ExecutionRunRequest
-from dopilot_server.api.v1.executions import get_dispatcher, get_request_sessionmaker
+from dopilot_server.api.v1.tasks import get_dispatcher, get_request_sessionmaker
 from dopilot_server.app import create_app
 from dopilot_server.clients.agent import get_agent_client
 from dopilot_server.config.loader import get_settings
@@ -320,6 +320,53 @@ class Seeder:
         await self.session.commit()
         return node
 
+    async def build_artifact(
+        self,
+        *,
+        project: str = "demo",
+        spiders: tuple[str, ...] = ("phase1",),
+        sha256: str = "a" * 64,
+        artifact_type: str = "scrapy",
+        package_format: str = "egg",
+    ):
+        """Seed a canonical build artifact (phase 1.8) for run/template tests.
+
+        Deduped on ``(artifact_type, content_hash)`` so a test can call it more
+        than once with the default hash without tripping the unique constraint.
+        """
+        from dopilot_server.models.execution import BuildArtifact
+        from sqlalchemy import select
+
+        existing = (
+            await self.session.execute(
+                select(BuildArtifact).where(
+                    BuildArtifact.artifact_type == artifact_type,
+                    BuildArtifact.content_hash == sha256,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+
+        artifact = BuildArtifact(
+            id=uuid.uuid4().hex,
+            artifact_type=artifact_type,
+            package_format=package_format,
+            name=project,
+            filename=f"{project}.egg",
+            content_hash=sha256,
+            size_bytes=123,
+            artifact_metadata={
+                "project": project,
+                "version": f"sha256-{sha256[:12]}",
+                "spiders": list(spiders),
+                "fetch_path": f"/api/v1/artifacts/scrapy/{sha256}/egg",
+            },
+        )
+        self.session.add(artifact)
+        await self.session.commit()
+        return artifact
+
     async def running_task(self, node: Node | None = None):
         """Create a running task + one running execution + active log file.
 
@@ -329,7 +376,7 @@ class Seeder:
         if node is None:
             node = await self.healthy_node()
         req = ExecutionRunRequest(
-            task_type="scrapy",
+            artifact_type="scrapy",
             target="demo:phase1",
             node_strategy="all",
             params={"project": "demo", "spider": "phase1"},

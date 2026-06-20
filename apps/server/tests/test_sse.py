@@ -76,7 +76,7 @@ async def test_stream_backfill_then_complete(exec_client, seeder, db_session):
 
     # web seam: the route's {execution_id} is the parent (task) id; SSE fan-out
     # is keyed on it too.
-    url = f"/api/v1/executions/{task.id}/logs/stream"
+    url = f"/api/v1/tasks/{task.id}/logs/stream"
     text = await _run_sse(exec_client, url)
     assert "phase1 demo spider started" in text
     assert "event: complete" in text
@@ -86,7 +86,7 @@ async def test_stream_live_increment(
     exec_client, seeder, subscriptions, db_session
 ):
     task, _execution, _log = await seeder.running_task()
-    url = f"/api/v1/executions/{task.id}/logs/stream"
+    url = f"/api/v1/tasks/{task.id}/logs/stream"
 
     async def driver():
         for _ in range(300):
@@ -112,7 +112,7 @@ async def test_normal_api_works_while_sse_stream_open(
     """P2 regression: an open SSE stream must NOT pin the request DB session;
     a normal DB-backed API call still works while the stream is open."""
     task, _e, _l = await seeder.running_task()
-    url = f"/api/v1/executions/{task.id}/logs/stream"
+    url = f"/api/v1/tasks/{task.id}/logs/stream"
 
     async def driver():
         for _ in range(300):
@@ -120,7 +120,7 @@ async def test_normal_api_works_while_sse_stream_open(
                 break
             await asyncio.sleep(0.01)
         # A normal DB-backed endpoint must still succeed while the SSE is open.
-        listing = await exec_client.get("/api/v1/executions")
+        listing = await exec_client.get("/api/v1/tasks")
         assert listing.status_code == 200
         subscriptions.publish(
             task.id, {"type": "complete", "status": "complete"}
@@ -133,7 +133,7 @@ async def test_normal_api_works_while_sse_stream_open(
 async def test_stream_requires_token_when_auth_on(exec_client_auth_on, seeder):
     task, _e, _l = await seeder.running_task()
     r = await exec_client_auth_on.get(
-        f"/api/v1/executions/{task.id}/logs/stream"
+        f"/api/v1/tasks/{task.id}/logs/stream"
     )
     assert r.status_code == 401
     assert r.json()["code"] == "auth.stream_unauthorized"
@@ -155,14 +155,14 @@ async def test_stream_token_flow_when_auth_on(
     )
     token = login.json()["access_token"]
     issued = await exec_client_auth_on.post(
-        f"/api/v1/executions/{task.id}/logs/stream-token",
+        f"/api/v1/tasks/{task.id}/logs/stream-token",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert issued.status_code == 200
     stream_token = issued.json()["stream_token"]
 
     url = (
-        f"/api/v1/executions/{task.id}/logs/stream"
+        f"/api/v1/tasks/{task.id}/logs/stream"
         f"?stream_token={stream_token}"
     )
     text = await _run_sse(exec_client_auth_on, url)
@@ -172,7 +172,7 @@ async def test_stream_token_flow_when_auth_on(
 async def test_stream_token_not_required_when_auth_off(exec_client, seeder):
     task, _e, _l = await seeder.running_task()
     r = await exec_client.post(
-        f"/api/v1/executions/{task.id}/logs/stream-token"
+        f"/api/v1/tasks/{task.id}/logs/stream-token"
     )
     assert r.status_code == 400
     assert r.json()["code"] == "auth.stream_token_not_required"

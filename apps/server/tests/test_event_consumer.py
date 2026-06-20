@@ -39,7 +39,7 @@ FINISHED = states.EXEC_FINISHED
 
 async def _seed(session, *, task_status=states.TASK_QUEUED, exec_status=states.EXEC_PENDING):
     task = Task(
-        id=new_id(), task_type="scrapy", target="demo:phase1",
+        id=new_id(), artifact_type="scrapy", target="demo:phase1",
         status=task_status, params={},
     )
     session.add(task)

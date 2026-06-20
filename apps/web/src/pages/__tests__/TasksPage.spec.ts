@@ -4,21 +4,21 @@ import { createPinia, setActivePinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import zh from "@/i18n/locales/zh";
 import en from "@/i18n/locales/en";
-import type { ExecutionsResponse, ListExecutionsParams } from "@/api/types";
+import type { ListTasksParams, TasksResponse } from "@/api/types";
 
-function makeResponse(): ExecutionsResponse {
+function makeResponse(): TasksResponse {
   return {
-    executions: [
+    tasks: [
       {
-        id: "exec-1",
-        task_type: "scrapy",
+        id: "task-1",
+        artifact_type: "scrapy",
         target: "demo",
         status: "running",
         node_strategy: "all",
         created_at: "2026-06-18T00:00:00Z",
         started_at: "2026-06-18T00:00:01Z",
         finished_at: null,
-        attempt_count: 1,
+        execution_count: 1,
       },
     ],
     page: 1,
@@ -28,13 +28,13 @@ function makeResponse(): ExecutionsResponse {
   };
 }
 
-const listExecutions = vi.fn(async (_params?: ListExecutionsParams) => makeResponse());
+const listTasks = vi.fn(async (_params?: ListTasksParams) => makeResponse());
 
-vi.mock("@/api/executions", () => ({
-  listExecutions: (params?: ListExecutionsParams) => listExecutions(params),
+vi.mock("@/api/tasks", () => ({
+  listTasks: (params?: ListTasksParams) => listTasks(params),
 }));
 
-import ExecutionsPage from "@/pages/ExecutionsPage.vue";
+import TasksPage from "@/pages/TasksPage.vue";
 
 function makeI18n() {
   return createI18n({
@@ -62,35 +62,36 @@ function makeStubs() {
   };
 }
 
-describe("ExecutionsPage", () => {
+describe("TasksPage", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
-    listExecutions.mockClear();
+    listTasks.mockClear();
   });
 
   it("requests a backend page and renders rows + total", async () => {
-    const wrapper = mount(ExecutionsPage, {
+    const wrapper = mount(TasksPage, {
       global: { plugins: [makeI18n()], stubs: makeStubs() },
     });
     await flushPromises();
 
-    expect(wrapper.text()).toContain(zh.executions.title);
+    expect(wrapper.text()).toContain(zh.tasks.title);
     const vm = wrapper.vm as unknown as {
-      executions: { target: string }[];
+      tasks: { target: string; execution_count: number }[];
       total: number;
       spiders: string[];
     };
-    expect(vm.executions).toHaveLength(1);
+    expect(vm.tasks).toHaveLength(1);
+    expect(vm.tasks[0].execution_count).toBe(1);
     expect(vm.total).toBe(42);
     expect(vm.spiders).toEqual(["alpha", "beta"]);
     // first load passes pagination params
-    expect(listExecutions).toHaveBeenCalledWith(
+    expect(listTasks).toHaveBeenCalledWith(
       expect.objectContaining({ page: 1 }),
     );
   });
 
   it("sends spider + pagination params on filter/page/size changes", async () => {
-    const wrapper = mount(ExecutionsPage, {
+    const wrapper = mount(TasksPage, {
       global: { plugins: [makeI18n()], stubs: makeStubs() },
     });
     await flushPromises();
@@ -104,19 +105,19 @@ describe("ExecutionsPage", () => {
     vm.spider = "alpha";
     vm.onSpiderChange();
     await flushPromises();
-    expect(listExecutions).toHaveBeenLastCalledWith(
+    expect(listTasks).toHaveBeenLastCalledWith(
       expect.objectContaining({ spider: "alpha", page: 1 }),
     );
 
     vm.onPageChange(2);
     await flushPromises();
-    expect(listExecutions).toHaveBeenLastCalledWith(
+    expect(listTasks).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 2, spider: "alpha" }),
     );
 
     vm.onSizeChange(50);
     await flushPromises();
-    expect(listExecutions).toHaveBeenLastCalledWith(
+    expect(listTasks).toHaveBeenLastCalledWith(
       expect.objectContaining({ pageSize: 50, page: 1 }),
     );
   });

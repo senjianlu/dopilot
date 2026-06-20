@@ -3,9 +3,9 @@ import type {
   CreateScheduleRequest,
   NextRunPreviewRequest,
   NextRunPreviewResponse,
-  RunExecutionResponse,
   Schedule,
   SchedulesResponse,
+  TaskRunResponse,
 } from "./types";
 
 export async function listSchedules(): Promise<Schedule[]> {
@@ -38,10 +38,8 @@ export async function deleteSchedule(id: string): Promise<void> {
 }
 
 // Immediately create + dispatch a task from the referenced template snapshot.
-export async function triggerSchedule(
-  id: string,
-): Promise<RunExecutionResponse> {
-  const { data } = await client.post<RunExecutionResponse>(
+export async function triggerSchedule(id: string): Promise<TaskRunResponse> {
+  const { data } = await client.post<TaskRunResponse>(
     `/schedules/${id}/trigger-now`,
   );
   return data;

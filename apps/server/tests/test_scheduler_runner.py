@@ -29,13 +29,6 @@ from dopilot_server.services import schedules as sched_svc
 from dopilot_server.services import states, templates
 from dopilot_server.services.executions import list_tasks
 
-TEMPLATE_BODY = {
-    "name": "runner-template",
-    "project": "demo",
-    "spider": "phase1",
-    "node_strategy": "all",
-}
-
 
 def _dispatcher(sessionmaker, redis) -> CommandDispatcher:
     return CommandDispatcher(sessionmaker, CommandProducer(redis, RedisSettings()))
@@ -46,15 +39,50 @@ async def _run_commands(redis, agent_id="agent-1") -> list[AgentCommand]:
     return [from_stream_entry(AgentCommand, f) for _id, f in entries]
 
 
+async def _seed_build_artifact(session):
+    import uuid
+
+    from dopilot_server.models.execution import BuildArtifact
+
+    sha = uuid.uuid4().hex * 2  # 64 chars
+    artifact = BuildArtifact(
+        id=uuid.uuid4().hex,
+        artifact_type="scrapy",
+        package_format="egg",
+        name="demo",
+        filename="demo.egg",
+        content_hash=sha,
+        size_bytes=1,
+        artifact_metadata={
+            "project": "demo",
+            "version": f"sha256-{sha[:12]}",
+            "spiders": ["phase1"],
+            "fetch_path": f"/api/v1/artifacts/scrapy/{sha}/egg",
+        },
+    )
+    session.add(artifact)
+    await session.flush()
+    return artifact
+
+
 async def _seed_schedule(session, **overrides):
     """Commit a template + schedule and return ``(template, schedule)``."""
-    template = templates.create_template(session, dict(TEMPLATE_BODY))
+    artifact = await _seed_build_artifact(session)
+    template = await templates.create_template(
+        session,
+        {
+            "name": "runner-template",
+            "build_artifact_id": artifact.id,
+            "spider": "phase1",
+            "node_strategy": "all",
+        },
+    )
     await session.flush()
     schedule = await sched_svc.create_schedule(
         session,
         {
             "name": "every-30s",
-            "template_id": template.id,
+            "execution_template_id": template.id,
             "interval_seconds": 30,
             **overrides,
         },
@@ -159,7 +187,11 @@ async def test_runner_reload_syncs_added_and_removed_jobs(
         # Add a second schedule for the same template, then reload.
         second = await sched_svc.create_schedule(
             db_session,
-            {"name": "s2", "template_id": template.id, "interval_seconds": 60},
+            {
+                "name": "s2",
+                "execution_template_id": template.id,
+                "interval_seconds": 60,
+            },
         )
         await db_session.commit()
         await runner.reload()

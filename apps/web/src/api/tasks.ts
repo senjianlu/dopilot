@@ -1,19 +1,17 @@
 import client from "./client";
 import type {
-  ExecutionsResponse,
-  ExecutionView,
-  ListExecutionsParams,
+  ListTasksParams,
   LogSnapshot,
-  RunExecutionRequest,
-  RunExecutionResponse,
   StreamTokenResponse,
+  TasksResponse,
+  TaskView,
 } from "./types";
 
 // Phase 1.7.1: backend-paginated list. Returns the full response (rows + page /
 // page_size / total + known spider values) so the page can render controls.
-export async function listExecutions(
-  params: ListExecutionsParams = {},
-): Promise<ExecutionsResponse> {
+export async function listTasks(
+  params: ListTasksParams = {},
+): Promise<TasksResponse> {
   const query: Record<string, string | number> = {
     page: params.page ?? 1,
     page_size: params.pageSize ?? 20,
@@ -21,34 +19,24 @@ export async function listExecutions(
   if (params.spider) {
     query.spider = params.spider;
   }
-  const { data } = await client.get<ExecutionsResponse>("/executions", {
+  const { data } = await client.get<TasksResponse>("/tasks", {
     params: query,
   });
   return data;
 }
 
-export async function getExecution(id: string): Promise<ExecutionView> {
-  const { data } = await client.get<ExecutionView>(`/executions/${id}`);
+export async function getTask(id: string): Promise<TaskView> {
+  const { data } = await client.get<TaskView>(`/tasks/${id}`);
   return data;
 }
 
-export async function runExecution(
-  payload: RunExecutionRequest,
-): Promise<RunExecutionResponse> {
-  const { data } = await client.post<RunExecutionResponse>(
-    "/executions/run",
-    payload,
-  );
-  return data;
-}
-
-export async function cancelExecution(id: string): Promise<ExecutionView> {
-  const { data } = await client.post<ExecutionView>(`/executions/${id}/cancel`);
+export async function cancelTask(id: string): Promise<TaskView> {
+  const { data } = await client.post<TaskView>(`/tasks/${id}/cancel`);
   return data;
 }
 
 export interface LogSnapshotQuery {
-  attemptId?: string;
+  executionId?: string;
   stream?: string;
   offset?: number;
   maxBytes?: number;
@@ -62,13 +50,13 @@ export async function getLogSnapshot(
     stream: query.stream ?? "log",
     offset: query.offset ?? 0,
   };
-  if (query.attemptId) {
-    params.attempt_id = query.attemptId;
+  if (query.executionId) {
+    params.execution_id = query.executionId;
   }
   if (query.maxBytes != null) {
     params.max_bytes = query.maxBytes;
   }
-  const { data } = await client.get<LogSnapshot>(`/executions/${id}/logs`, {
+  const { data } = await client.get<LogSnapshot>(`/tasks/${id}/logs`, {
     params,
   });
   return data;
@@ -79,13 +67,13 @@ export async function fetchStreamToken(
   id: string,
 ): Promise<StreamTokenResponse> {
   const { data } = await client.post<StreamTokenResponse>(
-    `/executions/${id}/logs/stream-token`,
+    `/tasks/${id}/logs/stream-token`,
   );
   return data;
 }
 
 export interface StreamUrlQuery {
-  attemptId?: string;
+  executionId?: string;
   stream?: string;
   streamToken?: string;
 }
@@ -96,11 +84,11 @@ export interface StreamUrlQuery {
 export function buildStreamUrl(id: string, query: StreamUrlQuery = {}): string {
   const params = new URLSearchParams();
   params.set("stream", query.stream ?? "log");
-  if (query.attemptId) {
-    params.set("attempt_id", query.attemptId);
+  if (query.executionId) {
+    params.set("execution_id", query.executionId);
   }
   if (query.streamToken) {
     params.set("stream_token", query.streamToken);
   }
-  return `/api/v1/executions/${id}/logs/stream?${params.toString()}`;
+  return `/api/v1/tasks/${id}/logs/stream?${params.toString()}`;
 }

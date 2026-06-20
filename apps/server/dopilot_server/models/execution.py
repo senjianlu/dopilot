@@ -28,7 +28,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -47,7 +56,11 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
-    task_type: Mapped[str] = mapped_column(String, nullable=False)
+    # Phase 1.8: the RESOLVED build-artifact type of this run (scrapy | reserved
+    # python_wheel | docker_image). This is the core-domain discriminator (it
+    # replaced the misleading ``task_type``); the wire ``task_type`` survives
+    # only in the Redis command payload, translated at the dispatcher boundary.
+    artifact_type: Mapped[str] = mapped_column(String, nullable=False)
     target: Mapped[str] = mapped_column(String, nullable=False, default="")
     node_strategy: Mapped[str] = mapped_column(
         String, nullable=False, default="all"
@@ -57,15 +70,18 @@ class Task(Base):
     # execution-list spider filter at large history volume (avoids scanning the
     # ``params`` JSON). NULL for non-scrapy or spider-less runs.
     spider: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    # Phase 1.7 packet 2: provenance + the immutable template snapshot.
-    # source: manual | schedule_trigger_now | schedule_timer. template_id /
-    # schedule_id are NULL for an ad-hoc manual run. template_snapshot is the
-    # copied template payload at creation time — editing the template later
-    # never mutates this row (acceptance: snapshot immutability).
+    # Phase 1.7 packet 2 / 1.8: provenance + the immutable resolved snapshot.
+    # source: direct_artifact | template | schedule_trigger_now | schedule_timer
+    # (legacy rows may carry ``manual``). execution_template_id / schedule_id are
+    # NULL for an ad-hoc direct artifact run. template_snapshot is the resolved
+    # run snapshot (build artifact + params + node strategy/ids) copied at
+    # creation time — editing the template later never mutates this row.
     source: Mapped[str] = mapped_column(
-        String, nullable=False, default="manual"
+        String, nullable=False, default="direct_artifact"
     )
-    template_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    execution_template_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
     schedule_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     template_snapshot: Mapped[dict] = mapped_column(
         _JSON, nullable=False, default=dict
@@ -222,8 +238,62 @@ class ExecutionLogFile(Base):
     )
 
 
+class BuildArtifact(Base):
+    """The canonical product entity: an executable build artifact (phase 1.8).
+
+    A build artifact is the *thing that runs* (not the build process). Phase 1.8
+    only makes ``artifact_type="scrapy"`` / ``package_format="egg"`` runnable;
+    ``python_wheel`` / ``docker_image`` are reserved type values, not executable.
+
+    Dedup key for file artifacts is ``(artifact_type, content_hash)`` — for
+    Scrapy that is the egg sha256. The legacy ``scrapy_artifacts`` table is kept
+    as a deployment/cache registry and is NOT the canonical entity.
+
+    ``artifact_metadata`` (JSONB column ``metadata`` would clash with the
+    Declarative ``metadata`` attribute, so the column is named
+    ``artifact_metadata``) carries type-specific data; for Scrapy:
+    ``{"project", "version", "spiders", "fetch_path"}``.
+    """
+
+    __tablename__ = "build_artifacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_type", "content_hash", name="uq_build_artifacts_type_hash"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    # scrapy | python_wheel (reserved) | docker_image (reserved)
+    artifact_type: Mapped[str] = mapped_column(String, nullable=False)
+    # egg | wheel (reserved) | image (reserved)
+    package_format: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    filename: Mapped[str | None] = mapped_column(String, nullable=True)
+    # sha256 for file artifacts (Scrapy egg). NULL for non-file/reserved types.
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    size_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+    artifact_metadata: Mapped[dict] = mapped_column(
+        _JSON, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class ScrapyArtifact(Base):
-    """A deployed (uploaded) Scrapy egg and where it was deployed."""
+    """A deployed (uploaded) Scrapy egg and where it was deployed.
+
+    Legacy deployment/cache registry (phase 1). The canonical product entity is
+    :class:`BuildArtifact`; this table is kept readable, not renamed in place.
+    """
 
     __tablename__ = "scrapy_artifacts"
 

@@ -8,13 +8,14 @@ from .auth_token import AuthToken
 from .command_outbox import CommandOutbox
 from .event_audit import EventAudit
 from .execution import (
+    BuildArtifact,
     Execution,
     ExecutionLogFile,
     ScrapyArtifact,
     Task,
 )
 from .node import Node
-from .scheduling import Schedule, TaskTemplate
+from .scheduling import ExecutionTemplate, Schedule
 
 __all__ = [
     "AuthToken",
@@ -22,9 +23,10 @@ __all__ = [
     "Task",
     "Execution",
     "ExecutionLogFile",
+    "BuildArtifact",
     "ScrapyArtifact",
     "CommandOutbox",
     "EventAudit",
-    "TaskTemplate",
+    "ExecutionTemplate",
     "Schedule",
 ]

@@ -55,55 +55,80 @@ class NodesResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# phase 1: scrapy artifacts, executions, logs
+# phase 1.8: build artifacts
 # ---------------------------------------------------------------------------
 
 
-class ArtifactView(BaseModel):
-    """A validated Scrapy egg artifact."""
+class BuildArtifactView(BaseModel):
+    """A canonical build artifact (phase 1.8). Phase 1.8 runs scrapy/egg only."""
 
     id: str
-    project: str
-    version: str
-    filename: str
-    sha256: str
-    size_bytes: int
+    artifact_type: str  # scrapy | python_wheel (reserved) | docker_image (reserved)
+    package_format: str  # egg | wheel (reserved) | image (reserved)
+    name: str
+    filename: str | None = None
+    content_hash: str | None = None
+    size_bytes: int = 0
+    # Scrapy type-specific metadata (also carried in artifact_metadata JSONB):
+    project: str | None = None
+    version: str | None = None
     spiders: list[str] = Field(default_factory=list)
-    valid: bool = True
-    uploaded_at: str | None = None
+    fetch_path: str | None = None
+    runnable: bool = False
     created_at: str | None = None
+    updated_at: str | None = None
 
 
-class ArtifactsResponse(BaseModel):
-    artifacts: list[ArtifactView]
+class BuildArtifactsResponse(BaseModel):
+    artifacts: list[BuildArtifactView]
 
 
-class EggDeployResult(BaseModel):
-    """Response of ``POST /api/v1/artifacts/scrapy/egg``."""
+class BuildArtifactUploadResponse(BaseModel):
+    """Response of ``POST /api/v1/artifacts/scrapy/egg`` (creates/reuses a row)."""
 
-    artifact: ArtifactView
+    artifact: BuildArtifactView
     spiders: list[str] = Field(default_factory=list)
-    agent_id: str | None = None
-    endpoint: str | None = None
 
 
-# NOTE (phase 1.7 public/web seam): the web JSON still uses the phase-1.5
-# vocabulary — a parent run is an "execution" (``ExecutionView`` with
-# ``attempts[]``) and an atomic unit is an "attempt" (``AttemptView`` whose
-# ``execution_id`` is the parent task id). The server domain renamed these to
-# task/execution; the public clean-cut is a later packet. Keep these shapes
-# frozen so the web does not break in this packet.
+class RunOverrides(BaseModel):
+    """Bounded run overrides (never the build artifact).
 
-
-class AttemptView(BaseModel):
-    """One atomic execution (one target node) of a task/run.
-
-    ``execution_id`` is the PARENT id (a task id in the server domain) — the web
-    vocabulary still calls the parent an "execution".
+    ``extra="forbid"`` so an attempt to override a disallowed key (notably
+    ``build_artifact_id``) is rejected at the schema boundary with a 422.
     """
 
+    model_config = {"extra": "forbid"}
+
+    spider: str | None = None
+    settings: dict[str, str] | None = None
+    args: dict[str, str] | None = None
+    node_strategy: str | None = None
+    node_ids: list[str] | None = None
+
+
+class ArtifactRunRequest(RunOverrides):
+    """Body of ``POST /api/v1/artifacts/{id}/run`` (direct build-artifact run)."""
+
+    name: str | None = None
+
+
+class TaskRunResponse(BaseModel):
+    """Acknowledgement of a dispatched run; ``task_id`` is the parent task."""
+
+    task_id: str
+    status: str
+
+
+# ---------------------------------------------------------------------------
+# phase 1.8: tasks (parent runs) + executions (atomic per-node units)
+# ---------------------------------------------------------------------------
+
+
+class ExecutionView(BaseModel):
+    """One atomic per-node execution of a task. ``task_id`` is the parent."""
+
     id: str
-    execution_id: str
+    task_id: str
     agent_id: str | None = None
     node_id: str | None = None
     endpoint: str | None = None
@@ -116,59 +141,57 @@ class AttemptView(BaseModel):
     error_detail: dict[str, Any] = Field(default_factory=dict)
 
 
-class ExecutionView(BaseModel):
-    """Full task/run detail incl. its atomic executions (``attempts``)."""
+class TaskView(BaseModel):
+    """Full parent-task detail incl. its atomic executions."""
 
     id: str
-    task_type: str
+    artifact_type: str
     target: str
     # queued|running|finalizing|complete|failed|canceled|lost|no_target
     status: str
-    # Phase 1.7: set on a terminal that has no child execution to explain it
-    # (currently the zero-node ``no_target`` task). NULL on normal runs.
     status_reason: str | None = None
     status_detail: dict[str, Any] = Field(default_factory=dict)
     node_strategy: str
     params: dict[str, Any] = Field(default_factory=dict)
-    # Phase 1.7 packet 2: provenance. source = manual | schedule_trigger_now |
-    # schedule_timer; template_id/schedule_id are null for an ad-hoc manual run.
-    source: str = "manual"
-    template_id: str | None = None
+    # Resolved build-artifact snapshot frozen at task creation.
+    build_artifact: dict[str, Any] = Field(default_factory=dict)
+    # source = direct_artifact | template | schedule_trigger_now | schedule_timer
+    source: str = "direct_artifact"
+    execution_template_id: str | None = None
     schedule_id: str | None = None
     created_at: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
-    attempts: list[AttemptView] = Field(default_factory=list)
+    executions: list[ExecutionView] = Field(default_factory=list)
 
 
-class ExecutionSummary(BaseModel):
-    """Compact row for the tasks/runs list."""
+class TaskSummary(BaseModel):
+    """Compact row for the tasks list."""
 
     id: str
-    task_type: str
+    artifact_type: str
     target: str
-    # Phase 1.7.1: task-level spider (backs the execution-list spider filter).
     spider: str | None = None
     status: str
     status_reason: str | None = None
     node_strategy: str
-    source: str = "manual"
-    template_id: str | None = None
+    source: str = "direct_artifact"
+    execution_template_id: str | None = None
     schedule_id: str | None = None
     created_at: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
-    attempt_count: int = 0
+    execution_count: int = 0
 
 
-class ExecutionsResponse(BaseModel):
-    """Server-side paginated tasks/runs list (phase 1.7.1).
+class TasksResponse(BaseModel):
+    """Server-side paginated tasks list (phase 1.8).
 
     ``spiders`` is the distinct set of known spider values across all tasks, so
     the web can offer a spider filter without a second round-trip.
     """
 
-    executions: list[ExecutionSummary]
+    tasks: list[TaskSummary]
     page: int = 1
     page_size: int = 20
     total: int = 0
@@ -176,21 +199,22 @@ class ExecutionsResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# phase 1.7 packet 2: task templates + schedules
+# phase 1.8: execution templates + schedules
 # ---------------------------------------------------------------------------
 
 
-class TemplateView(BaseModel):
-    """A reusable Scrapy run definition."""
+class ExecutionTemplateView(BaseModel):
+    """A reusable run definition bound to one build artifact."""
 
     id: str
     name: str
     description: str | None = None
-    task_type: str = "scrapy"
+    build_artifact_id: str | None = None
+    artifact_type: str = "scrapy"
+    # project/version are resolved from the bound artifact (read-only).
     project: str | None = None
     version: str | None = None
     spider: str | None = None
-    artifact: dict[str, Any] = Field(default_factory=dict)
     settings: dict[str, str] = Field(default_factory=dict)
     args: dict[str, str] = Field(default_factory=dict)
     node_strategy: str = "all"
@@ -199,50 +223,46 @@ class TemplateView(BaseModel):
     updated_at: str | None = None
 
 
-class TemplateCreateRequest(BaseModel):
+class ExecutionTemplateCreateRequest(BaseModel):
     name: str
     description: str | None = None
-    task_type: str = "scrapy"
-    project: str | None = None
-    version: str | None = None
+    build_artifact_id: str
     spider: str | None = None
-    artifact: dict[str, Any] = Field(default_factory=dict)
     settings: dict[str, str] = Field(default_factory=dict)
     args: dict[str, str] = Field(default_factory=dict)
     node_strategy: str = "all"
     node_ids: list[str] = Field(default_factory=list)
 
 
-class TemplateUpdateRequest(BaseModel):
+class ExecutionTemplateUpdateRequest(BaseModel):
     """All fields optional; only the provided ones are patched."""
 
     name: str | None = None
     description: str | None = None
-    task_type: str | None = None
-    project: str | None = None
-    version: str | None = None
+    build_artifact_id: str | None = None
     spider: str | None = None
-    artifact: dict[str, Any] | None = None
     settings: dict[str, str] | None = None
     args: dict[str, str] | None = None
     node_strategy: str | None = None
     node_ids: list[str] | None = None
 
 
-class TemplatesResponse(BaseModel):
-    templates: list[TemplateView]
+class ExecutionTemplatesResponse(BaseModel):
+    templates: list[ExecutionTemplateView]
 
 
 class ScheduleView(BaseModel):
-    """A timer referencing one template (interval or cron)."""
+    """A timer referencing one execution template (interval or cron)."""
 
     id: str
     name: str
     description: str | None = None
-    template_id: str
+    execution_template_id: str
     trigger_type: str = "interval"  # interval | cron
     interval_seconds: int | None = None
     cron: str | None = None
+    # Phase 1.8: bounded run overrides (never the build artifact).
+    overrides: dict[str, Any] = Field(default_factory=dict)
     # Phase 1.7.1: estimated next fire time. For interval triggers this is an
     # estimate (now + interval); for cron it is computed from the expression.
     next_run_at: str | None = None
@@ -253,19 +273,21 @@ class ScheduleView(BaseModel):
 class ScheduleCreateRequest(BaseModel):
     name: str
     description: str | None = None
-    template_id: str
+    execution_template_id: str
     trigger_type: str = "interval"
     interval_seconds: int | None = None
     cron: str | None = None
+    overrides: RunOverrides | None = None
 
 
 class ScheduleUpdateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
-    template_id: str | None = None
+    execution_template_id: str | None = None
     trigger_type: str | None = None
     interval_seconds: int | None = None
     cron: str | None = None
+    overrides: RunOverrides | None = None
 
 
 class SchedulesResponse(BaseModel):
@@ -302,10 +324,15 @@ class NextRunPreviewResponse(BaseModel):
 
 
 class LogSnapshot(BaseModel):
-    """A landed log slice returned by ``GET /executions/{id}/logs``."""
+    """A landed log slice returned by ``GET /tasks/{task_id}/logs``.
 
+    Public ids: ``task_id`` is the parent task, ``execution_id`` the atomic
+    per-node execution. Internally these map to the frozen seam
+    ``execution_id`` / ``attempt_id`` on the log index.
+    """
+
+    task_id: str
     execution_id: str
-    attempt_id: str
     stream: str
     start_offset: int
     end_offset: int

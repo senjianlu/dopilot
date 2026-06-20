@@ -1,13 +1,13 @@
-"""Task-template endpoints (phase 1.7 packet 2): CRUD + run-from-template.
+"""Execution-template endpoints (phase 1.8): CRUD + run-from-template.
 
-A template is a reusable Scrapy run definition. ``POST /templates/{id}/run``
-creates a task from an immutable snapshot of the template through the SAME
-dispatch path as a manual run (and the same zero-node ``no_target`` behavior).
+An execution template is a reusable run definition bound to one build artifact.
+``POST /templates/{id}/run`` creates a task from a resolved snapshot of the
+template through the SAME dispatch path as a direct artifact run (and the same
+zero-node ``no_target`` behavior).
 """
 
 from __future__ import annotations
 
-from dopilot_protocol import ExecutionRunResponse
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,65 +19,66 @@ from ...executors.base import DispatchUnknownError
 from ...redis.dispatcher import CommandDispatcher
 from ...services import states
 from ...services import templates as svc
-from ...services.dispatch import dispatch_from_template
-from .executions import get_dispatcher
+from ...services.dispatch import run_execution_template
 from .schemas import (
-    TemplateCreateRequest,
-    TemplatesResponse,
-    TemplateUpdateRequest,
-    TemplateView,
+    ExecutionTemplateCreateRequest,
+    ExecutionTemplatesResponse,
+    ExecutionTemplateUpdateRequest,
+    ExecutionTemplateView,
+    TaskRunResponse,
 )
+from .tasks import get_dispatcher
 
 router = APIRouter(tags=["templates"])
 
 
-@router.post("/templates", response_model=TemplateView)
+@router.post("/templates", response_model=ExecutionTemplateView)
 async def create_template(
-    body: TemplateCreateRequest,
+    body: ExecutionTemplateCreateRequest,
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
-) -> TemplateView:
-    template = svc.create_template(session, body.model_dump())
+) -> ExecutionTemplateView:
+    template = await svc.create_template(session, body.model_dump())
     await session.commit()
-    return TemplateView(**svc.template_view(template))
+    return ExecutionTemplateView(**svc.template_view(template))
 
 
-@router.get("/templates", response_model=TemplatesResponse)
+@router.get("/templates", response_model=ExecutionTemplatesResponse)
 async def list_templates(
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
-) -> TemplatesResponse:
+) -> ExecutionTemplatesResponse:
     templates = await svc.list_templates(session)
-    return TemplatesResponse(
-        templates=[TemplateView(**svc.template_view(t)) for t in templates]
+    return ExecutionTemplatesResponse(
+        templates=[ExecutionTemplateView(**svc.template_view(t)) for t in templates]
     )
 
 
-@router.get("/templates/{template_id}", response_model=TemplateView)
+@router.get("/templates/{template_id}", response_model=ExecutionTemplateView)
 async def get_template(
     template_id: str,
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
-) -> TemplateView:
+) -> ExecutionTemplateView:
     template = await svc.get_template_or_404(session, template_id)
-    return TemplateView(**svc.template_view(template))
+    return ExecutionTemplateView(**svc.template_view(template))
 
 
-@router.put("/templates/{template_id}", response_model=TemplateView)
+@router.put("/templates/{template_id}", response_model=ExecutionTemplateView)
 async def update_template(
     template_id: str,
-    body: TemplateUpdateRequest,
+    body: ExecutionTemplateUpdateRequest,
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
-) -> TemplateView:
+) -> ExecutionTemplateView:
     template = await svc.get_template_or_404(session, template_id)
     # exclude_unset so absent fields are not patched to null.
-    svc.update_template(template, body.model_dump(exclude_unset=True))
+    await svc.update_template(session, template, body.model_dump(exclude_unset=True))
     await session.commit()
     # refresh: the onupdate `updated_at` is server-generated, so reload it before
     # building the view (avoids a lazy-IO access on a stale attribute).
     await session.refresh(template)
-    return TemplateView(**svc.template_view(template))
+    return ExecutionTemplateView(**svc.template_view(template))
 
 
 @router.delete("/templates/{template_id}")
@@ -92,7 +93,7 @@ async def delete_template(
     return {"deleted": True}
 
 
-@router.post("/templates/{template_id}/run", response_model=ExecutionRunResponse)
+@router.post("/templates/{template_id}/run", response_model=TaskRunResponse)
 async def run_template(
     template_id: str,
     response: Response,
@@ -100,17 +101,18 @@ async def run_template(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
     dispatcher: CommandDispatcher = Depends(get_dispatcher),
-) -> ExecutionRunResponse:
-    """Create + dispatch a task from this template's snapshot (source=manual)."""
+) -> TaskRunResponse:
+    """Create + dispatch a task from this template's snapshot (source=template)."""
     template = await svc.get_template_or_404(session, template_id)
     try:
-        return await dispatch_from_template(
+        result = await run_execution_template(
             session,
             settings,
             dispatcher,
             template,
-            source=states.TASK_SOURCE_MANUAL,
+            source=states.TASK_SOURCE_TEMPLATE,
         )
+        return TaskRunResponse(task_id=result.task_id, status=result.status)
     except DispatchUnknownError as exc:
         response.status_code = 202
-        return ExecutionRunResponse(execution_id=exc.execution_id, status="queued")
+        return TaskRunResponse(task_id=exc.task_id, status="queued")

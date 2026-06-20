@@ -20,7 +20,7 @@ async def test_serves_bundled_web_index_and_spa_routes(tmp_path, monkeypatch):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:
         index = await client.get("/")
-        route = await client.get("/executions/abc")
+        route = await client.get("/tasks/abc")
         asset = await client.get("/assets/app.js")
 
     assert index.status_code == 200

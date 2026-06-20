@@ -118,20 +118,20 @@ def test_tail_response_roundtrip() -> None:
 
 
 def test_execution_run_request_defaults_and_roundtrip() -> None:
-    req = ExecutionRunRequest(task_type="script", target="job-1")
+    req = ExecutionRunRequest(artifact_type="scrapy", target="job-1")
     assert req.node_strategy == "all"
     assert req.node_ids == []
     assert req.params == {}
 
     # default_factory must yield independent containers.
-    other = ExecutionRunRequest(task_type="script", target="job-2")
+    other = ExecutionRunRequest(artifact_type="scrapy", target="job-2")
     assert req.node_ids is not other.node_ids
     assert req.params is not other.params
 
     assert ExecutionRunRequest.model_validate(req.model_dump()) == req
 
     explicit = ExecutionRunRequest(
-        task_type="scrapy",
+        artifact_type="scrapy",
         target="spider-a",
         node_strategy="push",
         node_ids=["n1", "n2"],
@@ -141,5 +141,5 @@ def test_execution_run_request_defaults_and_roundtrip() -> None:
 
 
 def test_execution_run_response_roundtrip() -> None:
-    resp = ExecutionRunResponse(execution_id="e1", status="queued")
+    resp = ExecutionRunResponse(task_id="t1", status="queued")
     assert ExecutionRunResponse.model_validate(resp.model_dump()) == resp

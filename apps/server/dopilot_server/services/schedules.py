@@ -1,8 +1,9 @@
-"""Schedule service (phase 1.7 packet 2): CRUD + trigger-now + timer firing.
+"""Schedule service (phase 1.8): CRUD + trigger-now + timer firing.
 
-A :class:`Schedule` references one :class:`TaskTemplate` and creates tasks from
-its snapshot. Two firing paths, both routed through
-:func:`dispatch.dispatch_from_template` so they share the manual run code path:
+A :class:`Schedule` references one :class:`ExecutionTemplate` and creates tasks
+from its resolved snapshot (schedule ``overrides`` applied with precedence:
+override > template default > build artifact default). Two firing paths, both
+routed through :func:`dispatch.run_execution_template` so they share one path:
 
 - :func:`trigger_now` — the immediate ``POST /schedules/{id}/trigger-now``
   endpoint (``source=schedule_trigger_now``). NEVER coalesced (user decision #2).
@@ -26,8 +27,8 @@ from ..config.settings import Settings
 from ..errors import ApiError
 from ..models.scheduling import Schedule
 from ..redis.dispatcher import CommandDispatcher
-from . import states, templates
-from .dispatch import dispatch_from_template
+from . import resolve, states, templates
+from .dispatch import run_execution_template
 from .executions import _iso, new_id
 from .outbox import has_undispatched_backlog_for_schedule
 
@@ -79,20 +80,23 @@ async def create_schedule(
             400, "schedule.invalid_params", "errors.invalidParams",
             {"missing": ["name"]},
         )
-    # template must exist (FK + a friendly 404-equivalent at create).
-    await templates.get_template_or_404(session, data.get("template_id") or "")
+    # execution template must exist (FK + a friendly 404-equivalent at create).
+    await templates.get_template_or_404(
+        session, data.get("execution_template_id") or ""
+    )
     _validate_trigger(data)
     trigger_type = data.get("trigger_type") or "interval"
     schedule = Schedule(
         id=new_id(),
         name=str(data["name"]).strip(),
         description=data.get("description"),
-        template_id=str(data["template_id"]),
+        execution_template_id=str(data["execution_template_id"]),
         trigger_type=trigger_type,
         interval_seconds=(
             int(data["interval_seconds"]) if trigger_type == "interval" else None
         ),
         cron=(str(data["cron"]).strip() if trigger_type == "cron" else None),
+        overrides=resolve.sanitize_overrides(data.get("overrides")),
     )
     session.add(schedule)
     return schedule
@@ -101,13 +105,17 @@ async def create_schedule(
 async def update_schedule(
     session: AsyncSession, schedule: Schedule, data: dict[str, Any]
 ) -> Schedule:
-    if "template_id" in data:
-        await templates.get_template_or_404(session, data["template_id"])
-        schedule.template_id = str(data["template_id"])
+    if "execution_template_id" in data:
+        await templates.get_template_or_404(
+            session, data["execution_template_id"]
+        )
+        schedule.execution_template_id = str(data["execution_template_id"])
     if "name" in data and (data.get("name") or "").strip():
         schedule.name = str(data["name"]).strip()
     if "description" in data:
         schedule.description = data["description"]
+    if "overrides" in data:
+        schedule.overrides = resolve.sanitize_overrides(data.get("overrides"))
     # Re-validate the trigger as a whole when any trigger field changes.
     if {"trigger_type", "interval_seconds", "cron"} & set(data):
         merged = {
@@ -176,15 +184,16 @@ async def trigger_now(
     while an earlier task from the same schedule is still active.
     """
     template = await templates.get_template_or_404(
-        session, schedule.template_id
+        session, schedule.execution_template_id
     )
-    return await dispatch_from_template(
+    return await run_execution_template(
         session,
         settings,
         dispatcher,
         template,
         source=states.TASK_SOURCE_TRIGGER_NOW,
         schedule_id=schedule.id,
+        overrides=schedule.overrides,
     )
 
 
@@ -202,15 +211,16 @@ async def fire_timer(
     if await has_undispatched_backlog_for_schedule(session, schedule.id):
         return None
     template = await templates.get_template_or_404(
-        session, schedule.template_id
+        session, schedule.execution_template_id
     )
-    return await dispatch_from_template(
+    return await run_execution_template(
         session,
         settings,
         dispatcher,
         template,
         source=states.TASK_SOURCE_TIMER,
         schedule_id=schedule.id,
+        overrides=schedule.overrides,
     )
 
 
@@ -273,10 +283,11 @@ def schedule_view(
         "id": schedule.id,
         "name": schedule.name,
         "description": schedule.description,
-        "template_id": schedule.template_id,
+        "execution_template_id": schedule.execution_template_id,
         "trigger_type": schedule.trigger_type,
         "interval_seconds": schedule.interval_seconds,
         "cron": schedule.cron,
+        "overrides": dict(schedule.overrides or {}),
         "next_run_at": _iso(next_run),
         "created_at": _iso(schedule.created_at),
         "updated_at": _iso(schedule.updated_at),
