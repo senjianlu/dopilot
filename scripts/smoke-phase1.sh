@@ -457,12 +457,15 @@ else fail "artifact ${ARTIFACT_ID} not in /api/v1/artifacts (body: ${ART_LIST})"
 
 # --- Case 4: template run fans out to THREE agents --------------------------
 step "Case 4. POST /api/v1/templates (build_artifact_id, spider=${SPIDER}, node_strategy=all)"
+# Command-first (phase 1.8.1): the template carries a `scrapy crawl ...` command.
+# Pass `-a duration_seconds=0` (phase 1.8.2) so the demo spider stays near-instant
+# instead of waiting for its new 60-second default.
 TPL_PAYLOAD="$(python3 - "smoke-${SPIDER}-${VERSION}" "${ARTIFACT_ID}" "${SPIDER}" <<'PY'
 import json, sys
 print(json.dumps({
     "name": sys.argv[1],
     "build_artifact_id": sys.argv[2],
-    "spider": sys.argv[3],
+    "command": f"scrapy crawl {sys.argv[3]} -a duration_seconds=0",
     "node_strategy": "all",
 }, separators=(",", ":")))
 PY

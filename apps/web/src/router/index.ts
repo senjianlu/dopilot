@@ -14,6 +14,7 @@ import TemplatesPage from "@/pages/TemplatesPage.vue";
 import SchedulesPage from "@/pages/SchedulesPage.vue";
 import TasksPage from "@/pages/TasksPage.vue";
 import TaskDetailPage from "@/pages/TaskDetailPage.vue";
+import MaintenancePage from "@/pages/MaintenancePage.vue";
 import NotFound from "@/pages/NotFound.vue";
 
 const routes: RouteRecordRaw[] = [
@@ -34,6 +35,7 @@ const routes: RouteRecordRaw[] = [
         name: "task-detail",
         component: TaskDetailPage,
       },
+      { path: "maintenance", name: "maintenance", component: MaintenancePage },
     ],
   },
   { path: "/:pathMatch(.*)*", name: "not-found", component: NotFound },

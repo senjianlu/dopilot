@@ -41,9 +41,26 @@ const cancelTask = vi.fn(async () => ({
   status: "canceled" as const,
 }));
 
+const markTaskLost = vi.fn(async () => ({
+  task_id: "task-1",
+  task_status: "lost",
+  executions_marked: 1,
+  already_terminal: [],
+}));
+
 vi.mock("@/api/tasks", () => ({
   getTask: () => getTask(),
   cancelTask: () => cancelTask(),
+}));
+
+vi.mock("@/api/maintenance", () => ({
+  markTaskLost: () => markTaskLost(),
+}));
+
+// Confirmations are driven explicitly per test; default to confirmed.
+const confirmAction = vi.fn(async () => true);
+vi.mock("@/utils/confirm", () => ({
+  confirmAction: () => confirmAction(),
 }));
 
 vi.mock("vue-router", () => ({
@@ -89,9 +106,12 @@ describe("TaskDetailPage", () => {
     setActivePinia(createPinia());
     getTask.mockClear();
     cancelTask.mockClear();
+    markTaskLost.mockClear();
+    confirmAction.mockClear();
+    confirmAction.mockResolvedValue(true);
   });
 
-  it("renders executions and cancels via the API", async () => {
+  it("renders executions and cancels via the API (after confirm)", async () => {
     const wrapper = mount(TaskDetailPage, {
       global: { plugins: [makeI18n()], stubs: makeStubs() },
     });
@@ -111,7 +131,47 @@ describe("TaskDetailPage", () => {
     await vm.onCancel();
     await flushPromises();
 
+    expect(confirmAction).toHaveBeenCalledTimes(1);
     expect(cancelTask).toHaveBeenCalledTimes(1);
     expect(vm.task?.status).toBe("canceled");
+  });
+
+  it("does NOT cancel when the confirmation is declined", async () => {
+    confirmAction.mockResolvedValue(false);
+    const wrapper = mount(TaskDetailPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as { onCancel: () => Promise<void> };
+    await vm.onCancel();
+    await flushPromises();
+    expect(confirmAction).toHaveBeenCalledTimes(1);
+    expect(cancelTask).not.toHaveBeenCalled();
+  });
+
+  it("marks the task lost via the API after confirm", async () => {
+    const wrapper = mount(TaskDetailPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as { onMarkLost: () => Promise<void> };
+    await vm.onMarkLost();
+    await flushPromises();
+    expect(confirmAction).toHaveBeenCalledTimes(1);
+    expect(markTaskLost).toHaveBeenCalledTimes(1);
+    // The page reloads the task after marking lost.
+    expect(getTask).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT mark lost when the confirmation is declined", async () => {
+    confirmAction.mockResolvedValue(false);
+    const wrapper = mount(TaskDetailPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as { onMarkLost: () => Promise<void> };
+    await vm.onMarkLost();
+    await flushPromises();
+    expect(markTaskLost).not.toHaveBeenCalled();
   });
 });

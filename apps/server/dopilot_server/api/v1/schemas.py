@@ -338,3 +338,39 @@ class StreamTokenResponse(BaseModel):
 
     stream_token: str
     expires_at: str
+
+
+# ---------------------------------------------------------------------------
+# Manual maintenance (phase 1.8.2)
+# ---------------------------------------------------------------------------
+
+
+class TerminalCleanupRequest(BaseModel):
+    """Delete OLD TERMINAL task data. Provide ``older_than_days`` (preferred) or
+    an absolute ``before`` ISO timestamp. ``dry_run`` previews the counts."""
+
+    older_than_days: int | None = Field(default=None, ge=0)
+    before: str | None = None
+    dry_run: bool = False
+
+
+class TerminalCleanupResponse(BaseModel):
+    """Count summary of a terminal-data cleanup (or dry-run preview)."""
+
+    dry_run: bool
+    cutoff: str
+    tasks: int = 0
+    executions: int = 0
+    log_files: int = 0
+    log_files_removed: int = 0
+    log_bytes: int = 0
+    command_outbox: int = 0
+
+
+class MarkTaskLostResponse(BaseModel):
+    """Result of manually marking a stuck active task ``lost``."""
+
+    task_id: str
+    task_status: str
+    executions_marked: int = 0
+    already_terminal: list[str] = Field(default_factory=list)

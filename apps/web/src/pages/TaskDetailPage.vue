@@ -3,8 +3,10 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { cancelTask, getTask } from "@/api/tasks";
+import { markTaskLost } from "@/api/maintenance";
 import type { TaskStatus, TaskView } from "@/api/types";
 import LogViewer from "@/components/LogViewer.vue";
+import { confirmAction } from "@/utils/confirm";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -13,6 +15,7 @@ const taskId = computed(() => String(route.params.id));
 const task = ref<TaskView | null>(null);
 const loading = ref(false);
 const canceling = ref(false);
+const markingLost = ref(false);
 const errorMsg = ref("");
 
 const statusTagType: Record<
@@ -53,6 +56,13 @@ async function load(): Promise<void> {
 }
 
 async function onCancel(): Promise<void> {
+  const ok = await confirmAction({
+    title: t("confirm.title"),
+    message: t("task.confirmCancel"),
+    confirmText: t("confirm.confirm"),
+    cancelText: t("confirm.cancel"),
+  });
+  if (!ok) return;
   errorMsg.value = "";
   canceling.value = true;
   try {
@@ -61,6 +71,29 @@ async function onCancel(): Promise<void> {
     errorMsg.value = t("task.cancelError");
   } finally {
     canceling.value = false;
+  }
+}
+
+// Phase 1.8.2: manually mark a stuck active task lost. The confirmation makes
+// clear it may still be running on an agent; it is a soft terminal, not a delete.
+async function onMarkLost(): Promise<void> {
+  const ok = await confirmAction({
+    title: t("confirm.title"),
+    message: t("task.confirmMarkLost"),
+    confirmText: t("confirm.confirm"),
+    cancelText: t("confirm.cancel"),
+    type: "warning",
+  });
+  if (!ok) return;
+  errorMsg.value = "";
+  markingLost.value = true;
+  try {
+    await markTaskLost(taskId.value);
+    await load();
+  } catch {
+    errorMsg.value = t("task.markLostError");
+  } finally {
+    markingLost.value = false;
   }
 }
 
@@ -75,14 +108,23 @@ onMounted(load);
         <template #header>
           <div class="detail-header">
             <span>{{ t("task.title") }}</span>
-            <el-button
-              v-if="cancelable"
-              type="danger"
-              :loading="canceling"
-              @click="onCancel"
-            >
-              {{ t("task.cancel") }}
-            </el-button>
+            <div v-if="cancelable" class="detail-actions">
+              <el-button
+                type="warning"
+                data-testid="task-mark-lost"
+                :loading="markingLost"
+                @click="onMarkLost"
+              >
+                {{ t("task.markLost") }}
+              </el-button>
+              <el-button
+                type="danger"
+                :loading="canceling"
+                @click="onCancel"
+              >
+                {{ t("task.cancel") }}
+              </el-button>
+            </div>
           </div>
         </template>
         <el-alert
@@ -175,6 +217,10 @@ onMounted(load);
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.detail-actions {
+  display: flex;
+  gap: 8px;
 }
 .params {
   margin: 0;

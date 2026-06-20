@@ -21,6 +21,7 @@ import type {
 } from "@/api/types";
 import { badgeTagType, nodeBadge } from "@/utils/nodeBadge";
 import { checkScrapyCommand } from "@/utils/scrapyCommand";
+import { confirmAction } from "@/utils/confirm";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -222,6 +223,13 @@ async function onTrigger(schedule: Schedule): Promise<void> {
 }
 
 async function onDelete(schedule: Schedule): Promise<void> {
+  const ok = await confirmAction({
+    title: t("confirm.title"),
+    message: t("schedules.confirmDelete", { name: schedule.name }),
+    confirmText: t("confirm.confirm"),
+    cancelText: t("confirm.cancel"),
+  });
+  if (!ok) return;
   await deleteSchedule(schedule.id);
   await load();
 }

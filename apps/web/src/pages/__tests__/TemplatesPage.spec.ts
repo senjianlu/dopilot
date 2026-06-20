@@ -90,6 +90,11 @@ vi.mock("@/api/nodes", () => ({
   listNodes: () => listNodes(),
 }));
 
+const confirmAction = vi.fn(async () => true);
+vi.mock("@/utils/confirm", () => ({
+  confirmAction: () => confirmAction(),
+}));
+
 const push = vi.fn();
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push }),
@@ -140,6 +145,27 @@ describe("TemplatesPage", () => {
     listBuildArtifacts.mockClear();
     listNodes.mockClear();
     push.mockClear();
+    deleteTemplate.mockClear();
+    confirmAction.mockClear();
+    confirmAction.mockResolvedValue(true);
+  });
+
+  it("deletes a template only after confirmation", async () => {
+    const wrapper = mount(TemplatesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      onDelete: (t: { id: string; name: string }) => Promise<void>;
+    };
+    await vm.onDelete({ id: "tpl-1", name: "demo" });
+    expect(confirmAction).toHaveBeenCalledTimes(1);
+    expect(deleteTemplate).toHaveBeenCalledWith("tpl-1");
+
+    confirmAction.mockResolvedValue(false);
+    deleteTemplate.mockClear();
+    await vm.onDelete({ id: "tpl-2", name: "other" });
+    expect(deleteTemplate).not.toHaveBeenCalled();
   });
 
   it("renders fetched templates", async () => {

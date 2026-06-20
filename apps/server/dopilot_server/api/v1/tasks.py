@@ -27,10 +27,12 @@ from ...logs.sse import CLOSE, SubscriptionManager, get_subscriptions
 from ...logs.stream_token import issue_stream_token, verify_stream_token
 from ...redis.dispatcher import CommandDispatcher
 from ...services import executions as svc
+from ...services import maintenance as maint_svc
 from ...services import states
 from ...services.cancel import request_cancel
 from .schemas import (
     LogSnapshot,
+    MarkTaskLostResponse,
     StreamTokenResponse,
     TasksResponse,
     TaskSummary,
@@ -148,6 +150,25 @@ async def cancel_task(
         task = await svc.get_task_or_404(session, task_id)
     executions = await svc.list_executions(session, task_id)
     return TaskView(**svc.task_view(task, executions))
+
+
+@router.post("/tasks/{task_id}/mark-lost", response_model=MarkTaskLostResponse)
+async def mark_task_lost(
+    task_id: str,
+    _admin: AdminContext = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> MarkTaskLostResponse:
+    """Manually mark a STUCK ACTIVE task ``lost`` (phase 1.8.2 remediation).
+
+    Eligible only for queued/running/finalizing tasks. Active executions become
+    ``lost`` with a manual reason; nothing is hard-deleted. The task may still be
+    running on an agent — a later agent-authoritative terminal can override the
+    soft ``lost`` (the UI confirmation states this).
+    """
+    task = await svc.get_task_or_404(session, task_id)
+    summary = await maint_svc.mark_task_lost(session, task)
+    await session.commit()
+    return MarkTaskLostResponse(**summary.as_dict())
 
 
 @router.get("/tasks/{task_id}/logs", response_model=LogSnapshot)

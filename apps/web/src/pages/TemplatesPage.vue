@@ -18,6 +18,7 @@ import type {
 } from "@/api/types";
 import { badgeTagType, nodeBadge } from "@/utils/nodeBadge";
 import { checkScrapyCommand } from "@/utils/scrapyCommand";
+import { confirmAction } from "@/utils/confirm";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -218,6 +219,13 @@ async function onRun(template: ExecutionTemplate): Promise<void> {
 }
 
 async function onDelete(template: ExecutionTemplate): Promise<void> {
+  const ok = await confirmAction({
+    title: t("confirm.title"),
+    message: t("templates.confirmDelete", { name: template.name }),
+    confirmText: t("confirm.confirm"),
+    cancelText: t("confirm.cancel"),
+  });
+  if (!ok) return;
   await deleteTemplate(template.id);
   await load();
 }

@@ -38,6 +38,12 @@ vi.mock("@/api/nodes", () => ({
   deleteNode: (id: string) => deleteNode(id),
 }));
 
+// Destructive actions ask for confirmation; default to confirmed.
+const confirmAction = vi.fn(async () => true);
+vi.mock("@/utils/confirm", () => ({
+  confirmAction: () => confirmAction(),
+}));
+
 import NodesPage from "@/pages/NodesPage.vue";
 
 function makeI18n() {
@@ -71,6 +77,8 @@ describe("NodesPage", () => {
     offlineNode.mockClear();
     onlineNode.mockClear();
     deleteNode.mockClear();
+    confirmAction.mockClear();
+    confirmAction.mockResolvedValue(true);
   });
 
   it("refresh re-lists via the list endpoint (no /nodes/refresh)", async () => {
@@ -101,6 +109,53 @@ describe("NodesPage", () => {
     expect(onlineNode).toHaveBeenCalledWith("n1");
     await vm.onDelete(makeNode());
     expect(deleteNode).toHaveBeenCalledWith("n1");
+    // offline + delete are confirmed; bringing a node online is not destructive.
+    expect(confirmAction).toHaveBeenCalledTimes(2);
+  });
+
+  it("declined confirmation skips the offline/delete call", async () => {
+    confirmAction.mockResolvedValue(false);
+    const wrapper = mount(NodesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      onOffline: (n: NodeInfo) => Promise<void>;
+      onDelete: (n: NodeInfo) => Promise<void>;
+    };
+    await vm.onOffline(makeNode());
+    await vm.onDelete(makeNode());
+    expect(offlineNode).not.toHaveBeenCalled();
+    expect(deleteNode).not.toHaveBeenCalled();
+  });
+
+  it("renders one status column + capabilities, no scrapyd column", async () => {
+    const wrapper = mount(NodesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    // Single aggregate status column + the new capabilities column.
+    expect(wrapper.text()).toContain(zh.nodes.status);
+    expect(wrapper.text()).toContain(zh.nodes.capabilities);
+    // The separate Scrapyd column is gone.
+    expect(wrapper.text()).not.toContain(zh.nodes.scrapyd);
+  });
+
+  it("capActive reads node.capabilities per key", async () => {
+    const wrapper = mount(NodesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      capActive: (n: NodeInfo, key: string) => boolean;
+    };
+    const node = makeNode({
+      capabilities: { scrapy: true, script: false },
+    });
+    expect(vm.capActive(node, "scrapy")).toBe(true);
+    expect(vm.capActive(node, "script")).toBe(false);
+    // Missing capability => falsy (gray tag).
+    expect(vm.capActive(node, "docker")).toBe(false);
   });
 
   it("operation visibility honors id/scheduling/deleted state", async () => {
