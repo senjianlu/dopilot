@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import zh from "@/i18n/locales/zh";
 import en from "@/i18n/locales/en";
-import type { TaskTemplate } from "@/api/types";
+import type { NodeInfo, ScrapyArtifact, TaskTemplate } from "@/api/types";
 
 const sampleTemplates: TaskTemplate[] = [
   {
@@ -13,7 +13,7 @@ const sampleTemplates: TaskTemplate[] = [
     description: null,
     task_type: "scrapy",
     project: "demo",
-    version: null,
+    version: "v1",
     spider: "phase1",
     artifact: {},
     settings: {},
@@ -25,6 +25,46 @@ const sampleTemplates: TaskTemplate[] = [
   },
 ];
 
+const sampleArtifacts: ScrapyArtifact[] = [
+  {
+    id: "sha-abc",
+    project: "demo",
+    version: "v1",
+    filename: "demo.egg",
+    sha256: "sha-abc",
+    size_bytes: 1024,
+    spiders: ["phase1", "phase2"],
+    valid: true,
+    uploaded_at: "2026-06-19T00:00:00Z",
+    created_at: "2026-06-19T00:00:00Z",
+  },
+];
+
+function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
+  return {
+    id: "node-1",
+    agent_id: "agent-1",
+    endpoint: "http://a1:6800",
+    status: "healthy",
+    capabilities: { scrapy: true },
+    health: {},
+    last_seen_at: "2026-06-19T00:00:00Z",
+    scheduling_enabled: true,
+    scheduling_disabled_at: null,
+    deleted_at: null,
+    ...overrides,
+  };
+}
+
+const sampleNodes: NodeInfo[] = [
+  makeNode(),
+  makeNode({ id: "node-2", agent_id: "agent-2", scheduling_enabled: false }),
+  makeNode({ id: "node-3", agent_id: "agent-3", deleted_at: "2026-06-20T00:00:00Z" }),
+  // configured-but-unseen endpoint (no DB id): cannot be resolved by the
+  // backend, so it must be excluded from involved + selectable sets.
+  makeNode({ id: null, agent_id: null, endpoint: "http://a4:6800" }),
+];
+
 const listTemplates = vi.fn(async () => sampleTemplates);
 const createTemplate = vi.fn(async (_payload: unknown) => sampleTemplates[0]);
 const runTemplate = vi.fn(async (_id: string) => ({
@@ -32,12 +72,20 @@ const runTemplate = vi.fn(async (_id: string) => ({
   status: "queued",
 }));
 const deleteTemplate = vi.fn(async (_id: string) => undefined);
+const listScrapyArtifacts = vi.fn(async () => sampleArtifacts);
+const listNodes = vi.fn(async () => sampleNodes);
 
 vi.mock("@/api/templates", () => ({
   listTemplates: () => listTemplates(),
   createTemplate: (payload: unknown) => createTemplate(payload),
   runTemplate: (id: string) => runTemplate(id),
   deleteTemplate: (id: string) => deleteTemplate(id),
+}));
+vi.mock("@/api/artifacts", () => ({
+  listScrapyArtifacts: () => listScrapyArtifacts(),
+}));
+vi.mock("@/api/nodes", () => ({
+  listNodes: () => listNodes(),
 }));
 
 const push = vi.fn();
@@ -71,8 +119,12 @@ function makeStubs() {
     "el-form": { template: "<form><slot /></form>" },
     "el-form-item": { template: "<div><slot /></div>" },
     "el-input": { template: "<input />" },
-    "el-select": { template: "<select><slot /></select>" },
+    "el-select": {
+      props: ["disabled", "modelValue"],
+      template: "<select :disabled='disabled'><slot /></select>",
+    },
     "el-option": { template: "<option><slot /></option>" },
+    "el-tag": { template: "<span><slot /></span>" },
     "el-alert": { props: ["title"], template: "<div>{{ title }}</div>" },
   };
 }
@@ -83,21 +135,24 @@ describe("TemplatesPage", () => {
     listTemplates.mockClear();
     createTemplate.mockClear();
     runTemplate.mockClear();
+    listScrapyArtifacts.mockClear();
+    listNodes.mockClear();
   });
 
-  it("renders fetched templates", async () => {
+  it("renders fetched templates (no project column)", async () => {
     const wrapper = mount(TemplatesPage, {
       global: { plugins: [makeI18n()], stubs: makeStubs() },
     });
     await flushPromises();
 
     expect(wrapper.text()).toContain(zh.templates.title);
+    // Project column header is gone.
+    expect(wrapper.text()).not.toContain(zh.templates.project);
     const vm = wrapper.vm as unknown as { templates: TaskTemplate[] };
     expect(vm.templates).toHaveLength(1);
-    expect(vm.templates[0].name).toBe("demo-template");
   });
 
-  it("submits a create with the chosen node strategy", async () => {
+  it("submits a derived payload from the chosen artifact + spider", async () => {
     const wrapper = mount(TemplatesPage, {
       global: { plugins: [makeI18n()], stubs: makeStubs() },
     });
@@ -106,18 +161,55 @@ describe("TemplatesPage", () => {
     const vm = wrapper.vm as unknown as {
       openCreate: () => void;
       submitCreate: () => Promise<void>;
-      form: { name: string; project: string; spider: string; node_strategy: string };
+      form: { name: string; artifactHash: string; spider: string };
     };
     vm.openCreate();
     vm.form.name = "t2";
-    vm.form.project = "demo";
-    vm.form.spider = "s";
-    vm.form.node_strategy = "random";
+    vm.form.artifactHash = "sha-abc";
+    vm.form.spider = "phase2";
     await vm.submitCreate();
 
     expect(createTemplate).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "t2", node_strategy: "random" }),
+      expect.objectContaining({
+        name: "t2",
+        project: "demo",
+        version: "v1",
+        spider: "phase2",
+        artifact: expect.objectContaining({
+          sha256: "sha-abc",
+          fetch_path: "/api/v1/artifacts/scrapy/sha-abc/egg",
+        }),
+      }),
     );
+  });
+
+  it("node selector locks for all/random and unlocks for selected", async () => {
+    const wrapper = mount(TemplatesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+
+    const vm = wrapper.vm as unknown as {
+      form: { node_strategy: string; node_ids: string[] };
+      isSelectedStrategy: boolean;
+      selectableNodes: NodeInfo[];
+      schedulableNodes: NodeInfo[];
+      selectedNodeIds: string[];
+    };
+
+    // all -> locked, model shows all schedulable nodes
+    vm.form.node_strategy = "all";
+    await flushPromises();
+    expect(vm.isSelectedStrategy).toBe(false);
+    // node-2 (offline) and node-3 (deleted) are not schedulable
+    expect(vm.schedulableNodes.map((n) => n.id)).toEqual(["node-1"]);
+    expect(vm.selectedNodeIds).toEqual(["node-1"]);
+
+    // selected -> unlocked, only non-deleted non-offline nodes selectable
+    vm.form.node_strategy = "selected";
+    await flushPromises();
+    expect(vm.isSelectedStrategy).toBe(true);
+    expect(vm.selectableNodes.map((n) => n.id)).toEqual(["node-1"]);
   });
 
   it("runs a template and navigates to the created task", async () => {
@@ -125,7 +217,6 @@ describe("TemplatesPage", () => {
       global: { plugins: [makeI18n()], stubs: makeStubs() },
     });
     await flushPromises();
-
     const vm = wrapper.vm as unknown as {
       onRun: (t: TaskTemplate) => Promise<void>;
     };

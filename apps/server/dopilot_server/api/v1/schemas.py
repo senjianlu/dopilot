@@ -41,6 +41,13 @@ class NodeView(BaseModel):
     # subprocess status, e.g. {"scrapyd": {"running": true, "port": 6801}}).
     health: dict[str, Any] = Field(default_factory=dict)
     last_seen_at: str | None = None
+    # Phase 1.7.1: scheduling-control state, separate from health. offline =
+    # not scheduling_enabled; deleted = deleted_at set. The web badge precedence
+    # is deleted (gray) > offline (red) > healthy (green) > degraded/unhealthy/
+    # unknown (yellow).
+    scheduling_enabled: bool = True
+    scheduling_disabled_at: str | None = None
+    deleted_at: str | None = None
 
 
 class NodesResponse(BaseModel):
@@ -140,6 +147,8 @@ class ExecutionSummary(BaseModel):
     id: str
     task_type: str
     target: str
+    # Phase 1.7.1: task-level spider (backs the execution-list spider filter).
+    spider: str | None = None
     status: str
     status_reason: str | None = None
     node_strategy: str
@@ -153,7 +162,17 @@ class ExecutionSummary(BaseModel):
 
 
 class ExecutionsResponse(BaseModel):
+    """Server-side paginated tasks/runs list (phase 1.7.1).
+
+    ``spiders`` is the distinct set of known spider values across all tasks, so
+    the web can offer a spider filter without a second round-trip.
+    """
+
     executions: list[ExecutionSummary]
+    page: int = 1
+    page_size: int = 20
+    total: int = 0
+    spiders: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +243,9 @@ class ScheduleView(BaseModel):
     trigger_type: str = "interval"  # interval | cron
     interval_seconds: int | None = None
     cron: str | None = None
+    # Phase 1.7.1: estimated next fire time. For interval triggers this is an
+    # estimate (now + interval); for cron it is computed from the expression.
+    next_run_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -248,6 +270,35 @@ class ScheduleUpdateRequest(BaseModel):
 
 class SchedulesResponse(BaseModel):
     schedules: list[ScheduleView]
+
+
+# ---------------------------------------------------------------------------
+# phase 1.7.1: dashboard stats + schedule next-run preview
+# ---------------------------------------------------------------------------
+
+
+class DailyTaskCount(BaseModel):
+    """One calendar-day bucket of the dashboard 30-day chart."""
+
+    date: str  # YYYY-MM-DD (local calendar day in the scheduler timezone)
+    tasks: int = 0
+    executions: int = 0
+
+
+class DailyTaskStatsResponse(BaseModel):
+    days: int
+    timezone: str
+    buckets: list[DailyTaskCount] = Field(default_factory=list)
+
+
+class NextRunPreviewRequest(BaseModel):
+    trigger_type: str = "interval"
+    interval_seconds: int | None = None
+    cron: str | None = None
+
+
+class NextRunPreviewResponse(BaseModel):
+    next_run_at: str | None = None
 
 
 class LogSnapshot(BaseModel):

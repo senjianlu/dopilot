@@ -52,6 +52,11 @@ class Task(Base):
     node_strategy: Mapped[str] = mapped_column(
         String, nullable=False, default="all"
     )
+    # Phase 1.7.1: the Scrapy spider of this run, copied from the parsed run
+    # params at creation time. A queryable/indexed task-level value backs the
+    # execution-list spider filter at large history volume (avoids scanning the
+    # ``params`` JSON). NULL for non-scrapy or spider-less runs.
+    spider: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     # Phase 1.7 packet 2: provenance + the immutable template snapshot.
     # source: manual | schedule_trigger_now | schedule_timer. template_id /
     # schedule_id are NULL for an ad-hoc manual run. template_snapshot is the

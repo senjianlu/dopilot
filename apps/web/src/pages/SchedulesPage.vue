@@ -6,6 +6,7 @@ import {
   createSchedule,
   deleteSchedule,
   listSchedules,
+  previewNextRun,
   triggerSchedule,
 } from "@/api/schedules";
 import { listTemplates } from "@/api/templates";
@@ -21,6 +22,7 @@ const triggeringId = ref("");
 const dialogVisible = ref(false);
 const creating = ref(false);
 const createError = ref("");
+const estimatedNextRun = ref("");
 
 const form = reactive({
   name: "",
@@ -32,6 +34,52 @@ const form = reactive({
 
 function templateName(id: string): string {
   return templates.value.find((tpl) => tpl.id === id)?.name ?? id;
+}
+
+// interval -> "every XX seconds"; cron -> the raw expression.
+function triggerTimeText(schedule: Schedule): string {
+  if (schedule.trigger_type === "cron") {
+    return schedule.cron ?? "-";
+  }
+  return t("schedules.everySeconds", {
+    seconds: schedule.interval_seconds ?? 0,
+  });
+}
+
+function formatTime(iso: string | null): string {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+// Recompute the read-only create-dialog estimate. Interval is a local estimate
+// (now + interval); cron is resolved by the backend preview endpoint.
+async function updateEstimate(): Promise<void> {
+  if (form.trigger_type === "interval") {
+    if (form.interval_seconds > 0) {
+      estimatedNextRun.value = new Date(
+        Date.now() + form.interval_seconds * 1000,
+      ).toLocaleString();
+    } else {
+      estimatedNextRun.value = "";
+    }
+    return;
+  }
+  if (!form.cron.trim()) {
+    estimatedNextRun.value = "";
+    return;
+  }
+  try {
+    const res = await previewNextRun({
+      trigger_type: "cron",
+      cron: form.cron,
+    });
+    estimatedNextRun.value = res.next_run_at
+      ? formatTime(res.next_run_at)
+      : t("schedules.nextRunPending");
+  } catch {
+    estimatedNextRun.value = t("schedules.nextRunPending");
+  }
 }
 
 async function load(): Promise<void> {
@@ -54,6 +102,7 @@ function openCreate(): void {
   form.cron = "";
   createError.value = "";
   dialogVisible.value = true;
+  void updateEstimate();
 }
 
 async function submitCreate(): Promise<void> {
@@ -120,9 +169,14 @@ onMounted(load);
         :label="t('schedules.triggerType')"
         prop="trigger_type"
       />
-      <el-table-column :label="t('schedules.interval')">
+      <el-table-column :label="t('schedules.triggerTime')">
         <template #default="{ row }">
-          {{ (row as Schedule).interval_seconds ?? (row as Schedule).cron }}
+          {{ triggerTimeText(row as Schedule) }}
+        </template>
+      </el-table-column>
+      <el-table-column :label="t('schedules.nextRun')">
+        <template #default="{ row }">
+          {{ formatTime((row as Schedule).next_run_at) }}
         </template>
       </el-table-column>
       <el-table-column :label="t('schedules.actions')" width="220">
@@ -158,7 +212,7 @@ onMounted(load);
           </el-select>
         </el-form-item>
         <el-form-item :label="t('schedules.triggerType')">
-          <el-select v-model="form.trigger_type">
+          <el-select v-model="form.trigger_type" @change="updateEstimate">
             <el-option :label="t('schedules.intervalType')" value="interval" />
             <el-option :label="t('schedules.cronType')" value="cron" />
           </el-select>
@@ -167,13 +221,21 @@ onMounted(load);
           v-if="form.trigger_type === 'interval'"
           :label="t('schedules.interval')"
         >
-          <el-input-number v-model="form.interval_seconds" :min="1" />
+          <el-input-number
+            v-model="form.interval_seconds"
+            :min="1"
+            @change="updateEstimate"
+          />
         </el-form-item>
         <el-form-item v-else :label="t('schedules.cron')">
           <el-input
             v-model="form.cron"
             :placeholder="t('schedules.cronPlaceholder')"
+            @input="updateEstimate"
           />
+        </el-form-item>
+        <el-form-item :label="t('schedules.estimatedNextRun')">
+          <span class="next-run-estimate">{{ estimatedNextRun || "-" }}</span>
         </el-form-item>
         <el-alert
           v-if="createError"
@@ -205,5 +267,8 @@ onMounted(load);
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.next-run-estimate {
+  color: var(--el-text-color-secondary);
 }
 </style>

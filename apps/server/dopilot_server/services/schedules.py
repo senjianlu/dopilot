@@ -16,6 +16,7 @@ Pause/resume is out of scope; there is no paused state.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -213,7 +214,61 @@ async def fire_timer(
     )
 
 
-def schedule_view(schedule: Schedule) -> dict[str, Any]:
+def compute_next_run_at(
+    *,
+    trigger_type: str,
+    interval_seconds: int | None,
+    cron: str | None,
+    timezone: str = "UTC",
+    now: datetime | None = None,
+) -> datetime | None:
+    """Estimate the next fire time from a trigger definition + ``now``.
+
+    Phase 1.7.1: interval next-run is an ESTIMATE (``now + interval_seconds``) —
+    the persisted scheduler's exact next fire is only known to a live APScheduler
+    job. Cron is computed deterministically via APScheduler's ``CronTrigger``.
+    Returns ``None`` when the trigger is unusable (no interval / bad cron).
+    """
+    now = now or datetime.now(UTC)
+    if trigger_type == "cron" and cron:
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+
+            trig = CronTrigger.from_crontab(cron, timezone=timezone)
+            aware_now = now if now.tzinfo else now.replace(tzinfo=UTC)
+            return trig.get_next_fire_time(None, aware_now)
+        except Exception:  # noqa: BLE001 - bad cron -> no estimate
+            return None
+    if trigger_type == "interval" and interval_seconds and interval_seconds > 0:
+        base = now if now.tzinfo else now.replace(tzinfo=UTC)
+        return base + timedelta(seconds=interval_seconds)
+    return None
+
+
+def preview_next_run(
+    data: dict[str, Any], *, timezone: str = "UTC", now: datetime | None = None
+) -> datetime | None:
+    """Validate a trigger payload and compute its estimated next run."""
+    _validate_trigger(data)
+    return compute_next_run_at(
+        trigger_type=data.get("trigger_type") or "interval",
+        interval_seconds=data.get("interval_seconds"),
+        cron=data.get("cron"),
+        timezone=timezone,
+        now=now,
+    )
+
+
+def schedule_view(
+    schedule: Schedule, *, timezone: str = "UTC", now: datetime | None = None
+) -> dict[str, Any]:
+    next_run = compute_next_run_at(
+        trigger_type=schedule.trigger_type,
+        interval_seconds=schedule.interval_seconds,
+        cron=schedule.cron,
+        timezone=timezone,
+        now=now,
+    )
     return {
         "id": schedule.id,
         "name": schedule.name,
@@ -222,6 +277,7 @@ def schedule_view(schedule: Schedule) -> dict[str, Any]:
         "trigger_type": schedule.trigger_type,
         "interval_seconds": schedule.interval_seconds,
         "cron": schedule.cron,
+        "next_run_at": _iso(next_run),
         "created_at": _iso(schedule.created_at),
         "updated_at": _iso(schedule.updated_at),
     }

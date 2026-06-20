@@ -1,17 +1,30 @@
 import client from "./client";
 import type {
   ExecutionsResponse,
-  ExecutionSummary,
   ExecutionView,
+  ListExecutionsParams,
   LogSnapshot,
   RunExecutionRequest,
   RunExecutionResponse,
   StreamTokenResponse,
 } from "./types";
 
-export async function listExecutions(): Promise<ExecutionSummary[]> {
-  const { data } = await client.get<ExecutionsResponse>("/executions");
-  return data.executions;
+// Phase 1.7.1: backend-paginated list. Returns the full response (rows + page /
+// page_size / total + known spider values) so the page can render controls.
+export async function listExecutions(
+  params: ListExecutionsParams = {},
+): Promise<ExecutionsResponse> {
+  const query: Record<string, string | number> = {
+    page: params.page ?? 1,
+    page_size: params.pageSize ?? 20,
+  };
+  if (params.spider) {
+    query.spider = params.spider;
+  }
+  const { data } = await client.get<ExecutionsResponse>("/executions", {
+    params: query,
+  });
+  return data;
 }
 
 export async function getExecution(id: string): Promise<ExecutionView> {

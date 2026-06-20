@@ -1,6 +1,8 @@
 import client from "./client";
 import type {
   CreateScheduleRequest,
+  NextRunPreviewRequest,
+  NextRunPreviewResponse,
   RunExecutionResponse,
   Schedule,
   SchedulesResponse,
@@ -41,6 +43,17 @@ export async function triggerSchedule(
 ): Promise<RunExecutionResponse> {
   const { data } = await client.post<RunExecutionResponse>(
     `/schedules/${id}/trigger-now`,
+  );
+  return data;
+}
+
+// Estimate the next run for an unsaved trigger (backs the create-dialog preview).
+export async function previewNextRun(
+  payload: NextRunPreviewRequest,
+): Promise<NextRunPreviewResponse> {
+  const { data } = await client.post<NextRunPreviewResponse>(
+    "/schedules/preview-next-run",
+    payload,
   );
   return data;
 }

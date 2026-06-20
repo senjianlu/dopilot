@@ -103,13 +103,18 @@ def create_task(
     origin: TaskOrigin | None = None,
 ) -> Task:
     origin = origin or TaskOrigin()
+    params = dict(request.params or {})
+    # Phase 1.7.1: copy the spider onto the task row so the execution-list spider
+    # filter can query it directly instead of scanning the params JSON.
+    spider = params.get("spider")
     task = Task(
         id=new_id(),
         task_type=request.task_type,
         target=request.target or "",
         node_strategy=request.node_strategy or "all",
+        spider=str(spider) if spider else None,
         status=states.TASK_QUEUED,
-        params=dict(request.params or {}),
+        params=params,
         source=origin.source,
         template_id=origin.template_id,
         schedule_id=origin.schedule_id,
@@ -235,6 +240,70 @@ async def list_tasks(session: AsyncSession, limit: int = 200) -> list[Task]:
     return list(result.scalars().all())
 
 
+# Phase 1.7.1: execution history grows by tens of thousands of rows/day, so the
+# list is server-side paginated. Allowed page sizes are fixed; the web picks the
+# closest size from table height but may only request one of these.
+ALLOWED_PAGE_SIZES = (5, 10, 20, 50, 100)
+
+
+async def list_tasks_page(
+    session: AsyncSession,
+    *,
+    page: int,
+    page_size: int,
+    spider: str | None = None,
+) -> tuple[list[Task], int]:
+    """Return one page of tasks (newest first) + the total matching count.
+
+    Optional ``spider`` filters on the indexed task-level ``spider`` column.
+    Caller validates ``page`` / ``page_size`` (see :func:`validate_page`).
+    """
+    from sqlalchemy import func as _func
+
+    base = select(Task)
+    count_q = select(_func.count()).select_from(Task)
+    if spider:
+        base = base.where(Task.spider == spider)
+        count_q = count_q.where(Task.spider == spider)
+
+    total = int((await session.execute(count_q)).scalar_one())
+    rows = await session.execute(
+        base.order_by(Task.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return list(rows.scalars().all()), total
+
+
+async def child_execution_counts(
+    session: AsyncSession, task_ids: list[str]
+) -> dict[str, int]:
+    """Map ``task_id -> child execution count`` in ONE aggregate query.
+
+    Avoids the per-row N+1 (one ``COUNT`` per task) the old list path incurred.
+    Returns 0 for tasks with no executions (absent from the grouped result).
+    """
+    from sqlalchemy import func as _func
+
+    if not task_ids:
+        return {}
+    rows = await session.execute(
+        select(Execution.task_id, _func.count(Execution.id))
+        .where(Execution.task_id.in_(task_ids))
+        .group_by(Execution.task_id)
+    )
+    counts = {task_id: int(n) for task_id, n in rows.all()}
+    return {tid: counts.get(tid, 0) for tid in task_ids}
+
+
+async def list_task_spiders(session: AsyncSession) -> list[str]:
+    """Distinct non-null spider values across all tasks, for the filter dropdown."""
+    rows = await session.execute(
+        select(Task.spider).where(Task.spider.is_not(None)).distinct()
+    )
+    return sorted({s for (s,) in rows.all() if s})
+
+
 async def get_log_file(
     session: AsyncSession,
     execution_id: str,
@@ -342,6 +411,7 @@ def task_summary(task: Task, execution_count: int) -> dict[str, Any]:
         "id": task.id,
         "task_type": task.task_type,
         "target": task.target,
+        "spider": task.spider,
         "status": task.status,
         "status_reason": task.status_reason,
         "node_strategy": task.node_strategy,

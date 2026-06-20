@@ -92,7 +92,13 @@ async def _get_node_by_endpoint(
 def _node_to_dict(
     node: Node, *, now: datetime, timeout_seconds: int
 ) -> dict[str, Any]:
-    """Render a :class:`Node` as the frozen ``node`` JSON shape."""
+    """Render a :class:`Node` as the frozen ``node`` JSON shape.
+
+    ``status`` stays the heartbeat-derived HEALTH (healthy/degraded/unhealthy/
+    unknown). ``scheduling_enabled`` / ``deleted_at`` are the separate
+    SCHEDULING-control facts the web uses for the offline (red) / deleted (gray)
+    badges — offline is not unhealthy.
+    """
     return {
         "id": str(node.id),
         "agent_id": node.agent_id,
@@ -105,7 +111,25 @@ def _node_to_dict(
         "last_seen_at": (
             node.last_seen_at.isoformat() if node.last_seen_at else None
         ),
+        "scheduling_enabled": bool(node.scheduling_enabled),
+        "scheduling_disabled_at": (
+            node.scheduling_disabled_at.isoformat()
+            if node.scheduling_disabled_at
+            else None
+        ),
+        "deleted_at": (
+            node.deleted_at.isoformat() if node.deleted_at else None
+        ),
     }
+
+
+def node_view(node: Node, settings: Settings) -> dict[str, Any]:
+    """Render one DB :class:`Node` as the web ``node`` shape (for op endpoints)."""
+    return _node_to_dict(
+        node,
+        now=datetime.now(UTC),
+        timeout_seconds=settings.agents.heartbeat_timeout_seconds,
+    )
 
 
 async def _get_node_by_agent_id(
@@ -176,6 +200,12 @@ async def list_nodes(
                     "capabilities": {},
                     "health": {},
                     "last_seen_at": None,
+                    # No DB row yet: configured-but-unseen endpoints cannot be
+                    # offlined/deleted until a heartbeat creates a row. Default
+                    # to schedulable + not deleted so the web shows neutral state.
+                    "scheduling_enabled": True,
+                    "scheduling_disabled_at": None,
+                    "deleted_at": None,
                 }
             )
     return out
@@ -192,11 +222,19 @@ async def _healthy_capable_nodes(
     Phase 1.5: liveness is ``now - last_seen_at <= timeout_seconds`` (agent
     heartbeat), NOT the old poll-written ``status == "healthy"``. Nodes that
     never heartbeated (``last_seen_at`` NULL) are excluded.
+
+    Phase 1.7.1: offline (``scheduling_enabled = false``) and soft-deleted
+    (``deleted_at IS NOT NULL``) nodes are NEVER dispatch candidates, regardless
+    of how healthy their heartbeat looks.
     """
     now = datetime.now(UTC)
     cutoff = now - timedelta(seconds=timeout_seconds)
     result = await session.execute(
-        select(Node).where(Node.last_seen_at >= cutoff)
+        select(Node).where(
+            Node.last_seen_at >= cutoff,
+            Node.scheduling_enabled.is_(True),
+            Node.deleted_at.is_(None),
+        )
     )
     nodes = list(result.scalars().all())
     return [
@@ -278,3 +316,62 @@ async def pick_deploy_node(
         timeout_seconds=timeout_seconds,
     )
     return nodes[0]
+
+
+# ---------------------------------------------------------------------------
+# phase 1.7.1: node scheduling-state + soft delete operations
+# ---------------------------------------------------------------------------
+
+
+async def get_node_or_404(session: AsyncSession, node_id: str) -> Node:
+    """Look a node up by its DB id (uuid). 404 on bad/unknown id.
+
+    Operations are only valid against a persisted node row — a configured but
+    never-seen endpoint has ``id == null`` and cannot be offlined/deleted until
+    a heartbeat creates its row.
+    """
+    import uuid as _uuid
+
+    try:
+        key = _uuid.UUID(str(node_id))
+    except (ValueError, AttributeError, TypeError):
+        raise ApiError(
+            404, "node.not_found", "errors.nodeNotFound", {"node_id": node_id}
+        ) from None
+    result = await session.execute(select(Node).where(Node.id == key))
+    node = result.scalar_one_or_none()
+    if node is None:
+        raise ApiError(
+            404, "node.not_found", "errors.nodeNotFound", {"node_id": node_id}
+        )
+    return node
+
+
+async def offline_node(session: AsyncSession, node_id: str) -> Node:
+    """Mark a node offline (reversible). Excludes it from dispatch selection."""
+    node = await get_node_or_404(session, node_id)
+    if node.scheduling_enabled:
+        node.scheduling_enabled = False
+        node.scheduling_disabled_at = datetime.now(UTC)
+    return node
+
+
+async def online_node(session: AsyncSession, node_id: str) -> Node:
+    """Bring an offline node back online. Eligible again when healthy/capable."""
+    node = await get_node_or_404(session, node_id)
+    node.scheduling_enabled = True
+    node.scheduling_disabled_at = None
+    return node
+
+
+async def soft_delete_node(session: AsyncSession, node_id: str) -> Node:
+    """Soft-delete a node: keep the row, stamp ``deleted_at``.
+
+    The row stays so historical templates/tasks can still render the node, and a
+    later heartbeat from the same ``agent_id`` does NOT resurrect it (the
+    heartbeat upsert never clears ``deleted_at``).
+    """
+    node = await get_node_or_404(session, node_id)
+    if node.deleted_at is None:
+        node.deleted_at = datetime.now(UTC)
+    return node
