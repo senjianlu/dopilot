@@ -1,27 +1,27 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { listExecutions } from "@/api/executions";
+import { listTasks } from "@/api/tasks";
 import {
-  EXECUTION_PAGE_SIZES,
-  type ExecutionPageSize,
-  type ExecutionStatus,
-  type ExecutionSummary,
+  TASK_PAGE_SIZES,
+  type TaskPageSize,
+  type TaskStatus,
+  type TaskSummary,
 } from "@/api/types";
 
 const { t } = useI18n();
-const executions = ref<ExecutionSummary[]>([]);
+const tasks = ref<TaskSummary[]>([]);
 const loading = ref(false);
 const page = ref(1);
-const pageSize = ref<ExecutionPageSize>(20);
+const pageSize = ref<TaskPageSize>(20);
 const total = ref(0);
 const spiders = ref<string[]>([]);
 // "" is the "all spiders" state.
 const spider = ref("");
-const pageSizes = EXECUTION_PAGE_SIZES;
+const pageSizes = TASK_PAGE_SIZES;
 
 const statusTagType: Record<
-  ExecutionStatus,
+  TaskStatus,
   "success" | "danger" | "info" | "warning" | "primary"
 > = {
   queued: "info",
@@ -36,12 +36,12 @@ const statusTagType: Record<
 
 // Choose the closest allowed page size from the visible table height. The
 // backend only accepts 5/10/20/50/100, so snap to the nearest of those.
-function pickPageSizeFromHeight(): ExecutionPageSize {
+function pickPageSizeFromHeight(): TaskPageSize {
   const rowPx = 48;
   const chromePx = 320;
   const avail = (typeof window !== "undefined" ? window.innerHeight : 800) - chromePx;
   const target = Math.max(1, Math.floor(avail / rowPx));
-  let best: ExecutionPageSize = pageSizes[0];
+  let best: TaskPageSize = pageSizes[0];
   for (const size of pageSizes) {
     if (Math.abs(size - target) < Math.abs(best - target)) {
       best = size;
@@ -53,15 +53,15 @@ function pickPageSizeFromHeight(): ExecutionPageSize {
 async function load(): Promise<void> {
   loading.value = true;
   try {
-    const res = await listExecutions({
+    const res = await listTasks({
       page: page.value,
       pageSize: pageSize.value,
       spider: spider.value || null,
     });
-    executions.value = res.executions;
+    tasks.value = res.tasks;
     total.value = res.total;
     page.value = res.page;
-    pageSize.value = res.page_size as ExecutionPageSize;
+    pageSize.value = res.page_size as TaskPageSize;
     spiders.value = res.spiders;
   } finally {
     loading.value = false;
@@ -79,7 +79,7 @@ function onPageChange(next: number): void {
 }
 
 function onSizeChange(size: number): void {
-  pageSize.value = size as ExecutionPageSize;
+  pageSize.value = size as TaskPageSize;
   page.value = 1;
   void load();
 }
@@ -93,15 +93,15 @@ onMounted(() => {
 <template>
   <el-card v-loading="loading">
     <template #header>
-      <div class="executions-header">
-        <span>{{ t("executions.title") }}</span>
-        <div class="executions-actions">
+      <div class="tasks-header">
+        <span>{{ t("tasks.title") }}</span>
+        <div class="tasks-actions">
           <el-select
             v-model="spider"
             class="spider-filter"
             @change="onSpiderChange"
           >
-            <el-option :label="t('executions.spiderAll')" value="" />
+            <el-option :label="t('tasks.spiderAll')" value="" />
             <el-option
               v-for="s in spiders"
               :key="s"
@@ -110,38 +110,40 @@ onMounted(() => {
             />
           </el-select>
           <el-button type="primary" @click="load">
-            {{ t("executions.refresh") }}
+            {{ t("tasks.refresh") }}
           </el-button>
         </div>
       </div>
     </template>
-    <el-table :data="executions" :empty-text="t('executions.empty')">
-      <el-table-column :label="t('executions.status')">
+    <el-table :data="tasks" :empty-text="t('tasks.empty')" data-testid="tasks-table">
+      <el-table-column :label="t('tasks.status')">
         <template #default="{ row }">
-          <el-tag :type="statusTagType[row.status as ExecutionStatus]">
+          <el-tag :type="statusTagType[row.status as TaskStatus]">
             {{ row.status }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column :label="t('executions.target')" prop="target" />
-      <el-table-column :label="t('executions.spider')" prop="spider" />
-      <el-table-column :label="t('executions.taskType')" prop="task_type" />
-      <el-table-column :label="t('executions.strategy')" prop="node_strategy" />
-      <el-table-column :label="t('executions.attempts')" prop="attempt_count" />
-      <el-table-column :label="t('executions.createdAt')" prop="created_at" />
-      <el-table-column :label="t('executions.startedAt')" prop="started_at" />
-      <el-table-column :label="t('executions.finishedAt')" prop="finished_at" />
-      <el-table-column :label="t('executions.id')">
+      <el-table-column :label="t('tasks.target')" prop="target" />
+      <el-table-column :label="t('tasks.spider')" prop="spider" />
+      <el-table-column :label="t('tasks.artifactType')" prop="artifact_type" />
+      <el-table-column :label="t('tasks.strategy')" prop="node_strategy" />
+      <el-table-column :label="t('tasks.executions')" prop="execution_count" />
+      <el-table-column :label="t('tasks.createdAt')" prop="created_at" />
+      <el-table-column :label="t('tasks.startedAt')" prop="started_at" />
+      <el-table-column :label="t('tasks.finishedAt')" prop="finished_at" />
+      <el-table-column :label="t('tasks.id')">
         <template #default="{ row }">
           <router-link
-            :to="{ name: 'execution-detail', params: { id: row.id } }"
+            :to="{ name: 'task-detail', params: { id: row.id } }"
+            :data-testid="`task-view-${row.id}`"
+            class="task-view-link"
           >
-            {{ t("executions.view") }}
+            {{ t("tasks.view") }}
           </router-link>
         </template>
       </el-table-column>
     </el-table>
-    <div class="executions-pagination">
+    <div class="tasks-pagination">
       <el-pagination
         :current-page="page"
         :page-size="pageSize"
@@ -156,12 +158,12 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.executions-header {
+.tasks-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-.executions-actions {
+.tasks-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -169,7 +171,7 @@ onMounted(() => {
 .spider-filter {
   min-width: 160px;
 }
-.executions-pagination {
+.tasks-pagination {
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;

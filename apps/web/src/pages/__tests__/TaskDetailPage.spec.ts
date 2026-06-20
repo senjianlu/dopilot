@@ -4,22 +4,23 @@ import { createPinia, setActivePinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import zh from "@/i18n/locales/zh";
 import en from "@/i18n/locales/en";
-import type { ExecutionView } from "@/api/types";
+import type { TaskView } from "@/api/types";
 
-const sampleExecution: ExecutionView = {
-  id: "exec-1",
-  task_type: "scrapy",
+const sampleTask: TaskView = {
+  id: "task-1",
+  artifact_type: "scrapy",
   target: "demo",
   status: "running",
   node_strategy: "all",
   params: { project: "demo", spider: "phase1" },
+  build_artifact: { id: "art-1", project: "demo" },
   created_at: "2026-06-18T00:00:00Z",
   started_at: "2026-06-18T00:00:01Z",
   finished_at: null,
-  attempts: [
+  executions: [
     {
-      id: "attempt-1",
-      execution_id: "exec-1",
+      id: "exec-1",
+      task_id: "task-1",
       agent_id: "agent-alpha",
       node_id: "n1",
       endpoint: "http://10.0.0.1:6800",
@@ -34,22 +35,22 @@ const sampleExecution: ExecutionView = {
   ],
 };
 
-const getExecution = vi.fn(async () => sampleExecution);
-const cancelExecution = vi.fn(async () => ({
-  ...sampleExecution,
+const getTask = vi.fn(async () => sampleTask);
+const cancelTask = vi.fn(async () => ({
+  ...sampleTask,
   status: "canceled" as const,
 }));
 
-vi.mock("@/api/executions", () => ({
-  getExecution: () => getExecution(),
-  cancelExecution: () => cancelExecution(),
+vi.mock("@/api/tasks", () => ({
+  getTask: () => getTask(),
+  cancelTask: () => cancelTask(),
 }));
 
 vi.mock("vue-router", () => ({
-  useRoute: () => ({ params: { id: "exec-1" } }),
+  useRoute: () => ({ params: { id: "task-1" } }),
 }));
 
-import ExecutionDetailPage from "@/pages/ExecutionDetailPage.vue";
+import TaskDetailPage from "@/pages/TaskDetailPage.vue";
 
 function makeI18n() {
   return createI18n({
@@ -83,34 +84,34 @@ function makeStubs() {
   };
 }
 
-describe("ExecutionDetailPage", () => {
+describe("TaskDetailPage", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
-    getExecution.mockClear();
-    cancelExecution.mockClear();
+    getTask.mockClear();
+    cancelTask.mockClear();
   });
 
-  it("renders attempts and cancels via the API", async () => {
-    const wrapper = mount(ExecutionDetailPage, {
+  it("renders executions and cancels via the API", async () => {
+    const wrapper = mount(TaskDetailPage, {
       global: { plugins: [makeI18n()], stubs: makeStubs() },
     });
 
     await flushPromises();
 
     const vm = wrapper.vm as unknown as {
-      execution: ExecutionView | null;
+      task: TaskView | null;
       onCancel: () => Promise<void>;
     };
-    expect(getExecution).toHaveBeenCalledTimes(1);
-    expect(vm.execution?.attempts).toHaveLength(1);
-    expect(vm.execution?.attempts[0].remote_job_id).toBe("job-xyz");
-    // The execution detail header renders.
-    expect(wrapper.text()).toContain(zh.execution.title);
+    expect(getTask).toHaveBeenCalledTimes(1);
+    expect(vm.task?.executions).toHaveLength(1);
+    expect(vm.task?.executions[0].remote_job_id).toBe("job-xyz");
+    // The task detail header renders.
+    expect(wrapper.text()).toContain(zh.task.title);
 
     await vm.onCancel();
     await flushPromises();
 
-    expect(cancelExecution).toHaveBeenCalledTimes(1);
-    expect(vm.execution?.status).toBe("canceled");
+    expect(cancelTask).toHaveBeenCalledTimes(1);
+    expect(vm.task?.status).toBe("canceled");
   });
 });

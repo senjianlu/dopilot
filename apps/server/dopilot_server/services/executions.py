@@ -3,17 +3,16 @@
 Phase 1.7 domain vocabulary: a :class:`Task` is the parent logical run and an
 :class:`Execution` is the atomic per-node unit (see ``models/execution.py``).
 
-Two stable seams are crossed here and are documented at each call site:
+Two seams are crossed here and are documented at each call site:
 
-- **Wire/disk/agent seam** — the log-file index, command outbox and Redis
-  payloads still key on ``execution_id`` (= task id) and ``attempt_id``
+- **Wire/disk/agent seam (frozen)** — the log-file index, command outbox and
+  Redis payloads still key on ``execution_id`` (= task id) and ``attempt_id``
   (= execution id). Functions touching those (``create_log_file`` /
   ``get_log_file``) keep the seam parameter names.
-- **Public HTTP/web seam** — the web JSON shapes still call the parent
-  ``execution`` (with ``attempts[]`` children) and an atomic row ``attempt``
-  (with ``execution_id`` = the task id). The view builders below emit those
-  frozen keys; the public/web clean-cut is a later packet. Error codes
-  (``execution.*``) are likewise kept verbatim for the web i18n contract.
+- **Public API/web (phase 1.8 clean-cut)** — the public JSON uses Task for the
+  parent run (``TaskView`` with ``executions[]``) and Execution for the atomic
+  per-node unit (``ExecutionView`` with a ``task_id`` back-reference). The view
+  builders below emit those keys; there is no public ``attempts[]`` array.
 
 Endpoints stay thin; the create/query/view logic lives here so it can be unit
 tested directly against a session.
@@ -48,16 +47,16 @@ def new_id() -> str:
 
 @dataclass
 class TaskOrigin:
-    """Provenance of a task creation (phase 1.7 packet 2).
+    """Provenance of a task creation (phase 1.7 packet 2 / 1.8).
 
-    ``source`` is one of :data:`states.TASK_SOURCES`. ``template_id`` /
-    ``schedule_id`` are NULL for an ad-hoc manual run. ``template_snapshot`` is
-    the copied template payload that makes the task immutable against later
-    template edits.
+    ``source`` is one of :data:`states.TASK_SOURCES`. ``execution_template_id`` /
+    ``schedule_id`` are NULL for a direct build-artifact run.
+    ``template_snapshot`` is the resolved run snapshot (build artifact + params +
+    node strategy/ids) that makes the task immutable against later template edits.
     """
 
-    source: str = states.TASK_SOURCE_MANUAL
-    template_id: str | None = None
+    source: str = states.TASK_SOURCE_DIRECT
+    execution_template_id: str | None = None
     schedule_id: str | None = None
     template_snapshot: dict[str, Any] = field(default_factory=dict)
 
@@ -109,14 +108,14 @@ def create_task(
     spider = params.get("spider")
     task = Task(
         id=new_id(),
-        task_type=request.task_type,
+        artifact_type=request.artifact_type,
         target=request.target or "",
         node_strategy=request.node_strategy or "all",
         spider=str(spider) if spider else None,
         status=states.TASK_QUEUED,
         params=params,
         source=origin.source,
-        template_id=origin.template_id,
+        execution_template_id=origin.execution_template_id,
         schedule_id=origin.schedule_id,
         template_snapshot=dict(origin.template_snapshot or {}),
     )
@@ -205,9 +204,9 @@ async def get_task_or_404(session: AsyncSession, task_id: str) -> Task:
     if task is None:
         raise ApiError(
             404,
-            "execution.not_found",
-            "errors.executionNotFound",
-            {"execution_id": task_id},
+            "task.not_found",
+            "errors.taskNotFound",
+            {"task_id": task_id},
         )
     return task
 
@@ -334,7 +333,8 @@ async def resolve_execution(
 ) -> Execution:
     """Resolve a task's atomic execution by id (or the primary one).
 
-    ``execution_id`` is the atomic id (the web query param ``attempt_id``).
+    ``execution_id`` is the public atomic execution id (web query param
+    ``execution_id``); it maps to the seam ``attempt_id`` on the log index.
     """
     executions = await list_executions(session, task_id)
     if execution_id:
@@ -343,34 +343,35 @@ async def resolve_execution(
                 return e
         raise ApiError(
             404,
-            "execution.attempt_not_found",
-            "errors.attemptNotFound",
-            {"execution_id": task_id, "attempt_id": execution_id},
+            "task.execution_not_found",
+            "errors.executionNotFound",
+            {"task_id": task_id, "execution_id": execution_id},
         )
     chosen = primary_execution(executions)
     if chosen is None:
         raise ApiError(
             404,
-            "execution.attempt_not_found",
-            "errors.attemptNotFound",
-            {"execution_id": task_id},
+            "task.execution_not_found",
+            "errors.executionNotFound",
+            {"task_id": task_id},
         )
     return chosen
 
 
 # ---------------------------------------------------------------------------
-# view builders (frozen web-facing JSON)
+# view builders (public Task/Execution JSON — phase 1.8 clean-cut)
 # ---------------------------------------------------------------------------
-# Public/web seam: keys stay in the phase-1.5 web vocabulary (a parent run is an
-# "execution" with ``attempts[]``; an atomic row is an "attempt" whose
-# ``execution_id`` is the parent task id). The web clean-cut is a later packet.
+# Public vocabulary: a parent run is a TASK (``TaskView`` with ``executions[]``);
+# an atomic per-node row is an EXECUTION (``ExecutionView`` with a ``task_id``
+# back-reference). The Redis/disk/agent seam still uses ``execution_id`` (= task
+# id) / ``attempt_id`` (= execution id) internally — that is NOT exposed here.
 
 
 def execution_view(execution: Execution) -> dict[str, Any]:
-    """One atomic execution as the frozen web ``attempt`` row."""
+    """One atomic per-node execution as the public ``ExecutionView`` row."""
     return {
         "id": execution.id,
-        "execution_id": execution.task_id,  # web seam: parent task id
+        "task_id": execution.task_id,
         "agent_id": execution.agent_id,
         "node_id": execution.node_id,
         "endpoint": execution.endpoint,
@@ -385,41 +386,42 @@ def execution_view(execution: Execution) -> dict[str, Any]:
 
 
 def task_view(task: Task, executions: list[Execution]) -> dict[str, Any]:
-    """A task plus its atomic executions as the frozen web ``execution`` view."""
+    """A task plus its atomic executions as the public ``TaskView``."""
     return {
         "id": task.id,
-        "task_type": task.task_type,
+        "artifact_type": task.artifact_type,
         "target": task.target,
         "status": task.status,
         "status_reason": task.status_reason,
         "status_detail": task.status_detail or {},
         "node_strategy": task.node_strategy,
         "params": task.params or {},
+        "build_artifact": (task.template_snapshot or {}).get("build_artifact") or {},
         "source": task.source,
-        "template_id": task.template_id,
+        "execution_template_id": task.execution_template_id,
         "schedule_id": task.schedule_id,
         "created_at": _iso(task.created_at),
         "started_at": _iso(task.started_at),
         "finished_at": _iso(task.finished_at),
-        "attempts": [execution_view(e) for e in executions],
+        "executions": [execution_view(e) for e in executions],
     }
 
 
 def task_summary(task: Task, execution_count: int) -> dict[str, Any]:
-    """Compact task row for the list view (web ``execution`` summary)."""
+    """Compact task row for the list view (public ``TaskSummary``)."""
     return {
         "id": task.id,
-        "task_type": task.task_type,
+        "artifact_type": task.artifact_type,
         "target": task.target,
         "spider": task.spider,
         "status": task.status,
         "status_reason": task.status_reason,
         "node_strategy": task.node_strategy,
         "source": task.source,
-        "template_id": task.template_id,
+        "execution_template_id": task.execution_template_id,
         "schedule_id": task.schedule_id,
         "created_at": _iso(task.created_at),
         "started_at": _iso(task.started_at),
         "finished_at": _iso(task.finished_at),
-        "attempt_count": execution_count,
+        "execution_count": execution_count,
     }

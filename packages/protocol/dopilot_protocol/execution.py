@@ -8,11 +8,13 @@ from pydantic import BaseModel, Field
 
 
 class ExecutionRunRequest(BaseModel):
-    """Request to run a scheduled object on one or more nodes (web -> server).
+    """Internal resolved run request handed to an executor (phase 1.8).
 
-    ``task_type`` selects the executor (phase 1: only ``"scrapy"``). ``target``
-    is a human-facing label for the run. Type-specific inputs live in
-    ``params``; for ``task_type="scrapy"`` the server reads:
+    ``artifact_type`` is the core-domain discriminator selecting the executor
+    (phase 1.8: only ``"scrapy"`` is runnable). It is translated to the wire
+    ``task_type`` only in the Redis command payload, at the dispatcher boundary.
+    ``target`` is a human-facing label. Type-specific inputs live in ``params``;
+    for ``artifact_type="scrapy"`` the server reads:
 
     - ``params["project"]`` (str, required) — deployed scrapyd project,
     - ``params["spider"]`` (str, required) — spider name to run,
@@ -24,7 +26,7 @@ class ExecutionRunRequest(BaseModel):
     ``selected`` the chosen stable agent/node ids go in ``node_ids``.
     """
 
-    task_type: str
+    artifact_type: str
     target: str
     node_strategy: str = "all"
     node_ids: list[str] = Field(default_factory=list)
@@ -32,7 +34,7 @@ class ExecutionRunRequest(BaseModel):
 
 
 class ExecutionRunResponse(BaseModel):
-    """Response acknowledging a dispatched execution."""
+    """Response acknowledging a dispatched run. ``task_id`` is the parent task."""
 
-    execution_id: str
+    task_id: str
     status: str

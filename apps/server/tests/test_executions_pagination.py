@@ -1,4 +1,4 @@
-"""Phase 1.7.1: execution-list backend pagination + spider filter + stats.
+"""Phase 1.8: tasks-list backend pagination + spider filter + stats.
 
 Also covers the aggregate (non-N+1) child-count path and the all-selected-
 unschedulable template run -> ``no_target`` task path.
@@ -11,13 +11,12 @@ from dopilot_server.services import executions as svc
 from dopilot_server.services import states
 
 
-def _run_body(spider: str) -> dict:
-    return {
-        "task_type": "scrapy",
-        "target": f"demo:{spider}",
-        "node_strategy": "all",
-        "params": {"project": "demo", "spider": spider},
-    }
+async def _run_artifact(exec_client, seeder, spider: str):
+    """Direct-run a seeded artifact with a spider override."""
+    artifact = await seeder.build_artifact()
+    return await exec_client.post(
+        f"/api/v1/artifacts/{artifact.id}/run", json={"spider": spider}
+    )
 
 
 async def _seed_tasks(session, settings, specs):
@@ -28,7 +27,7 @@ async def _seed_tasks(session, settings, specs):
     node_seq = 0
     for spider, n_children in specs:
         req = ExecutionRunRequest(
-            task_type="scrapy",
+            artifact_type="scrapy",
             target=f"demo:{spider}",
             node_strategy="all",
             params={"project": "demo", "spider": spider},
@@ -47,7 +46,7 @@ async def _seed_tasks(session, settings, specs):
 
 async def test_create_task_copies_spider(db_session):
     req = ExecutionRunRequest(
-        task_type="scrapy",
+        artifact_type="scrapy",
         target="demo:s1",
         node_strategy="all",
         params={"project": "demo", "spider": "s1"},
@@ -90,38 +89,38 @@ async def test_list_task_spiders_distinct(db_session, exec_settings):
 # ---- HTTP surface ----------------------------------------------------------
 
 
-async def test_get_executions_validates_page_size(exec_client, seeder):
+async def test_get_tasks_validates_page_size(exec_client, seeder):
     await seeder.healthy_node()
-    r = await exec_client.get("/api/v1/executions?page=1&page_size=7")
+    r = await exec_client.get("/api/v1/tasks?page=1&page_size=7")
     assert r.status_code == 400
-    assert r.json()["code"] == "execution.invalid_page_size"
+    assert r.json()["code"] == "task.invalid_page_size"
 
 
-async def test_get_executions_returns_pagination_envelope(exec_client):
-    await exec_client.post("/api/v1/executions/run", json=_run_body("phase1"))
-    r = await exec_client.get("/api/v1/executions?page=1&page_size=20")
+async def test_get_tasks_returns_pagination_envelope(exec_client, seeder):
+    await _run_artifact(exec_client, seeder, "phase1")
+    r = await exec_client.get("/api/v1/tasks?page=1&page_size=20")
     assert r.status_code == 200
     body = r.json()
-    assert set(body) >= {"executions", "page", "page_size", "total", "spiders"}
+    assert set(body) >= {"tasks", "page", "page_size", "total", "spiders"}
     assert body["page"] == 1
     assert body["page_size"] == 20
     assert body["total"] >= 1
 
 
-async def test_get_executions_spider_filter(exec_client, seeder):
+async def test_get_tasks_spider_filter(exec_client, seeder):
     await seeder.healthy_node()
-    await exec_client.post("/api/v1/executions/run", json=_run_body("alpha"))
-    await exec_client.post("/api/v1/executions/run", json=_run_body("beta"))
-    r = await exec_client.get("/api/v1/executions?page=1&page_size=20&spider=alpha")
+    await _run_artifact(exec_client, seeder, "alpha")
+    await _run_artifact(exec_client, seeder, "beta")
+    r = await exec_client.get("/api/v1/tasks?page=1&page_size=20&spider=alpha")
     body = r.json()
     assert body["total"] == 1
-    assert all(row["spider"] == "alpha" for row in body["executions"])
+    assert all(row["spider"] == "alpha" for row in body["tasks"])
     # known spider values surfaced for the filter dropdown
     assert set(body["spiders"]) == {"alpha", "beta"}
 
 
-async def test_get_executions_invalid_page_400(exec_client):
-    r = await exec_client.get("/api/v1/executions?page=0&page_size=20")
+async def test_get_tasks_invalid_page_400(exec_client):
+    r = await exec_client.get("/api/v1/tasks?page=0&page_size=20")
     assert r.status_code == 422  # FastAPI ge=1 validation
 
 
@@ -139,11 +138,12 @@ async def test_selected_template_all_unschedulable_creates_no_target(
     await offline_node(db_session, str(node.id))
     await db_session.commit()
 
+    artifact = await seeder.build_artifact()
     tpl = await exec_client.post(
         "/api/v1/templates",
         json={
             "name": "sel",
-            "project": "demo",
+            "build_artifact_id": artifact.id,
             "spider": "phase1",
             "node_strategy": "selected",
             "node_ids": [str(node.id)],

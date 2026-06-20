@@ -62,4 +62,9 @@ agent-data/
 .ruff_cache/
 # web TS build artifacts (incremental build cache; emit is disabled via noEmit)
 *.tsbuildinfo
+# Playwright browser e2e outputs (traces/screenshots/videos + HTML report)
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/
+apps/web/.cache/
 

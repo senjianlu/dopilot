@@ -1,33 +1,36 @@
 import client from "./client";
 import type {
-  CreateTemplateRequest,
-  RunExecutionResponse,
-  TaskTemplate,
+  CreateExecutionTemplateRequest,
+  ExecutionTemplate,
+  TaskRunResponse,
   TemplatesResponse,
 } from "./types";
 
-export async function listTemplates(): Promise<TaskTemplate[]> {
+export async function listTemplates(): Promise<ExecutionTemplate[]> {
   const { data } = await client.get<TemplatesResponse>("/templates");
   return data.templates;
 }
 
-export async function getTemplate(id: string): Promise<TaskTemplate> {
-  const { data } = await client.get<TaskTemplate>(`/templates/${id}`);
+export async function getTemplate(id: string): Promise<ExecutionTemplate> {
+  const { data } = await client.get<ExecutionTemplate>(`/templates/${id}`);
   return data;
 }
 
 export async function createTemplate(
-  payload: CreateTemplateRequest,
-): Promise<TaskTemplate> {
-  const { data } = await client.post<TaskTemplate>("/templates", payload);
+  payload: CreateExecutionTemplateRequest,
+): Promise<ExecutionTemplate> {
+  const { data } = await client.post<ExecutionTemplate>("/templates", payload);
   return data;
 }
 
 export async function updateTemplate(
   id: string,
-  payload: Partial<CreateTemplateRequest>,
-): Promise<TaskTemplate> {
-  const { data } = await client.put<TaskTemplate>(`/templates/${id}`, payload);
+  payload: Partial<CreateExecutionTemplateRequest>,
+): Promise<ExecutionTemplate> {
+  const { data } = await client.put<ExecutionTemplate>(
+    `/templates/${id}`,
+    payload,
+  );
   return data;
 }
 
@@ -36,9 +39,7 @@ export async function deleteTemplate(id: string): Promise<void> {
 }
 
 // Create + dispatch a task from this template's immutable snapshot.
-export async function runTemplate(id: string): Promise<RunExecutionResponse> {
-  const { data } = await client.post<RunExecutionResponse>(
-    `/templates/${id}/run`,
-  );
+export async function runTemplate(id: string): Promise<TaskRunResponse> {
+  const { data } = await client.post<TaskRunResponse>(`/templates/${id}/run`);
   return data;
 }

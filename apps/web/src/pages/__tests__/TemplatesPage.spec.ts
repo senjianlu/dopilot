@@ -4,18 +4,18 @@ import { createPinia, setActivePinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import zh from "@/i18n/locales/zh";
 import en from "@/i18n/locales/en";
-import type { NodeInfo, ScrapyArtifact, TaskTemplate } from "@/api/types";
+import type { BuildArtifact, ExecutionTemplate, NodeInfo } from "@/api/types";
 
-const sampleTemplates: TaskTemplate[] = [
+const sampleTemplates: ExecutionTemplate[] = [
   {
     id: "tpl-1",
     name: "demo-template",
     description: null,
-    task_type: "scrapy",
+    build_artifact_id: "art-1",
+    artifact_type: "scrapy",
     project: "demo",
     version: "v1",
     spider: "phase1",
-    artifact: {},
     settings: {},
     args: {},
     node_strategy: "all",
@@ -25,18 +25,22 @@ const sampleTemplates: TaskTemplate[] = [
   },
 ];
 
-const sampleArtifacts: ScrapyArtifact[] = [
+const sampleArtifacts: BuildArtifact[] = [
   {
-    id: "sha-abc",
+    id: "art-1",
+    artifact_type: "scrapy",
+    package_format: "egg",
+    name: "demo",
+    filename: "demo.egg",
+    content_hash: "sha-abc",
+    size_bytes: 1024,
     project: "demo",
     version: "v1",
-    filename: "demo.egg",
-    sha256: "sha-abc",
-    size_bytes: 1024,
     spiders: ["phase1", "phase2"],
-    valid: true,
-    uploaded_at: "2026-06-19T00:00:00Z",
+    fetch_path: "/api/v1/artifacts/art-1/egg",
+    runnable: true,
     created_at: "2026-06-19T00:00:00Z",
+    updated_at: "2026-06-19T00:00:00Z",
   },
 ];
 
@@ -68,11 +72,11 @@ const sampleNodes: NodeInfo[] = [
 const listTemplates = vi.fn(async () => sampleTemplates);
 const createTemplate = vi.fn(async (_payload: unknown) => sampleTemplates[0]);
 const runTemplate = vi.fn(async (_id: string) => ({
-  execution_id: "exec-9",
+  task_id: "task-9",
   status: "queued",
 }));
 const deleteTemplate = vi.fn(async (_id: string) => undefined);
-const listScrapyArtifacts = vi.fn(async () => sampleArtifacts);
+const listBuildArtifacts = vi.fn(async () => sampleArtifacts);
 const listNodes = vi.fn(async () => sampleNodes);
 
 vi.mock("@/api/templates", () => ({
@@ -82,7 +86,7 @@ vi.mock("@/api/templates", () => ({
   deleteTemplate: (id: string) => deleteTemplate(id),
 }));
 vi.mock("@/api/artifacts", () => ({
-  listScrapyArtifacts: () => listScrapyArtifacts(),
+  listBuildArtifacts: () => listBuildArtifacts(),
 }));
 vi.mock("@/api/nodes", () => ({
   listNodes: () => listNodes(),
@@ -135,24 +139,23 @@ describe("TemplatesPage", () => {
     listTemplates.mockClear();
     createTemplate.mockClear();
     runTemplate.mockClear();
-    listScrapyArtifacts.mockClear();
+    listBuildArtifacts.mockClear();
     listNodes.mockClear();
+    push.mockClear();
   });
 
-  it("renders fetched templates (no project column)", async () => {
+  it("renders fetched templates", async () => {
     const wrapper = mount(TemplatesPage, {
       global: { plugins: [makeI18n()], stubs: makeStubs() },
     });
     await flushPromises();
 
     expect(wrapper.text()).toContain(zh.templates.title);
-    // Project column header is gone.
-    expect(wrapper.text()).not.toContain(zh.templates.project);
-    const vm = wrapper.vm as unknown as { templates: TaskTemplate[] };
+    const vm = wrapper.vm as unknown as { templates: ExecutionTemplate[] };
     expect(vm.templates).toHaveLength(1);
   });
 
-  it("submits a derived payload from the chosen artifact + spider", async () => {
+  it("submits a build_artifact_id payload from the chosen artifact + spider", async () => {
     const wrapper = mount(TemplatesPage, {
       global: { plugins: [makeI18n()], stubs: makeStubs() },
     });
@@ -161,24 +164,19 @@ describe("TemplatesPage", () => {
     const vm = wrapper.vm as unknown as {
       openCreate: () => void;
       submitCreate: () => Promise<void>;
-      form: { name: string; artifactHash: string; spider: string };
+      form: { name: string; buildArtifactId: string; spider: string };
     };
     vm.openCreate();
     vm.form.name = "t2";
-    vm.form.artifactHash = "sha-abc";
+    vm.form.buildArtifactId = "art-1";
     vm.form.spider = "phase2";
     await vm.submitCreate();
 
     expect(createTemplate).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "t2",
-        project: "demo",
-        version: "v1",
+        build_artifact_id: "art-1",
         spider: "phase2",
-        artifact: expect.objectContaining({
-          sha256: "sha-abc",
-          fetch_path: "/api/v1/artifacts/scrapy/sha-abc/egg",
-        }),
       }),
     );
   });
@@ -218,10 +216,10 @@ describe("TemplatesPage", () => {
     });
     await flushPromises();
     const vm = wrapper.vm as unknown as {
-      onRun: (t: TaskTemplate) => Promise<void>;
+      onRun: (t: ExecutionTemplate) => Promise<void>;
     };
     await vm.onRun(sampleTemplates[0]);
     expect(runTemplate).toHaveBeenCalledWith("tpl-1");
-    expect(push).toHaveBeenCalledWith("/executions/exec-9");
+    expect(push).toHaveBeenCalledWith("/tasks/task-9");
   });
 });

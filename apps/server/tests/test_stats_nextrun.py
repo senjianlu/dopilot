@@ -23,7 +23,7 @@ async def test_daily_task_counts_returns_30_buckets(db_session):
 
 async def test_daily_task_counts_buckets_today(db_session):
     req = ExecutionRunRequest(
-        task_type="scrapy",
+        artifact_type="scrapy",
         target="demo:s1",
         node_strategy="all",
         params={"project": "demo", "spider": "s1"},
@@ -44,7 +44,7 @@ async def test_daily_task_counts_aggregates_in_db(db_session):
     active day costs one row rather than one row per task/execution.
     """
     req = ExecutionRunRequest(
-        task_type="scrapy",
+        artifact_type="scrapy",
         target="demo:s1",
         node_strategy="all",
         params={"project": "demo", "spider": "s1"},
@@ -100,17 +100,23 @@ def test_next_run_cron_deterministic():
     assert nxt.hour == 12 and nxt.minute == 5
 
 
-async def test_schedule_views_include_next_run_at(exec_client):
+async def test_schedule_views_include_next_run_at(exec_client, seeder):
+    artifact = await seeder.build_artifact()
     tpl = await exec_client.post(
         "/api/v1/templates",
-        json={"name": "t", "project": "demo", "spider": "phase1", "node_strategy": "all"},
+        json={
+            "name": "t",
+            "build_artifact_id": artifact.id,
+            "spider": "phase1",
+            "node_strategy": "all",
+        },
     )
     template_id = tpl.json()["id"]
     interval = await exec_client.post(
         "/api/v1/schedules",
         json={
             "name": "iv",
-            "template_id": template_id,
+            "execution_template_id": template_id,
             "trigger_type": "interval",
             "interval_seconds": 60,
         },
@@ -121,7 +127,7 @@ async def test_schedule_views_include_next_run_at(exec_client):
         "/api/v1/schedules",
         json={
             "name": "cr",
-            "template_id": template_id,
+            "execution_template_id": template_id,
             "trigger_type": "cron",
             "cron": "*/5 * * * *",
         },

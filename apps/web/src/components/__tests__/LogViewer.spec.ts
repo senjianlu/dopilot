@@ -43,7 +43,7 @@ const mocks = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("@/api/executions", () => ({
+vi.mock("@/api/tasks", () => ({
   buildStreamUrl: (
     id: string,
     query: { streamToken?: string } = {},
@@ -53,7 +53,7 @@ vi.mock("@/api/executions", () => ({
       params.set("stream_token", query.streamToken);
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    return `/api/v1/executions/${id}/logs/stream${suffix}`;
+    return `/api/v1/tasks/${id}/logs/stream${suffix}`;
   },
   fetchStreamToken: mocks.fetchStreamToken,
 }));
@@ -78,7 +78,7 @@ describe("LogViewer", () => {
 
   it("appends incremental log data and shows complete", async () => {
     const wrapper = mount(LogViewer, {
-      props: { executionId: "exec-1" },
+      props: { taskId: "task-1" },
       global: {
         plugins: [makeI18n()],
         stubs: {
@@ -110,7 +110,7 @@ describe("LogViewer", () => {
     auth.token = "bearer-token";
 
     mount(LogViewer, {
-      props: { executionId: "exec-1" },
+      props: { taskId: "task-1" },
       global: {
         plugins: [makeI18n()],
         stubs: {
@@ -121,7 +121,7 @@ describe("LogViewer", () => {
 
     await flushPromises();
 
-    expect(mocks.fetchStreamToken).toHaveBeenCalledWith("exec-1");
+    expect(mocks.fetchStreamToken).toHaveBeenCalledWith("task-1");
     expect(FakeEventSource.instances[0].url).toContain("stream_token=tok");
   });
 });

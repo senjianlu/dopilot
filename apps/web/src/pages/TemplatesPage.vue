@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { listScrapyArtifacts } from "@/api/artifacts";
+import { listBuildArtifacts } from "@/api/artifacts";
 import { listNodes } from "@/api/nodes";
 import {
   createTemplate,
@@ -11,18 +11,18 @@ import {
   runTemplate,
 } from "@/api/templates";
 import type {
+  BuildArtifact,
+  ExecutionTemplate,
   NodeInfo,
   NodeStrategy,
-  ScrapyArtifact,
-  TaskTemplate,
 } from "@/api/types";
 import { badgeTagType, nodeBadge } from "@/utils/nodeBadge";
 
 const { t } = useI18n();
 const router = useRouter();
 
-const templates = ref<TaskTemplate[]>([]);
-const artifacts = ref<ScrapyArtifact[]>([]);
+const templates = ref<ExecutionTemplate[]>([]);
+const artifacts = ref<BuildArtifact[]>([]);
 const nodes = ref<NodeInfo[]>([]);
 const loading = ref(false);
 const runningId = ref("");
@@ -32,7 +32,7 @@ const createError = ref("");
 
 const form = reactive({
   name: "",
-  artifactHash: "",
+  buildArtifactId: "",
   spider: "",
   node_strategy: "all" as NodeStrategy,
   node_ids: [] as string[],
@@ -85,14 +85,32 @@ function nodeByKey(key: string): NodeInfo | undefined {
   return nodes.value.find((n) => nodeKey(n) === key);
 }
 
+// Only runnable artifacts can back a template.
+const runnableArtifacts = computed(() =>
+  artifacts.value.filter((a) => a.runnable),
+);
+
 const selectedArtifact = computed(() =>
-  artifacts.value.find((a) => a.sha256 === form.artifactHash),
+  artifacts.value.find((a) => a.id === form.buildArtifactId),
 );
 const availableSpiders = computed(() => selectedArtifact.value?.spiders ?? []);
 
+// Read-only project/version resolved from the selected artifact.
+const resolvedProject = computed(() => selectedArtifact.value?.project ?? "-");
+const resolvedVersion = computed(() => selectedArtifact.value?.version ?? "-");
+
+// Read-only Scrapy entrypoint/command preview; users may NOT edit this.
+const commandPreview = computed(() => {
+  const art = selectedArtifact.value;
+  if (!art) return "-";
+  const project = art.project ?? "?";
+  const spider = form.spider || "<spider>";
+  return `scrapy crawl ${spider} (project=${project})`;
+});
+
 // Reset the spider when the artifact changes (keep it if still valid).
 watch(
-  () => form.artifactHash,
+  () => form.buildArtifactId,
   () => {
     if (!availableSpiders.value.includes(form.spider)) {
       form.spider = availableSpiders.value[0] ?? "";
@@ -116,7 +134,7 @@ async function load(): Promise<void> {
   try {
     [templates.value, artifacts.value, nodes.value] = await Promise.all([
       listTemplates(),
-      listScrapyArtifacts(),
+      listBuildArtifacts(),
       listNodes(),
     ]);
   } finally {
@@ -126,8 +144,9 @@ async function load(): Promise<void> {
 
 function openCreate(): void {
   form.name = "";
-  form.artifactHash = artifacts.value[0]?.sha256 ?? "";
-  form.spider = artifacts.value[0]?.spiders?.[0] ?? "";
+  const first = runnableArtifacts.value[0];
+  form.buildArtifactId = first?.id ?? "";
+  form.spider = first?.spiders?.[0] ?? "";
   form.node_strategy = "all";
   form.node_ids = [];
   createError.value = "";
@@ -145,18 +164,8 @@ async function submitCreate(): Promise<void> {
   try {
     await createTemplate({
       name: form.name,
-      project: art.project,
-      version: art.version,
+      build_artifact_id: art.id,
       spider: form.spider,
-      artifact: {
-        hash: art.sha256,
-        sha256: art.sha256,
-        filename: art.filename,
-        project: art.project,
-        version: art.version,
-        size_bytes: art.size_bytes,
-        fetch_path: `/api/v1/artifacts/scrapy/${art.sha256}/egg`,
-      },
       node_strategy: form.node_strategy,
       node_ids: isSelectedStrategy.value ? form.node_ids : [],
     });
@@ -169,17 +178,17 @@ async function submitCreate(): Promise<void> {
   }
 }
 
-async function onRun(template: TaskTemplate): Promise<void> {
+async function onRun(template: ExecutionTemplate): Promise<void> {
   runningId.value = template.id;
   try {
     const res = await runTemplate(template.id);
-    await router.push(`/executions/${res.execution_id}`);
+    await router.push(`/tasks/${res.task_id}`);
   } finally {
     runningId.value = "";
   }
 }
 
-async function onDelete(template: TaskTemplate): Promise<void> {
+async function onDelete(template: ExecutionTemplate): Promise<void> {
   await deleteTemplate(template.id);
   await load();
 }
@@ -193,7 +202,7 @@ onMounted(load);
       <div class="templates-header">
         <span>{{ t("templates.title") }}</span>
         <div class="templates-actions">
-          <el-button type="primary" @click="openCreate">
+          <el-button type="primary" data-testid="template-create" @click="openCreate">
             {{ t("templates.create") }}
           </el-button>
           <el-button @click="load">{{ t("templates.refresh") }}</el-button>
@@ -201,8 +210,14 @@ onMounted(load);
       </div>
     </template>
 
-    <el-table :data="templates" :empty-text="t('templates.empty')">
-      <el-table-column :label="t('templates.name')" prop="name" />
+    <el-table :data="templates" :empty-text="t('templates.empty')" data-testid="templates-table">
+      <el-table-column :label="t('templates.name')">
+        <template #default="{ row }">
+          <span :data-testid="`template-name-${(row as ExecutionTemplate).name}`">
+            {{ (row as ExecutionTemplate).name }}
+          </span>
+        </template>
+      </el-table-column>
       <el-table-column :label="t('templates.spider')" prop="spider" />
       <el-table-column :label="t('templates.version')" prop="version" />
       <el-table-column
@@ -214,15 +229,16 @@ onMounted(load);
           <el-button
             type="primary"
             link
-            :loading="runningId === (row as TaskTemplate).id"
-            @click="onRun(row as TaskTemplate)"
+            :data-testid="`template-run-${(row as ExecutionTemplate).name}`"
+            :loading="runningId === (row as ExecutionTemplate).id"
+            @click="onRun(row as ExecutionTemplate)"
           >
             {{ t("templates.run") }}
           </el-button>
           <el-button
             type="danger"
             link
-            @click="onDelete(row as TaskTemplate)"
+            @click="onDelete(row as ExecutionTemplate)"
           >
             {{ t("templates.delete") }}
           </el-button>
@@ -230,28 +246,48 @@ onMounted(load);
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="t('templates.createTitle')">
-      <el-form label-width="120px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="t('templates.createTitle')"
+      data-testid="template-dialog"
+    >
+      <el-form label-width="140px">
         <el-form-item :label="t('templates.name')">
-          <el-input v-model="form.name" />
+          <el-input v-model="form.name" data-testid="template-name-input" />
         </el-form-item>
-        <el-form-item :label="t('templates.artifact')">
+        <el-form-item :label="t('templates.buildArtifact')">
           <el-select
-            v-model="form.artifactHash"
+            v-model="form.buildArtifactId"
+            data-testid="template-artifact-select"
             :placeholder="t('templates.selectArtifact')"
             :no-data-text="t('templates.noArtifacts')"
           >
             <el-option
-              v-for="a in artifacts"
-              :key="a.sha256"
-              :label="`${a.project} · ${a.filename}`"
-              :value="a.sha256"
+              v-for="a in runnableArtifacts"
+              :key="a.id"
+              :label="`${a.name} · ${a.filename ?? a.id}`"
+              :value="a.id"
             />
           </el-select>
+        </el-form-item>
+        <el-form-item :label="t('templates.project')">
+          <el-input
+            :model-value="resolvedProject"
+            data-testid="template-project"
+            disabled
+          />
+        </el-form-item>
+        <el-form-item :label="t('templates.version')">
+          <el-input
+            :model-value="resolvedVersion"
+            data-testid="template-version"
+            disabled
+          />
         </el-form-item>
         <el-form-item :label="t('templates.spider')">
           <el-select
             v-model="form.spider"
+            data-testid="template-spider-select"
             :placeholder="t('templates.selectSpider')"
           >
             <el-option
@@ -261,6 +297,13 @@ onMounted(load);
               :value="s"
             />
           </el-select>
+        </el-form-item>
+        <el-form-item :label="t('templates.command')">
+          <el-input
+            :model-value="commandPreview"
+            data-testid="template-command"
+            disabled
+          />
         </el-form-item>
         <el-form-item :label="t('templates.strategy')">
           <el-select v-model="form.node_strategy">
@@ -309,7 +352,12 @@ onMounted(load);
         <el-button @click="dialogVisible = false">
           {{ t("templates.cancel") }}
         </el-button>
-        <el-button type="primary" :loading="creating" @click="submitCreate">
+        <el-button
+          type="primary"
+          data-testid="template-submit"
+          :loading="creating"
+          @click="submitCreate"
+        >
           {{ t("templates.submit") }}
         </el-button>
       </template>

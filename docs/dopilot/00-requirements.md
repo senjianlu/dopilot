@@ -23,6 +23,51 @@ dopilot 是在开源项目 [scrapydweb](https://github.com/my8100/scrapydweb)（
 
 > 核心架构挑战：scrapydweb 完全围绕 scrapyd 协议（egg 部署 + schedule API）。类型 2、3 需要引入**执行器（Executor / Runner）抽象层**，详见 `docs/dopilot/01-gap-executors.md`。
 
+### 2.1 阶段 1.8 后的核心领域模型
+
+阶段 1.8 将原先偏 Scrapy 的「爬虫 / 任务模板 / execution-attempt」
+口径清理为跨执行类型的统一模型，为阶段 2 Python 脚本和阶段 3 Docker
+执行器铺路：
+
+```text
+构建产物 BuildArtifact
+  -> 执行模板 ExecutionTemplate
+    -> 定时调度 Schedule
+      -> 任务 Task
+        -> 执行实例 Execution
+```
+
+- **构建产物（BuildArtifact）** 是“可执行产物”，不是构建过程。阶段
+  1.8 仅支持 `artifact_type=scrapy` + `.egg`；阶段 2 预留
+  `python_wheel` + `.whl`；阶段 3 预留 `docker_image`。
+- **执行模板（ExecutionTemplate）** 必须绑定一个构建产物，保存默认执行
+  参数、节点策略与节点选择。Scrapy 的执行命令在 Web 中只读展示，用户只
+  配置参数。
+- **定时调度（Schedule）** 必须引用一个执行模板，可覆盖执行参数、
+  节点策略和节点选择，但不能覆盖构建产物。
+- **任务（Task）** 是一次触发产生的父级运行记录。直接运行构建产物、
+  运行执行模板、定时 trigger-now 或 timer firing 都会创建任务。
+- **执行实例（Execution）** 是任务按节点 fan-out 后产生的单节点原子执行
+  单元。每个执行实例通过任务快照可追溯到构建产物；执行模板和定时调度
+  只是可选来源关系。
+- 任务创建时冻结 resolved snapshot，优先级固定为：
+
+```text
+schedule override > execution template default > build artifact default
+```
+
+节点选择除健康、未下线、未删除外，还必须按构建产物类型过滤能力：
+
+```text
+scrapy -> scrapy
+python_wheel -> python_wheel
+docker_image -> docker_runtime
+```
+
+Redis / agent / 日志路径的兼容 seam 仍保留旧字段名：
+`execution_id` 表示父级 Task id，`attempt_id` 表示原子 Execution id；
+这些名字只允许存在于 wire/disk/agent 边界。
+
 ## 3. 需要支持的「平台功能」（五项）
 
 | # | 功能 | 要点 | scrapydweb 现状（待 workflow 核实） |
@@ -51,6 +96,8 @@ dopilot 是在开源项目 [scrapydweb](https://github.com/my8100/scrapydweb)（
 | 12 | 认证 / 通信边界 | **Web 管理员认证与 Agent 机器认证分离，均 config-present-or-off**（配置齐全才启用，缺失则对应认证关闭）。**Web→Server**：单管理员登录 + Bearer **opaque access token**（无 refresh token）；SSE 用短期 `stream_token`（TTL 60s、仅校验建连），避免长期 token 放 URL。**Server↔Agent（重构后，破坏性、无双轨；详见 `docs/refactor/00-redis-streams-agent-communication.md`）**：通信主路径改为 **Redis Streams**——server→agent 命令（run/stop/cleanup_logs）经 `dopilot:agent:{agent_id}:commands` 投递，**agent 经 consumer group 主动消费命令、主动 XADD 推送状态事件（`dopilot:server:agent-events`）与日志（`dopilot:server:logs`）**，删除 server→agent HTTP run/status/tail 主路径。健康检查改为 **agent 主动 POST `/api/v1/agents/{agent_id}/heartbeat`**（不再由 server 轮询 agent `/health`）。鉴权拆分：agent→server 用 `server_shared_token`（**不复用 server→agent 旧 token**），Redis 启用 AUTH/ACL。agent 仍**不直连 PostgreSQL**。agent 启动携带容器重启不变的稳定 `agent_id`，server 将节点落入 `nodes` 表，健康来源由 heartbeat 写入的 `nodes.last_seen_at` 判定。第一版不做 mTLS / token 轮换 / RBAC / 多用户。 |
 | 13 | 节点持久化 | 第一版即建立 `nodes` 表。agent 启动配置/环境变量传入稳定 `agent_id`（容器重启不变），server 以该 ID 作为节点主标识；`[nodes].agents` 只作为初始发现地址列表，不作为业务关系的长期主键。 |
 | 14 | Web 部署 | 不内置 nginx；反向代理是用户可选部署层。第一版 Web 容器按 Vue/Vite 常规方式运行前端应用，server 只提供 FastAPI API/SSE。 |
+| 15 | 阶段 1.8 领域模型清理 | 使用 **BuildArtifact / ExecutionTemplate / Schedule / Task / Execution** 作为产品与 API 口径；构建产物成为真实 DB 实体；执行模板必须绑定构建产物；public API/Web 硬切到 Task/Execution；`task_type` 仅作为现有 agent wire 字段保留在边界。 |
+| 16 | Python 脚本打包与运行预期 | 阶段 2 使用 `.whl` 作为 Python 脚本构建产物格式。agent 侧以 venv 缓存隔离依赖，并用 `asyncio.create_subprocess_exec`/进程组启动脚本，强制 `PYTHONUNBUFFERED=1` / `python -u`，实时采集 stdout/stderr 推送 Redis log stream，以子进程退出码收敛执行状态。 |
 
 ## 5. 分期路线（由决策推导）
 
@@ -61,7 +108,8 @@ dopilot 是在开源项目 [scrapydweb](https://github.com/my8100/scrapydweb)（
 | 阶段 0 | 平台基座 | —— | —— | 搭建 dopilot 自有骨架（apps/packages 布局、`apps/server` 的 FastAPI `/api/v1` 与配置加载器、PostgreSQL + Alembic 基线、`packages/protocol` 协议）、单管理员认证、i18n(中文)、server/agent 的 Docker 化部署骨架、实时日志框架 |
 | 阶段 1 | Scrapy 优先跑稳 | 类型 1（Scrapy） | dopilot-agent 内置/管理本机 scrapyd | 以 scrapydweb 的 scrapyd 集群 I/O 行为为功能参考，但第一版架构按 **server → dopilot-agent → 本机 scrapyd → scrapy process** 实现（scrapyd 监听容器内部端口仅本机可见，对外暴露的是 agent API）；agent 负责调本机 scrapyd、tail `job.log` 并提供 HTTP tail / status / cleanup API；**日志由 server 主动 pull（agent 不主动推、第一版不用 WebSocket）**。egg **仅支持上传已构建产物**：用户上传 → server → 转发 agent → agent 调本机 scrapyd `/addversion.json`，不做本地/源码/Git/CI 构建。agent 启动携带稳定 `agent_id`，server 写入/更新 `nodes` 表并轮询 agent `/health`，调度只选健康 agent；agent 主动 heartbeat 留后续。dopilot-agent 阶段 1 即落地。**（注：阶段 1 的 server↔agent 通信为 HTTP pull——既定事实；通信层翻案为 Redis Streams 作为下方独立的「阶段 1.5」承载，决策口径见决策 #11/#12，不回改本行已交付内容。）** |
 | 阶段 1.5 | 通信层重构（→ Redis Streams） | 类型 1（不新增调度对象） | 同阶段 1（dopilot-agent） | **破坏性重构、无双轨**：把阶段 1 的 server 主动 HTTP（run/status/tail pull + 轮询 `/health`）整体翻案为 **Redis Streams**——server 经 `dopilot:agent:{agent_id}:commands` 下发命令（事务性 command_outbox + dispatcher），**agent 经 consumer group 主动消费、主动 XADD 状态事件（`dopilot:server:agent-events`）与日志（`dopilot:server:logs`，base64 字节增量），server 消费后落盘**；健康改为 **agent 主动 POST `/api/v1/agents/{agent_id}/heartbeat`**，server 据 `nodes.last_seen_at` 判健康（不再轮询 agent `/health`，`/health` 降级为容器本地 healthcheck）；鉴权拆 `server_shared_token` + Redis AUTH/ACL；删除 server→agent HTTP run/status/tail 主路径与 `AgentTailLogSource` 主路径。保留四不变量（不用 WebSocket / SSE / 正文落盘 / PG 只存索引）与单实例约束。立即启动（不等阶段 2/3）。任务书见 `docs/phases/phase-1.5/00-brief.md`，唯一设计真相见 `docs/refactor/00-redis-streams-agent-communication.md`。 |
-| 阶段 2 | 接入脚本 | 类型 3（Python 脚本） | 新增脚本 worker agent（Docker 容器） | 引入执行器抽象，agent 角色落地（脚本日志同走阶段 1.5 重构后的 Redis log stream） |
+| 阶段 1.8 | 领域模型清理 | 类型 1（Scrapy，构建产物化） | 同阶段 1.5（dopilot-agent） | 将 Scrapy artifact 泛化为 BuildArtifact，将任务模板改为 ExecutionTemplate，public API/Web 硬切到 Task/Execution，定时调度支持覆盖参数/节点策略/节点，直接运行构建产物会创建 ad-hoc snapshot 任务。阶段 1.8 不新增 Python/Docker 执行器。 |
+| 阶段 2 | 接入脚本 | 类型 3（Python 脚本） | 复用 dopilot-agent，新增 python_wheel 能力 | Python 脚本以 `.whl` 构建产物接入；agent 下载 wheel、按 sha256 缓存 venv、用异步 subprocess + 独立进程组启动，stdout/stderr 通过 Redis log stream 实时推送，退出码映射执行状态。 |
 | 阶段 3 | 接入长连接 | 类型 2（Docker 长连接爬虫） | Docker / K3s API SDK | 容器生命周期管理，最后开发 |
 
 ### server / agent 部署形态（重构后）

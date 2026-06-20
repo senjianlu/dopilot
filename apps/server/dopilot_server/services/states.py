@@ -47,16 +47,49 @@ TASK_TERMINAL = frozenset(
     {TASK_COMPLETE, TASK_FAILED, TASK_CANCELED, TASK_LOST, TASK_NO_TARGET}
 )
 
-# ---- task source (provenance; phase 1.7 packet 2) ----
-# Who created the task. A manual run (ad-hoc or run-from-template) is
-# ``manual``; a schedule's immediate trigger is ``schedule_trigger_now``; a
-# schedule timer firing is ``schedule_timer``. Only timer firings are subject to
-# the schedule-keyed coalesce (see services/outbox.py).
-TASK_SOURCE_MANUAL = "manual"
+# ---- build artifact type (core-domain discriminator; phase 1.8) ----
+# Replaces the misleading ``task_type``. Only ``scrapy`` is runnable in 1.8;
+# ``python_wheel`` / ``docker_image`` are reserved type values (not executable).
+ARTIFACT_SCRAPY = "scrapy"
+ARTIFACT_PYTHON_WHEEL = "python_wheel"
+ARTIFACT_DOCKER_IMAGE = "docker_image"
+ARTIFACT_TYPES = frozenset(
+    {ARTIFACT_SCRAPY, ARTIFACT_PYTHON_WHEEL, ARTIFACT_DOCKER_IMAGE}
+)
+# Only these may actually run in phase 1.8.
+RUNNABLE_ARTIFACT_TYPES = frozenset({ARTIFACT_SCRAPY})
+# Default package_format per artifact type.
+ARTIFACT_PACKAGE_FORMAT = {
+    ARTIFACT_SCRAPY: "egg",
+    ARTIFACT_PYTHON_WHEEL: "wheel",
+    ARTIFACT_DOCKER_IMAGE: "image",
+}
+# Resolved artifact type -> the node capability a dispatch target must advertise.
+ARTIFACT_CAPABILITY = {
+    ARTIFACT_SCRAPY: "scrapy",
+    ARTIFACT_PYTHON_WHEEL: "python_wheel",
+    ARTIFACT_DOCKER_IMAGE: "docker_runtime",
+}
+
+# ---- task source (provenance; phase 1.7 packet 2 / 1.8) ----
+# Who created the task. A direct build-artifact run is ``direct_artifact``; a
+# run from an execution template is ``template``; a schedule's immediate trigger
+# is ``schedule_trigger_now``; a schedule timer firing is ``schedule_timer``.
+# Legacy rows may carry ``manual``. Only timer firings are subject to the
+# schedule-keyed coalesce (see services/outbox.py).
+TASK_SOURCE_MANUAL = "manual"  # legacy data only
+TASK_SOURCE_DIRECT = "direct_artifact"
+TASK_SOURCE_TEMPLATE = "template"
 TASK_SOURCE_TRIGGER_NOW = "schedule_trigger_now"
 TASK_SOURCE_TIMER = "schedule_timer"
 TASK_SOURCES = frozenset(
-    {TASK_SOURCE_MANUAL, TASK_SOURCE_TRIGGER_NOW, TASK_SOURCE_TIMER}
+    {
+        TASK_SOURCE_MANUAL,
+        TASK_SOURCE_DIRECT,
+        TASK_SOURCE_TEMPLATE,
+        TASK_SOURCE_TRIGGER_NOW,
+        TASK_SOURCE_TIMER,
+    }
 )
 
 # ---- execution (atomic per-node unit; ``attempt`` on the wire/disk seam) ----

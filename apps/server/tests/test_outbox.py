@@ -24,7 +24,7 @@ async def _seed_task(
 ):
     task = Task(
         id=new_id(),
-        task_type="scrapy",
+        artifact_type="scrapy",
         target=target,
         status=status,
         params={},

@@ -1,4 +1,4 @@
-"""Tests for the server-side Scrapy egg artifact store endpoints."""
+"""Build-artifact endpoint tests (phase 1.8): Scrapy egg upload -> build artifact."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def _egg(*, spider: str = "phase1", extra: str = "") -> bytes:
     return buf.getvalue()
 
 
-async def test_upload_egg_validates_and_stores_manifest(exec_client):
+async def test_upload_egg_creates_build_artifact(exec_client):
     content = _egg()
     files = {"file": ("demo_phase1.egg", content, "application/octet-stream")}
     r = await exec_client.post(
@@ -31,24 +31,45 @@ async def test_upload_egg_validates_and_stores_manifest(exec_client):
     assert r.status_code == 200, r.text
     body = r.json()
     artifact = body["artifact"]
+    assert artifact["artifact_type"] == "scrapy"
+    assert artifact["package_format"] == "egg"
     assert artifact["project"] == "demo"
     assert artifact["version"].startswith("sha256-")
-    assert artifact["sha256"]
+    assert artifact["content_hash"]
     assert artifact["size_bytes"] == len(content)
     assert artifact["spiders"] == ["phase1"]
-    assert artifact["valid"] is True
+    assert artifact["runnable"] is True
     assert body["spiders"] == ["phase1"]
-    assert body["agent_id"] is None
-    assert body["endpoint"] is None
+
+    # the canonical build-artifact list now surfaces it
+    listed = await exec_client.get("/api/v1/artifacts")
+    rows = listed.json()["artifacts"]
+    assert any(a["id"] == artifact["id"] for a in rows)
 
     download = await exec_client.get(
-        f"/api/v1/artifacts/scrapy/{artifact['sha256']}/egg"
+        f"/api/v1/artifacts/scrapy/{artifact['content_hash']}/egg"
     )
     assert download.status_code == 200
     assert download.content == content
 
 
-async def test_upload_same_filename_different_hash_can_coexist(exec_client):
+async def test_upload_same_content_dedups_build_artifact(exec_client):
+    files = {"file": ("demo.egg", _egg(), "application/octet-stream")}
+    first = await exec_client.post(
+        "/api/v1/artifacts/scrapy/egg", files=files, data={"project": "demo"}
+    )
+    second = await exec_client.post(
+        "/api/v1/artifacts/scrapy/egg",
+        files={"file": ("demo.egg", _egg(), "application/octet-stream")},
+        data={"project": "demo"},
+    )
+    assert first.json()["artifact"]["id"] == second.json()["artifact"]["id"]
+    listed = await exec_client.get("/api/v1/artifacts")
+    rows = listed.json()["artifacts"]
+    assert len([a for a in rows if a["content_hash"]]) == 1
+
+
+async def test_upload_different_hash_two_artifacts(exec_client):
     for extra in ("a", "b"):
         r = await exec_client.post(
             "/api/v1/artifacts/scrapy/egg",
@@ -57,12 +78,10 @@ async def test_upload_same_filename_different_hash_can_coexist(exec_client):
         )
         assert r.status_code == 200, r.text
 
-    listed = await exec_client.get("/api/v1/artifacts/scrapy")
-    assert listed.status_code == 200
+    listed = await exec_client.get("/api/v1/artifacts")
     artifacts = listed.json()["artifacts"]
     assert len(artifacts) == 2
-    assert {a["filename"] for a in artifacts} == {"demo.egg"}
-    assert len({a["sha256"] for a in artifacts}) == 2
+    assert len({a["content_hash"] for a in artifacts}) == 2
 
 
 async def test_upload_rejects_invalid_zip(exec_client):

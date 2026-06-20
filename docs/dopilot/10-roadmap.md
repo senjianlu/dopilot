@@ -9,7 +9,7 @@
 
 ## 0. 总览
 
-分期沿用 `00-requirements.md`：**阶段0 基座 → 阶段1 Scrapy 跑稳 → 阶段1.5 通信层重构（Redis Streams） → 阶段2 Python 脚本 → 阶段3 Docker 长连接**。核心原则：**一类做稳再上下一类**。
+分期沿用 `00-requirements.md`：**阶段0 基座 → 阶段1 Scrapy 跑稳 → 阶段1.5 通信层重构（Redis Streams） → 阶段1.8 领域模型清理 → 阶段2 Python 脚本 → 阶段3 Docker 长连接**。核心原则：**一类做稳再上下一类**。
 
 > **【通信层重构 = 阶段1.5】** 阶段0/1 以 **server 主动 HTTP pull** 交付（既定事实，见各 phase brief）。server↔agent 通信破坏性翻案为 **Redis Streams + agent 主动 heartbeat** 作为独立的**阶段1.5**承载，**不回改 phase-0/1 历史记录**。任务书见 [`phases/phase-1.5/00-brief.md`](../phases/phase-1.5/00-brief.md)，唯一设计真相见 [`refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md)。下文阶段0/1 的 Epic 与节点/日志主线维持 HTTP pull 既定形态；通信迁移集中见 §3.5。
 
@@ -19,7 +19,8 @@
 阶段0 基座 ─────┼────────────────────────────┴────────────────────────┴──────────────────────────┤
 阶段1 Scrapy ───┤  dopilot-agent(内管本机 scrapyd) + ScrapydExecutor(全新实现) + server pull 日志 + 定时 + 节点策略 + 推模式 + 前端 M1~M3 │
 阶段1.5 重构 ──┤  server↔agent 通信 HTTP pull → Redis Streams(命令/事件/日志) + agent 主动 heartbeat（破坏性、无双轨；见 §3.5 / phase-1.5）│
-阶段2 脚本 ─────┤  ScriptExecutor(复用阶段1 agent) + 脚本 stdout/stderr 日志源                      │
+阶段1.8 清理 ──┤  BuildArtifact + ExecutionTemplate + Schedule overrides + Task/Execution public clean-cut，为 python_wheel/docker_image 预留类型与能力过滤 │
+阶段2 脚本 ─────┤  PythonWheelExecutor(复用阶段1 agent) + .whl/venv/subprocess + stdout/stderr 日志源                      │
 阶段3 长连接 ───┤  DockerExecutor(Docker/K3s SDK) + 容器生命周期 + 容器日志源                      │
                 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -34,7 +35,7 @@
 
 | 抽象 | 作用 | 来源 | 推荐方案 |
 |------|------|------|---------|
-| **`BaseExecutor`** | 按 `task_type` 多态分派下发/运行；scrapyd / 脚本 / docker 各实现一个 | `01-gap-executors.md` §6 | 方案 A（抽象 + 多态）；通道**自阶段1 即走 dopilot-agent**（agent 内管本机 scrapyd），不再分「集中式过渡 + 终态分布式」两步。server↔agent 传输：**阶段1 交付 HTTP；阶段1.5 起 v1 最终为 Redis Streams**（`run_on_node`→XADD command、`get_status`→消费 `agent-events`），见下方注与 §3.5 |
+| **`BaseExecutor`** | 按 resolved `artifact_type` 多态分派下发/运行；scrapy / python_wheel / docker_image 各实现一个 | `01-gap-executors.md` §6、`phases/phase-1.8/00-brief.md` | 方案 A（抽象 + 多态）；通道**自阶段1 即走 dopilot-agent**（agent 内管本机 scrapyd），不再分「集中式过渡 + 终态分布式」两步。server↔agent 传输：**阶段1 交付 HTTP；阶段1.5 起 v1 最终为 Redis Streams**（`run_on_node`→XADD command、`get_status`→消费 `agent-events`），见下方注与 §3.5。阶段1.8 后，`task_type` 仅作为现有 agent wire 字段保留在边界，核心域使用 `artifact_type`。 |
 | **`LogSource`** | 统一三类日志来源（scrapyd job.log / 脚本 stdout·stderr / 容器 logs）为同一流 | `03-gap-realtime-logs.md` §4 | **阶段1 交付 server 主动 pull agent tail API；阶段1.5 起 v1 最终为 agent 经 Redis log stream 推 + server 消费落盘（`RedisLogSource`）**；均 server→web SSE、第一版不用 WebSocket；正文落 server `/server-data/logs`，索引/offset/状态落 PostgreSQL |
 | **`node_strategy`** | 节点选择三态：指定 / 全部 / 随机；触发时动态归约 | `02-gap-scheduling-nodes-push.md` §3 | 方案 A（Task 加 `node_strategy`，默认 `all`，random→`random.choice`） |
 
@@ -69,6 +70,19 @@
 | 推模式(立即下发) | 🆕 | 经 `BaseExecutor` 抽象 + `api/v1` 独立推送端点，下发到指定节点立即执行 | `02-gap` §4 |
 | 前端分阶段交付 M1~M3 | 🆕 | SPA greenfield 分阶段交付：servers/jobs(M1) → 实时日志/stats(M2) → schedule/tasks(M3，含节点策略+推模式 UI) | `06-frontend-rewrite.md` §2 |
 
+## 3.8 阶段 1.8：领域模型清理（Build Artifact / Execution Template）
+
+> 阶段 1.8 是接入 Python `.whl` 脚本前的概念与 API clean-cut。任务书见
+> [`phases/phase-1.8/00-brief.md`](../phases/phase-1.8/00-brief.md)。
+
+| Epic | 类型 | 说明 | 文档 |
+|------|------|------|------|
+| BuildArtifact 实体 | 🆕 | Scrapy egg 从“爬虫 artifact”泛化为真实 DB 实体 `build_artifacts`；阶段 1.8 仅 `artifact_type=scrapy` + `package_format=egg` 可运行，预留 `python_wheel` 和 `docker_image`。 | `phases/phase-1.8/00-brief.md` |
+| ExecutionTemplate | 🆕 | `TaskTemplate` 改为 `ExecutionTemplate`，必须绑定一个 BuildArtifact；Scrapy 命令只读展示，用户配置 spider/settings/args 与节点策略。 | `phases/phase-1.8/00-brief.md` |
+| public Task/Execution clean-cut | 🆕 | public API/Web 中父级运行统一叫 Task，单节点原子单元叫 Execution；Redis/disk/agent seam 仍保留 `execution_id=task_id`、`attempt_id=execution_id`。 | `phases/phase-1.8/00-brief.md` |
+| Schedule overrides | 🆕 | Schedule 必须引用 ExecutionTemplate，可覆盖执行参数、节点策略、节点，不可覆盖构建产物；resolved snapshot 优先级为 schedule override > template default > artifact default。 | `phases/phase-1.8/00-brief.md` |
+| 能力过滤 | 🆕 | 调度目标过滤增加 artifact type → capability 映射：`scrapy -> scrapy`、`python_wheel -> python_wheel`、`docker_image -> docker_runtime`。 | `phases/phase-1.8/00-brief.md` |
+
 ## 3.5 阶段 1.5：通信层重构（server↔agent → Redis Streams）
 
 > **破坏性重构、无双轨**：把阶段 1 已交付的 server 主动 HTTP（run/status/tail pull + 轮询 `/health`）整体翻案为 **Redis Streams + agent 主动 heartbeat**。立即启动（不等阶段 2/3）。任务书见 [`phases/phase-1.5/00-brief.md`](../phases/phase-1.5/00-brief.md)，**唯一设计真相**见 [`refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md)。阶段 1 的 HTTP pull 为既定事实，本阶段替换之、不回改 phase-1 记录。
@@ -88,12 +102,16 @@
 
 ## 4. 阶段 2：Python 脚本（复用阶段1 已落地的 dopilot-agent）
 
-> dopilot-agent 已在**阶段1 落地**（内管本机 scrapyd + server pull 日志；通信层于**阶段1.5** 迁至 Redis Streams，见 §3.5），阶段2 不再新建 agent，仅在既有 agent 上加脚本执行能力（脚本日志同走重构后的 Redis log stream）。
+> dopilot-agent 已在**阶段1 落地**（内管本机 scrapyd + server pull 日志；
+> 通信层于**阶段1.5**迁至 Redis Streams，见 §3.5），阶段 1.8 已把
+> BuildArtifact / ExecutionTemplate / Task / Execution 模型清理为跨类型口径。
+> 阶段2 不再新建 agent，仅在既有 agent 上加 `python_wheel` 能力。
 
 | Epic | 类型 | 说明 | 文档 |
 |------|------|------|------|
-| `ScriptExecutor` | 🆕 | 一次性 Python3 脚本执行器，复用阶段1 dopilot-agent（agent 拉起脚本子进程） | `01-gap-executors.md` §6 |
-| 脚本日志源 | 🆕 | LogSource 接脚本 `stream=stdout/stderr`（log/stdout/stderr/system 四类，脚本阶段启用 stdout/stderr）；走阶段1.5 重构后的 **agent 经 Redis log stream 推 + server 消费 + SSE** 主线 | `03-gap-realtime-logs.md` §2 |
+| `PythonWheelExecutor` / Script runner | 🆕 | Python 脚本以 `.whl` 构建产物接入。agent 下载 wheel、校验 sha256、按构建产物 hash 缓存 venv，使用 `asyncio.create_subprocess_exec` 启动 venv 内 Python/console script。 | `01-gap-executors.md` §6 |
+| 脚本状态 | 🆕 | agent 以子进程生命周期为权威：准备环境→启动成功发 running→退出码 0 为 succeeded/finished，非 0 为 failed，取消时 SIGTERM→grace→SIGKILL 后 canceled。第一版不要求脚本 SDK/心跳协议。 | `phases/phase-1.8/00-brief.md` |
+| 脚本日志源 | 🆕 | LogSource 接脚本 `stream=stdout/stderr`；agent 强制 `PYTHONUNBUFFERED=1` / `python -u`，异步读取 stdout/stderr 并经 Redis log stream 推送，server 消费落盘 + SSE。 | `03-gap-realtime-logs.md` §2 |
 | 定时/节点/推模式 | ♻️ | 复用 dopilot 阶段1 已建能力（dopilot 自有，非 scrapydweb） | `02-gap` |
 
 ## 5. 阶段 3：Docker 长连接爬虫（最后）
@@ -113,7 +131,8 @@ dopilot 骨架搭建(apps/packages) ─┐
 token认证 ──────────────────────┼─► 前端骨架 M0 ──► 前端分阶段交付 M1~M3
 Docker化(08, server+agent) ──────┘
 dopilot-agent(阶段1,内管本机 scrapyd) ──► [阶段1]agent 注册+轮询/health ──► server→agent→本机 scrapyd→scrapy   (健康→heartbeat 见阶段1.5)
-BaseExecutor 抽象 ──► ScrapydExecutor(阶段1,经 agent) ──► ScriptExecutor(阶段2,复用 agent) ──► DockerExecutor(阶段3)
+BuildArtifact/ExecutionTemplate(阶段1.8) ──► scrapy egg ──► python_wheel(.whl) ──► docker_image
+BaseExecutor 抽象 ──► ScrapydExecutor(阶段1,经 agent) ──► PythonWheelExecutor(阶段2,复用 agent) ──► DockerExecutor(阶段3)
 LogSource 抽象 ──► [阶段1]server pull(agent tail API) / [阶段1.5]agent XADD log stream + server consumer ──► server→web SSE ──► 正文落 /server-data/logs + 索引/offset/状态落 PostgreSQL
    stream: scrapyd job.log(log) ──► 脚本 stdout/stderr ──► 容器 logs    (第一版不使用 WebSocket;阶段1=server pull,阶段1.5 起=agent 主动推)
 node_strategy ──► (阶段1 起对所有 Executor 生效;健康过滤来源阶段1.5 改 last_seen_at)

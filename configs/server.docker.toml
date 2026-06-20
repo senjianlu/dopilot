@@ -44,8 +44,12 @@ lost_after_stalled_seconds = 900
 server_shared_token = "change-me-agent-server-token"
 
 [nodes]
-# Reach the agent by its compose service name, not localhost.
-agents = ["agent:6800"]
+# Phase 1.5+ liveness comes from agent heartbeats, not a configured endpoint
+# list, so this stays empty: nodes appear only once an agent heartbeats in. This
+# keeps GET /api/v1/nodes free of phantom "configured-but-unseen" rows (the E2E
+# acceptance asserts an EXACT node count). The old single ["agent:6800"] entry
+# was only a pre-heartbeat placeholder.
+agents = []
 
 [scheduler]
 enabled = true

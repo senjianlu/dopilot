@@ -51,7 +51,7 @@ async def _seed(
     )
     session.add(node)
     task = Task(
-        id=new_id(), task_type="scrapy", target="demo:phase1",
+        id=new_id(), artifact_type="scrapy", target="demo:phase1",
         status=task_status, params={},
     )
     session.add(task)

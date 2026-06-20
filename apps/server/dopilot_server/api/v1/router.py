@@ -7,12 +7,12 @@ from fastapi import APIRouter
 from . import (
     artifacts,
     auth,
-    executions,
     health,
     heartbeat,
     nodes,
     schedules,
     stats,
+    tasks,
     templates,
 )
 
@@ -21,7 +21,7 @@ router.include_router(health.router)
 router.include_router(auth.router)
 router.include_router(nodes.router)
 router.include_router(heartbeat.router)
-router.include_router(executions.router)
+router.include_router(tasks.router)
 router.include_router(artifacts.router)
 router.include_router(templates.router)
 router.include_router(schedules.router)

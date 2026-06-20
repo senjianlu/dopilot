@@ -1,11 +1,14 @@
-"""Task-template service (phase 1.7 packet 2): CRUD + snapshot builder.
+"""Execution-template service (phase 1.8): CRUD + run resolution.
 
-A :class:`TaskTemplate` is a reusable Scrapy run definition. At run time its
-payload is COPIED into an immutable ``Task.template_snapshot`` + the run params,
-so editing the template afterwards never mutates a historical task.
+An :class:`ExecutionTemplate` is a reusable run definition bound to exactly one
+:class:`BuildArtifact`. Every new/updated template MUST bind a runnable build
+artifact (application validation); the core-domain ``artifact_type`` is derived
+from that artifact, so templates no longer carry a ``task_type``. At run time the
+template defaults flow through :func:`resolve.resolve_run`, which copies the
+resolved run into an immutable ``Task.template_snapshot``.
 
-Endpoints stay thin; create/query/view + the template->run-request translation
-live here so they can be unit-tested directly against a session.
+Endpoints stay thin; create/query/view + the template->run translation live here
+so they can be unit-tested directly against a session.
 """
 
 from __future__ import annotations
@@ -17,23 +20,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..errors import ApiError
-from ..models.scheduling import Schedule, TaskTemplate
+from ..models.scheduling import ExecutionTemplate, Schedule
+from . import artifacts as artifact_svc
+from . import resolve
 from .executions import _iso, new_id
 
-# Only "scrapy" is valid in phase 1.7 (script/docker are later phases).
-VALID_TASK_TYPES = frozenset({"scrapy"})
 VALID_NODE_STRATEGIES = frozenset({"all", "random", "selected"})
 
 
-def _validate(data: dict[str, Any]) -> None:
-    task_type = data.get("task_type") or "scrapy"
-    if task_type not in VALID_TASK_TYPES:
-        raise ApiError(
-            400,
-            "template.invalid_task_type",
-            "errors.invalidTaskType",
-            {"task_type": task_type},
-        )
+def _validate_basics(data: dict[str, Any]) -> None:
     strategy = data.get("node_strategy") or "all"
     if strategy not in VALID_NODE_STRATEGIES:
         raise ApiError(
@@ -42,9 +37,9 @@ def _validate(data: dict[str, Any]) -> None:
             "errors.invalidNodeStrategy",
             {"node_strategy": strategy},
         )
-    # scrapy needs a project + spider to be runnable (parse_scrapy_params).
+    # name + spider are required; project/version are derived from the artifact.
     missing = [
-        k for k in ("name", "project", "spider") if not (data.get(k) or "").strip()
+        k for k in ("name", "spider") if not (str(data.get(k) or "")).strip()
     ]
     if missing:
         raise ApiError(
@@ -55,17 +50,35 @@ def _validate(data: dict[str, Any]) -> None:
         )
 
 
-def create_template(session: AsyncSession, data: dict[str, Any]) -> TaskTemplate:
-    _validate(data)
-    template = TaskTemplate(
+async def _require_artifact(session: AsyncSession, build_artifact_id: str | None):
+    """Resolve + validate the mandatory runnable build artifact binding."""
+    if not (build_artifact_id or "").strip():
+        raise ApiError(
+            400,
+            "template.build_artifact_required",
+            "errors.buildArtifactRequired",
+            {},
+        )
+    return await artifact_svc.get_runnable_artifact_or_404(
+        session, build_artifact_id
+    )
+
+
+async def create_template(
+    session: AsyncSession, data: dict[str, Any]
+) -> ExecutionTemplate:
+    _validate_basics(data)
+    artifact = await _require_artifact(session, data.get("build_artifact_id"))
+    meta = dict(artifact.artifact_metadata or {})
+    template = ExecutionTemplate(
         id=new_id(),
         name=str(data["name"]).strip(),
         description=data.get("description"),
-        task_type=data.get("task_type") or "scrapy",
-        project=data.get("project"),
-        version=data.get("version"),
-        spider=data.get("spider"),
-        artifact=dict(data.get("artifact") or {}),
+        build_artifact_id=artifact.id,
+        # project/version come from the bound artifact, not the user.
+        project=meta.get("project"),
+        version=meta.get("version"),
+        spider=str(data["spider"]).strip(),
         settings={str(k): str(v) for k, v in (data.get("settings") or {}).items()},
         args={str(k): str(v) for k, v in (data.get("args") or {}).items()},
         node_strategy=data.get("node_strategy") or "all",
@@ -75,29 +88,29 @@ def create_template(session: AsyncSession, data: dict[str, Any]) -> TaskTemplate
     return template
 
 
-def update_template(
-    template: TaskTemplate, data: dict[str, Any]
-) -> TaskTemplate:
-    """Patch mutable template fields. Run params merge name+project+spider in."""
+async def update_template(
+    session: AsyncSession, template: ExecutionTemplate, data: dict[str, Any]
+) -> ExecutionTemplate:
+    """Patch mutable template fields. Always re-validates the artifact binding."""
     merged = {
         "name": data.get("name", template.name),
-        "project": data.get("project", template.project),
         "spider": data.get("spider", template.spider),
-        "task_type": data.get("task_type", template.task_type),
         "node_strategy": data.get("node_strategy", template.node_strategy),
     }
-    _validate(merged)
+    _validate_basics(merged)
+    # build_artifact_id is mandatory on every update; default to the current one.
+    artifact = await _require_artifact(
+        session, data.get("build_artifact_id", template.build_artifact_id)
+    )
+    meta = dict(artifact.artifact_metadata or {})
     template.name = str(merged["name"]).strip()
-    template.task_type = merged["task_type"]
     template.node_strategy = merged["node_strategy"]
-    template.project = merged["project"]
-    template.spider = merged["spider"]
+    template.spider = str(merged["spider"]).strip()
+    template.build_artifact_id = artifact.id
+    template.project = meta.get("project")
+    template.version = meta.get("version")
     if "description" in data:
         template.description = data["description"]
-    if "version" in data:
-        template.version = data["version"]
-    if "artifact" in data:
-        template.artifact = dict(data.get("artifact") or {})
     if "settings" in data:
         template.settings = {
             str(k): str(v) for k, v in (data.get("settings") or {}).items()
@@ -113,62 +126,63 @@ def update_template(
 
 async def get_template(
     session: AsyncSession, template_id: str
-) -> TaskTemplate | None:
+) -> ExecutionTemplate | None:
     result = await session.execute(
-        select(TaskTemplate).where(TaskTemplate.id == template_id)
+        select(ExecutionTemplate).where(ExecutionTemplate.id == template_id)
     )
     return result.scalar_one_or_none()
 
 
 async def get_template_or_404(
     session: AsyncSession, template_id: str
-) -> TaskTemplate:
+) -> ExecutionTemplate:
     template = await get_template(session, template_id)
     if template is None:
         raise ApiError(
             404,
             "template.not_found",
             "errors.templateNotFound",
-            {"template_id": template_id},
+            {"execution_template_id": template_id},
         )
     return template
 
 
 async def list_templates(
     session: AsyncSession, limit: int = 200
-) -> list[TaskTemplate]:
+) -> list[ExecutionTemplate]:
     result = await session.execute(
-        select(TaskTemplate)
-        .order_by(TaskTemplate.created_at.desc())
+        select(ExecutionTemplate)
+        .order_by(ExecutionTemplate.created_at.desc())
         .limit(limit)
     )
     return list(result.scalars().all())
 
 
-async def delete_template(session: AsyncSession, template: TaskTemplate) -> None:
+async def delete_template(
+    session: AsyncSession, template: ExecutionTemplate
+) -> None:
     referenced = await session.execute(
-        select(Schedule.id).where(Schedule.template_id == template.id).limit(1)
+        select(Schedule.id)
+        .where(Schedule.execution_template_id == template.id)
+        .limit(1)
     )
     if referenced.first() is not None:
         raise ApiError(
             409,
             "template.in_use",
             "errors.templateInUse",
-            {"template_id": template.id},
+            {"execution_template_id": template.id},
         )
     await session.delete(template)
 
 
-def template_snapshot(template: TaskTemplate) -> dict[str, Any]:
-    """The immutable copy of a template's run-defining fields stored on a task."""
+def template_defaults(template: ExecutionTemplate) -> dict[str, Any]:
+    """The execution-template fields fed into :func:`resolve.resolve_run`."""
     return {
-        "template_id": template.id,
         "name": template.name,
-        "task_type": template.task_type,
         "project": template.project,
         "version": template.version,
         "spider": template.spider,
-        "artifact": dict(template.artifact or {}),
         "settings": dict(template.settings or {}),
         "args": dict(template.args or {}),
         "node_strategy": template.node_strategy,
@@ -176,41 +190,33 @@ def template_snapshot(template: TaskTemplate) -> dict[str, Any]:
     }
 
 
-def build_run_request(
-    template: TaskTemplate,
+async def build_run_request(
+    session: AsyncSession,
+    template: ExecutionTemplate,
+    *,
+    overrides: dict[str, Any] | None = None,
 ) -> tuple[ExecutionRunRequest, dict[str, Any]]:
-    """Translate a template into a run request + its immutable snapshot."""
-    snapshot = template_snapshot(template)
-    params: dict[str, Any] = {
-        "project": template.project,
-        "spider": template.spider,
-        "version": template.version,
-        "settings": dict(template.settings or {}),
-        "args": dict(template.args or {}),
-    }
-    if template.artifact:
-        params["artifact"] = dict(template.artifact)
-    target = template.name or f"{template.project}:{template.spider}"
-    request = ExecutionRunRequest(
-        task_type=template.task_type,
-        target=target,
-        node_strategy=template.node_strategy,
-        node_ids=list(template.node_ids or []),
-        params=params,
+    """Resolve a template (+ optional overrides) into a run request + snapshot."""
+    artifact = await _require_artifact(session, template.build_artifact_id)
+    return resolve.resolve_run(
+        build_artifact=artifact,
+        template_defaults=template_defaults(template),
+        overrides=resolve.sanitize_overrides(overrides),
+        name=template.name,
+        execution_template_id=template.id,
     )
-    return request, snapshot
 
 
-def template_view(template: TaskTemplate) -> dict[str, Any]:
+def template_view(template: ExecutionTemplate) -> dict[str, Any]:
     return {
         "id": template.id,
         "name": template.name,
         "description": template.description,
-        "task_type": template.task_type,
+        "build_artifact_id": template.build_artifact_id,
+        "artifact_type": "scrapy",
         "project": template.project,
         "version": template.version,
         "spider": template.spider,
-        "artifact": template.artifact or {},
         "settings": template.settings or {},
         "args": template.args or {},
         "node_strategy": template.node_strategy,

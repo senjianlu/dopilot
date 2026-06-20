@@ -1,7 +1,8 @@
-"""Executor registry: maps ``task_type`` -> executor instance.
+"""Executor registry: maps ``artifact_type`` -> executor instance (phase 1.8).
 
-Only ``"scrapy"`` is registered in phase 0. ``"script"`` arrives in phase 2 and
-``"docker"`` in phase 3; both register here without changing dispatch code.
+Only ``"scrapy"`` is registered/runnable in phase 1.8. ``"python_wheel"`` and
+``"docker_image"`` arrive in later phases; both register here without changing
+dispatch code.
 """
 
 from __future__ import annotations
@@ -12,19 +13,19 @@ from .scrapyd import ScrapydExecutor
 
 EXECUTOR_REGISTRY: dict[str, BaseExecutor] = {
     "scrapy": ScrapydExecutor(),
-    # "script": ScriptExecutor(),   # phase 2
-    # "docker": DockerExecutor(),   # phase 3
+    # "python_wheel": PythonWheelExecutor(),   # later phase
+    # "docker_image": DockerExecutor(),        # later phase
 }
 
 
-def get_executor(task_type: str) -> BaseExecutor:
-    """Return the executor for ``task_type`` or raise a 400 ``ApiError``."""
-    executor = EXECUTOR_REGISTRY.get(task_type)
+def get_executor(artifact_type: str) -> BaseExecutor:
+    """Return the executor for ``artifact_type`` or raise a 400 ``ApiError``."""
+    executor = EXECUTOR_REGISTRY.get(artifact_type)
     if executor is None:
         raise ApiError(
             400,
-            "execution.unknown_task_type",
-            "errors.unknownTaskType",
-            {"task_type": task_type},
+            "execution.unknown_artifact_type",
+            "errors.unknownArtifactType",
+            {"artifact_type": artifact_type},
         )
     return executor

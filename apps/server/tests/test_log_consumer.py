@@ -42,7 +42,7 @@ async def _seed(session, settings, *, agent_id="agent-1"):
     from dopilot_server.services import executions as svc
 
     task = Task(
-        id=new_id(), task_type="scrapy", target="demo:phase1",
+        id=new_id(), artifact_type="scrapy", target="demo:phase1",
         status=states.TASK_RUNNING, params={},
     )
     session.add(task)

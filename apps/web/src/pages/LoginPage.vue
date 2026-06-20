@@ -37,11 +37,16 @@ async function onSubmit(): Promise<void> {
       </template>
       <el-form label-position="top" @submit.prevent="onSubmit">
         <el-form-item :label="t('login.username')">
-          <el-input v-model="form.username" autocomplete="username" />
+          <el-input
+            v-model="form.username"
+            data-testid="login-username"
+            autocomplete="username"
+          />
         </el-form-item>
         <el-form-item :label="t('login.password')">
           <el-input
             v-model="form.password"
+            data-testid="login-password"
             type="password"
             autocomplete="current-password"
             show-password
@@ -57,6 +62,7 @@ async function onSubmit(): Promise<void> {
         <el-form-item>
           <el-button
             type="primary"
+            data-testid="login-submit"
             :loading="loading"
             native-type="submit"
             @click="onSubmit"

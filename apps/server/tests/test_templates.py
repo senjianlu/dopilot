@@ -1,19 +1,9 @@
-"""Task-template tests (phase 1.7 packet 2): CRUD, run-from-template, snapshot
-immutability, and zero-node no_target via a template run."""
+"""Execution-template tests (phase 1.8): CRUD, mandatory build-artifact binding,
+run-from-template, snapshot immutability, and zero-node no_target via a run."""
 
 from __future__ import annotations
 
 from dopilot_protocol import AgentCommand, command_stream, from_stream_entry
-
-TEMPLATE_BODY = {
-    "name": "demo-template",
-    "project": "demo",
-    "spider": "phase1",
-    "version": "v1",
-    "settings": {"LOG_LEVEL": "INFO"},
-    "args": {"page": "1"},
-    "node_strategy": "all",
-}
 
 
 async def _commands(redis, agent_id="agent-1") -> list[AgentCommand]:
@@ -21,18 +11,29 @@ async def _commands(redis, agent_id="agent-1") -> list[AgentCommand]:
     return [from_stream_entry(AgentCommand, f) for _id, f in entries]
 
 
-async def _create_template(client, **overrides) -> dict:
-    body = {**TEMPLATE_BODY, **overrides}
+async def _create_template(client, seeder, **overrides) -> dict:
+    artifact = overrides.pop("_artifact", None) or await seeder.build_artifact()
+    body = {
+        "name": "demo-template",
+        "build_artifact_id": artifact.id,
+        "spider": "phase1",
+        "settings": {"LOG_LEVEL": "INFO"},
+        "args": {"page": "1"},
+        "node_strategy": "all",
+    }
+    body.update(overrides)
     r = await client.post("/api/v1/templates", json=body)
     assert r.status_code == 200, r.text
     return r.json()
 
 
-async def test_create_and_list_template(exec_client):
-    created = await _create_template(exec_client)
+async def test_create_and_list_template(exec_client, seeder):
+    created = await _create_template(exec_client, seeder)
     assert created["name"] == "demo-template"
+    # project/version are resolved from the bound build artifact (read-only)
     assert created["project"] == "demo"
     assert created["settings"] == {"LOG_LEVEL": "INFO"}
+    assert created["build_artifact_id"]
 
     r = await exec_client.get("/api/v1/templates")
     assert r.status_code == 200
@@ -40,12 +41,44 @@ async def test_create_and_list_template(exec_client):
     assert any(t["id"] == created["id"] for t in rows)
 
 
-async def test_create_template_invalid_missing_spider_400(exec_client):
+async def test_create_template_missing_build_artifact_400(exec_client):
     r = await exec_client.post(
-        "/api/v1/templates", json={"name": "x", "project": "demo"}
+        "/api/v1/templates", json={"name": "x", "spider": "phase1"}
+    )
+    assert r.status_code == 422  # build_artifact_id is a required body field
+
+
+async def test_create_template_unknown_build_artifact_404(exec_client):
+    r = await exec_client.post(
+        "/api/v1/templates",
+        json={"name": "x", "build_artifact_id": "nope", "spider": "phase1"},
+    )
+    assert r.status_code == 404
+    assert r.json()["code"] == "artifact.not_found"
+
+
+async def test_create_template_invalid_missing_spider_400(exec_client, seeder):
+    artifact = await seeder.build_artifact()
+    r = await exec_client.post(
+        "/api/v1/templates",
+        json={"name": "x", "build_artifact_id": artifact.id},
     )
     assert r.status_code == 400
     assert r.json()["code"] == "template.invalid_params"
+
+
+async def test_create_template_reserved_artifact_not_runnable_400(
+    exec_client, seeder
+):
+    artifact = await seeder.build_artifact(
+        artifact_type="python_wheel", package_format="wheel", sha256="c" * 64
+    )
+    r = await exec_client.post(
+        "/api/v1/templates",
+        json={"name": "x", "build_artifact_id": artifact.id, "spider": "phase1"},
+    )
+    assert r.status_code == 400
+    assert r.json()["code"] == "artifact.not_runnable"
 
 
 async def test_get_template_404(exec_client):
@@ -58,17 +91,18 @@ async def test_run_template_creates_task_from_snapshot(
     exec_client, exec_redis, seeder
 ):
     await seeder.healthy_node()
-    template = await _create_template(exec_client)
+    template = await _create_template(exec_client, seeder)
 
     r = await exec_client.post(f"/api/v1/templates/{template['id']}/run")
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "queued"
 
-    detail = (await exec_client.get(f"/api/v1/executions/{body['execution_id']}")).json()
-    assert detail["source"] == "manual"
-    assert detail["template_id"] == template["id"]
-    assert len(detail["attempts"]) == 1
+    detail = (await exec_client.get(f"/api/v1/tasks/{body['task_id']}")).json()
+    assert detail["source"] == "template"
+    assert detail["execution_template_id"] == template["id"]
+    assert detail["build_artifact"]["project"] == "demo"
+    assert len(detail["executions"]) == 1
 
     cmds = await _commands(exec_redis)
     assert len(cmds) == 1
@@ -80,40 +114,40 @@ async def test_template_edit_does_not_mutate_existing_task_snapshot(
     exec_client, seeder
 ):
     await seeder.healthy_node()
-    template = await _create_template(exec_client)
+    template = await _create_template(exec_client, seeder)
     run = (
         await exec_client.post(f"/api/v1/templates/{template['id']}/run")
     ).json()
-    task_id = run["execution_id"]
+    task_id = run["task_id"]
 
     # Edit the template after the task exists.
     upd = await exec_client.put(
         f"/api/v1/templates/{template['id']}",
-        json={"spider": "phase2", "project": "changed"},
+        json={"spider": "phase2"},
     )
     assert upd.status_code == 200
     assert upd.json()["spider"] == "phase2"
 
     # The historical task snapshot is unchanged (immutability).
-    detail = (await exec_client.get(f"/api/v1/executions/{task_id}")).json()
+    detail = (await exec_client.get(f"/api/v1/tasks/{task_id}")).json()
     assert detail["params"]["spider"] == "phase1"
     assert detail["params"]["project"] == "demo"
 
 
-async def test_run_template_no_healthy_nodes_no_target(exec_client):
-    template = await _create_template(exec_client)
+async def test_run_template_no_healthy_nodes_no_target(exec_client, seeder):
+    template = await _create_template(exec_client, seeder)
     r = await exec_client.post(f"/api/v1/templates/{template['id']}/run")
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "no_target"
-    detail = (await exec_client.get(f"/api/v1/executions/{body['execution_id']}")).json()
+    detail = (await exec_client.get(f"/api/v1/tasks/{body['task_id']}")).json()
     assert detail["status_reason"] == "no_target"
-    assert detail["attempts"] == []
-    assert detail["template_id"] == template["id"]
+    assert detail["executions"] == []
+    assert detail["execution_template_id"] == template["id"]
 
 
-async def test_delete_template(exec_client):
-    template = await _create_template(exec_client)
+async def test_delete_template(exec_client, seeder):
+    template = await _create_template(exec_client, seeder)
     r = await exec_client.delete(f"/api/v1/templates/{template['id']}")
     assert r.status_code == 200
     assert r.json()["deleted"] is True
@@ -122,13 +156,13 @@ async def test_delete_template(exec_client):
     ).status_code == 404
 
 
-async def test_delete_template_referenced_by_schedule_409(exec_client):
-    template = await _create_template(exec_client)
+async def test_delete_template_referenced_by_schedule_409(exec_client, seeder):
+    template = await _create_template(exec_client, seeder)
     schedule = await exec_client.post(
         "/api/v1/schedules",
         json={
             "name": "every-30s",
-            "template_id": template["id"],
+            "execution_template_id": template["id"],
             "trigger_type": "interval",
             "interval_seconds": 30,
         },

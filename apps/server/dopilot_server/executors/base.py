@@ -24,11 +24,13 @@ class DispatchUnknownError(Exception):
     """The ``run`` command was XADDed to Redis but the ``sent`` mark failed to
     commit. The command may already be running on the agent, so the API must
     NOT report "not delivered" — it returns 202 ``dispatch_unknown`` and the
-    agent's ``attempt.running`` event converges the execution (refactor/00)."""
+    agent's ``attempt.running`` event converges the execution (refactor/00).
 
-    def __init__(self, execution_id: str) -> None:
-        super().__init__(f"dispatch result unknown for execution {execution_id}")
-        self.execution_id = execution_id
+    ``task_id`` is the parent task whose dispatch result is unknown."""
+
+    def __init__(self, task_id: str) -> None:
+        super().__init__(f"dispatch result unknown for task {task_id}")
+        self.task_id = task_id
 
 
 @dataclass
@@ -41,13 +43,13 @@ class ExecutorContext:
 
 
 class BaseExecutor(ABC):
-    """Abstract runner for one scheduled-object type.
+    """Abstract runner for one build-artifact type.
 
-    Subclasses set :attr:`task_type` (e.g. ``"scrapy"``) and implement
+    Subclasses set :attr:`artifact_type` (e.g. ``"scrapy"``) and implement
     :meth:`run`.
     """
 
-    task_type: str = ""
+    artifact_type: str = ""
 
     @abstractmethod
     async def run(
