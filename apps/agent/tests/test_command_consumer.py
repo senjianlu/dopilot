@@ -73,14 +73,18 @@ def _build(
     return store, runner, consumer
 
 
-def _run_cmd(attempt_id="a1", execution_id="e1") -> AgentCommand:
+def _run_cmd(
+    attempt_id="a1", execution_id="e1", command="scrapy crawl phase1"
+) -> AgentCommand:
+    # Command-first payload: the agent parses ``command`` and resolves
+    # project/version from the build-artifact context.
     return AgentCommand(
         command_id=uuid.uuid4().hex,
         type=AgentCommandType.run,
         agent_id=AGENT_ID,
         execution_id=execution_id,
         attempt_id=attempt_id,
-        payload={"project": "demo", "spider": "phase1"},
+        payload={"command": command, "artifact": {"project": "demo"}},
         created_at="t",
     )
 
@@ -88,7 +92,7 @@ def _run_cmd(attempt_id="a1", execution_id="e1") -> AgentCommand:
 def _artifact_run_cmd(attempt_id="a1", execution_id="e1") -> AgentCommand:
     cmd = _run_cmd(attempt_id=attempt_id, execution_id=execution_id)
     cmd.payload = {
-        "spider": "phase1",
+        "command": "scrapy crawl phase1",
         "artifact": {
             "hash": "a" * 64,
             "project": "demo",
@@ -178,6 +182,42 @@ async def test_run_with_artifact_cache_failure_emits_failed(workdir, fake_redis)
     events = await _events(fake)
     assert [e.type for e in events] == [AgentEventType.accepted, AgentEventType.failed]
     assert events[-1].error_code == "artifact_error"
+
+
+async def test_run_parses_command_args_and_settings(workdir, fake_redis):
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    store, _runner, consumer = _build(workdir, scrapyd, fake)
+    await consumer.setup()
+
+    cmd = _run_cmd(command="scrapy crawl phase1 -a page=2 -s LOG_LEVEL=DEBUG")
+    await fake.xadd(STREAM, to_stream_entry(cmd))
+    await consumer.drain_once()
+
+    # the parsed spider/settings/args reached the local scrapyd schedule call.
+    sched = scrapyd.schedules[0]
+    assert sched["project"] == "demo"
+    assert sched["spider"] == "phase1"
+    assert sched["args"].get("page") == "2"
+    assert sched["settings"].get("LOG_LEVEL") == "DEBUG"
+
+
+async def test_run_invalid_command_emits_failed(workdir, fake_redis):
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    store, _runner, consumer = _build(workdir, scrapyd, fake)
+    await consumer.setup()
+
+    cmd = _run_cmd(command="scrapy crawl phase1; rm -rf /")
+    await fake.xadd(STREAM, to_stream_entry(cmd))
+    await consumer.drain_once()
+
+    # nothing scheduled; a structured failed terminal is emitted.
+    assert scrapyd._counter == 0
+    assert store.read("a1").result == "failed"
+    events = await _events(fake)
+    assert events[-1].type is AgentEventType.failed
+    assert events[-1].error_code == "command_invalid"
 
 
 async def test_duplicate_attempt_id_does_not_restart(workdir, fake_redis):

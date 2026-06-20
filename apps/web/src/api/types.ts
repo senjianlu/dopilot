@@ -117,17 +117,7 @@ export interface UploadEggResponse {
   spiders: string[];
 }
 
-// Override payload for a direct artifact run (POST /artifacts/{id}/run).
-export interface ArtifactRunRequest {
-  name?: string;
-  spider?: string;
-  settings?: Record<string, string>;
-  args?: Record<string, string>;
-  node_strategy?: NodeStrategy;
-  node_ids?: string[];
-}
-
-// Result of creating + dispatching a task (artifact run / template run / trigger).
+// Result of creating + dispatching a task (template run / schedule trigger).
 export interface TaskRunResponse {
   task_id: string;
   status: string;
@@ -231,9 +221,8 @@ export interface ExecutionTemplate {
   artifact_type: string;
   project: string | null;
   version: string | null;
-  spider: string | null;
-  settings: Record<string, string>;
-  args: Record<string, string>;
+  // Phase 1.8.1: command-first. The authoritative `scrapy crawl ...` command.
+  command: string | null;
   node_strategy: NodeStrategy;
   node_ids: string[];
   created_at: string | null;
@@ -248,21 +237,18 @@ export interface CreateExecutionTemplateRequest {
   name: string;
   description?: string | null;
   build_artifact_id: string;
-  spider?: string | null;
-  settings?: Record<string, string>;
-  args?: Record<string, string>;
+  command: string;
   node_strategy?: NodeStrategy;
   node_ids?: string[];
 }
 
 export type TriggerType = "interval" | "cron";
 
-// Schedule overrides applied to the bound execution template at fire time.
-// It may NOT override the build artifact.
+// Schedule overrides applied to the bound execution template at fire time
+// (phase 1.8.1, command-first). A `command` override FULLY replaces the template
+// command. It may NOT override the build artifact.
 export interface ScheduleOverrides {
-  spider?: string | null;
-  settings?: Record<string, string>;
-  args?: Record<string, string>;
+  command?: string | null;
   node_strategy?: NodeStrategy;
   node_ids?: string[];
 }

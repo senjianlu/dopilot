@@ -23,7 +23,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from dopilot_protocol import ExecutionRunRequest, ExecutionRunResponse
+from dopilot_protocol import (
+    ExecutionRunRequest,
+    ExecutionRunResponse,
+    ScrapyRunPayload,
+)
 
 from ..errors import ApiError
 from ..nodes.service import resolve_target_nodes
@@ -71,16 +75,12 @@ class ScrapydExecutor(BaseExecutor):
             return ExecutionRunResponse(task_id=task.id, status=task.status)
 
         outboxes = []
-        payload = {
-            "project": scrapy["project"],
-            "spider": scrapy["spider"],
-            "version": scrapy["version"],
-            "settings": scrapy["settings"],
-            "args": scrapy["args"],
-            "task_type": "scrapy",
-        }
-        if scrapy["artifact"]:
-            payload["artifact"] = scrapy["artifact"]
+        # Command-first run payload: the agent parses ``command`` and resolves
+        # project/version from the build-artifact ``artifact`` context.
+        payload = ScrapyRunPayload(
+            command=scrapy["command"],
+            artifact=scrapy["artifact"],
+        ).model_dump()
         for node in nodes:
             execution = svc.create_execution(ctx.session, task, node)
             outbox = create_run_outbox(

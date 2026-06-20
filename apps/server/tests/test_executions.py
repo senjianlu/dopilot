@@ -1,8 +1,9 @@
-"""Task run/cancel/log API tests (phase 1.8).
+"""Task run/cancel/log API tests (phase 1.8.1, command-first).
 
-Runs are dispatched via the direct build-artifact run path
-(``POST /artifacts/{id}/run``); the parent run is a TASK and the atomic per-node
-unit is an EXECUTION. Dispatch still goes over the Redis command stream.
+Runs are dispatched by running an execution template (``POST /templates/{id}/run``)
+— build artifacts are NO LONGER directly runnable. The parent run is a TASK and
+the atomic per-node unit is an EXECUTION. Dispatch still goes over the Redis
+command stream, now carrying a command-first payload (command + artifact context).
 """
 
 from __future__ import annotations
@@ -24,11 +25,27 @@ async def _commands(redis, agent_id="agent-1") -> list[AgentCommand]:
     return [from_stream_entry(AgentCommand, f) for _id, f in entries]
 
 
-async def _run(exec_client, seeder, *, spider="phase1", **overrides):
-    """Seed an artifact + run it directly; return (artifact, response)."""
+async def _template(exec_client, seeder, *, spider="phase1", **overrides):
+    """Seed an artifact + an execution template; return (artifact, template)."""
     artifact = await seeder.build_artifact()
-    body = {"spider": spider, **overrides}
-    r = await exec_client.post(f"/api/v1/artifacts/{artifact.id}/run", json=body)
+    body = {
+        "name": "t",
+        "build_artifact_id": artifact.id,
+        "command": f"scrapy crawl {spider}",
+        "node_strategy": "all",
+    }
+    body.update(overrides)
+    r = await exec_client.post("/api/v1/templates", json=body)
+    assert r.status_code == 200, r.text
+    return artifact, r.json()
+
+
+async def _run(exec_client, seeder, *, spider="phase1", **overrides):
+    """Seed a template + run it; return (artifact, response)."""
+    artifact, template = await _template(
+        exec_client, seeder, spider=spider, **overrides
+    )
+    r = await exec_client.post(f"/api/v1/templates/{template['id']}/run")
     return artifact, r
 
 
@@ -43,11 +60,11 @@ async def test_run_dispatches_command_execution_queued(
     assert body["status"] == "queued"
     tid = body["task_id"]
 
-    # a run command landed on the agent's command stream
+    # a run command landed on the agent's command stream (command-first payload)
     cmds = await _commands(exec_redis)
     assert len(cmds) == 1
     assert cmds[0].type.value == "run"
-    assert cmds[0].payload["spider"] == "phase1"
+    assert cmds[0].payload["command"] == "scrapy crawl phase1"
     # wire seam: the command payload still carries task_type
     assert cmds[0].payload["task_type"] == "scrapy"
     assert cmds[0].task_type == "scrapy"
@@ -63,48 +80,30 @@ async def test_run_dispatches_command_execution_queued(
     assert execution["task_id"] == tid
     # the resolved build-artifact snapshot is frozen on the task
     assert view["build_artifact"]["project"] == "demo"
-    assert view["source"] == "direct_artifact"
+    assert view["source"] == "template"
 
 
-async def test_run_uses_artifact_project_and_payload(
+async def test_run_carries_artifact_context_in_payload(
     exec_client, exec_redis, seeder
 ):
     await seeder.healthy_node()
     _artifact, r = await _run(exec_client, seeder)
     assert r.status_code == 200, r.text
     cmds = await _commands(exec_redis)
-    assert cmds[0].payload["project"] == "demo"
-    assert cmds[0].payload["version"] == "sha256-aaaaaaaaaaaa"
-    assert cmds[0].payload["artifact"]["project"] == "demo"
+    # command-first: project/version travel in the artifact context, not at top.
+    artifact = cmds[0].payload["artifact"]
+    assert artifact["project"] == "demo"
+    assert artifact["version"] == "sha256-aaaaaaaaaaaa"
+    assert artifact["fetch_path"].endswith("/egg")
 
 
-async def test_run_missing_spider_400(exec_client, seeder):
-    await seeder.healthy_node()
+async def test_direct_artifact_run_endpoint_removed(exec_client, seeder):
+    # Build artifacts can no longer be run directly (endpoint removed).
     artifact = await seeder.build_artifact()
-    r = await exec_client.post(f"/api/v1/artifacts/{artifact.id}/run", json={})
-    assert r.status_code == 400
-    assert r.json()["code"] == "execution.invalid_params"
-
-
-async def test_run_reserved_artifact_type_not_runnable_400(exec_client, seeder):
-    await seeder.healthy_node()
-    artifact = await seeder.build_artifact(
-        artifact_type="python_wheel", package_format="wheel", sha256="b" * 64
-    )
     r = await exec_client.post(
         f"/api/v1/artifacts/{artifact.id}/run", json={"spider": "phase1"}
     )
-    assert r.status_code == 400
-    assert r.json()["code"] == "artifact.not_runnable"
-
-
-async def test_run_unknown_artifact_404(exec_client, seeder):
-    await seeder.healthy_node()
-    r = await exec_client.post(
-        "/api/v1/artifacts/does-not-exist/run", json={"spider": "phase1"}
-    )
-    assert r.status_code == 404
-    assert r.json()["code"] == "artifact.not_found"
+    assert r.status_code in (404, 405)
 
 
 async def test_run_no_healthy_nodes_creates_no_target_task(exec_client, seeder):
@@ -119,7 +118,7 @@ async def test_run_no_healthy_nodes_creates_no_target_task(exec_client, seeder):
     assert view["status_reason"] == "no_target"
     assert view["status_detail"]["healthy_count"] == 0
     assert view["executions"] == []  # no fake execution
-    assert view["source"] == "direct_artifact"
+    assert view["source"] == "template"
 
 
 async def test_run_excludes_node_without_resolved_capability(exec_client, seeder):
@@ -152,7 +151,7 @@ async def test_run_redis_down_503_dispatch_unavailable(
 
 async def test_run_dispatch_unknown_202(exec_client, exec_redis, seeder, db_session):
     await seeder.healthy_node()
-    artifact = await seeder.build_artifact()
+    _artifact, template = await _template(exec_client, seeder)
     # XADD succeeds but the sent-mark commit (the 2nd commit in run) is lost.
     orig = db_session.commit
     state = {"n": 0}
@@ -165,9 +164,7 @@ async def test_run_dispatch_unknown_202(exec_client, exec_redis, seeder, db_sess
 
     db_session.commit = flaky
     try:
-        r = await exec_client.post(
-            f"/api/v1/artifacts/{artifact.id}/run", json={"spider": "phase1"}
-        )
+        r = await exec_client.post(f"/api/v1/templates/{template['id']}/run")
     finally:
         db_session.commit = orig
         await db_session.rollback()

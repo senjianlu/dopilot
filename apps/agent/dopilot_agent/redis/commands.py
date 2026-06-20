@@ -31,9 +31,11 @@ from dopilot_protocol import (
     AgentRunRequest,
     AttemptStatus,
     LostReason,
+    ScrapyCommandError,
     StopIntent,
     command_stream,
     from_stream_entry,
+    parse_scrapy_command,
 )
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
@@ -230,17 +232,27 @@ class CommandConsumer:
 
         payload = cmd.payload or {}
         artifact = payload.get("artifact") if isinstance(payload.get("artifact"), dict) else None
-        project = str((artifact or {}).get("project") or payload.get("project", ""))
+        project = str((artifact or {}).get("project") or "")
         version = (
-            str((artifact or {}).get("version") or payload["version"])
-            if (artifact or {}).get("version") or payload.get("version")
+            str((artifact or {}).get("version"))
+            if (artifact or {}).get("version")
             else None
         )
+        # Command-first: parse the authoritative ``scrapy crawl ...`` command into
+        # spider/args/settings; project/version come from the artifact context.
+        parsed = None
+        command_error: dict = {}
+        try:
+            parsed = parse_scrapy_command(payload.get("command"))
+        except ScrapyCommandError as exc:
+            command_error = exc.detail
+        spider = parsed.spider if parsed is not None else ""
+
         reserved = self._store.create_reserved(
             execution_id=cmd.execution_id,
             attempt_id=cmd.attempt_id,
             project=project,
-            spider=str(payload.get("spider", "")),
+            spider=spider,
             version=version,
         )
         if reserved is None:
@@ -249,7 +261,31 @@ class CommandConsumer:
             return
 
         await self._events.emit_accepted(cmd.execution_id, cmd.attempt_id)
-        if artifact is not None:
+
+        # Reject an invalid/missing command or missing artifact context with a
+        # structured terminal failure (idempotent: state is now reserved).
+        if parsed is None or not project:
+            detail = dict(command_error)
+            if not project:
+                detail = {"reason": "artifact_missing", **detail}
+            self._store.mark_done(
+                cmd.attempt_id, result="failed", error_code="command_invalid"
+            )
+            await self._events.emit_terminal(
+                cmd.execution_id,
+                cmd.attempt_id,
+                AgentEventType.failed,
+                error_code="command_invalid",
+                error_detail=detail,
+            )
+            return
+
+        # Ensure the egg is cached locally before scheduling, but only when the
+        # artifact context carries a fetchable hash (server always sends one).
+        has_fetchable_artifact = bool(
+            artifact and (artifact.get("hash") or artifact.get("sha256"))
+        )
+        if has_fetchable_artifact:
             if self._artifact_cache is None:
                 self._store.mark_done(
                     cmd.attempt_id, result="failed", error_code="artifact_cache_unavailable"
@@ -279,10 +315,10 @@ class CommandConsumer:
             execution_id=cmd.execution_id,
             attempt_id=cmd.attempt_id,
             project=project,
-            spider=str(payload.get("spider", "")),
+            spider=parsed.spider,
             version=version,
-            settings={str(k): str(v) for k, v in (payload.get("settings") or {}).items()},
-            args={str(k): str(v) for k, v in (payload.get("args") or {}).items()},
+            settings=dict(parsed.settings),
+            args=dict(parsed.args),
         )
         try:
             job_id = await self._runner.schedule(run_req)

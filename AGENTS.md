@@ -56,6 +56,10 @@ For each substantial task:
 Keep artifacts in `docs/phases/<phase-or-task>/` unless the work is not tied to a
 phase. Use the templates in `docs/agent-governance/templates/`.
 
+Manual Claude process stops are user-controlled. Codex must not manually stop,
+kill, interrupt, or restart a running Claude subprocess unless the user has
+explicitly approved that specific stop action.
+
 ## Review Expectations
 
 Codex reviews should prioritize:

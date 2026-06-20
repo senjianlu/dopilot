@@ -86,6 +86,9 @@ class FakeScrapyd:
         self.fail_schedule = False
         self.fail_addversion = False
         self.fail_listjobs = False
+        # Captured schedule.json submissions (project/spider/args/settings) so
+        # command-first tests can assert what the agent sent to scrapyd.
+        self.schedules: list[dict] = []
 
     # --- test-side helpers ------------------------------------------------
     def add_running(self, job_id: str, project: str, spider: str) -> None:
@@ -129,10 +132,28 @@ class FakeScrapyd:
         form = self._form(request)
         self._counter += 1
         job_id = f"job-{self._counter:04d}"
-        self.add_running(
-            job_id,
-            self._first(form, "project") or "?",
-            self._first(form, "spider") or "?",
+        project = self._first(form, "project") or "?"
+        spider = self._first(form, "spider") or "?"
+        self.add_running(job_id, project, spider)
+        # Decode scrapyd's wire form: repeated ``setting=KEY=VALUE`` for settings,
+        # any other non-reserved field is a spider arg.
+        reserved = {"project", "spider", "_version", "setting"}
+        settings: dict[str, str] = {}
+        for raw in form.get("setting", []):
+            key, _, value = raw.partition("=")
+            settings[key] = value
+        args = {
+            k: v[0]
+            for k, v in form.items()
+            if k not in reserved and v
+        }
+        self.schedules.append(
+            {
+                "project": project,
+                "spider": spider,
+                "args": args,
+                "settings": settings,
+            }
         )
         return httpx.Response(200, json={"status": "ok", "jobid": job_id})
 

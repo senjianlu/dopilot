@@ -81,7 +81,7 @@ test("nodes page renders the three agents as scrapy-healthy", async () => {
   expect(rendered).toBe(AGENT_IDS.length);
 });
 
-test("build artifacts page uploads the demo egg and runs it", async () => {
+test("build artifacts page uploads the demo egg (not directly runnable)", async () => {
   await page.getByTestId("nav-artifacts").click();
   await expect(page.getByTestId("artifacts-table")).toBeVisible();
 
@@ -98,16 +98,12 @@ test("build artifacts page uploads the demo egg and runs it", async () => {
   await expect(page.getByTestId("artifact-type-demo")).toHaveText("scrapy");
   await expect(page.getByTestId("artifact-format-demo")).toHaveText("egg");
 
-  // Direct artifact run navigates to the task detail page.
-  await page.getByTestId("artifact-run-demo").click();
-  await expect(page).toHaveURL(/\/tasks\/[^/]+$/, { timeout: 30_000 });
-  await expect(page.getByTestId("task-detail")).toBeVisible();
-  // Fan-out over the three agents yields three executions.
-  const count = await waitForExecutionCount(page, AGENT_IDS.length);
-  expect(count).toBe(AGENT_IDS.length);
+  // Phase 1.8.1: build artifacts are NOT directly runnable — there is no run
+  // control on the row. Users create an execution template (next test).
+  await expect(page.getByTestId("artifact-run-demo")).toHaveCount(0);
 });
 
-test("execution templates page creates a template with a read-only command and runs it", async () => {
+test("execution templates page creates a command template and runs it", async () => {
   await page.getByTestId("nav-templates").click();
   await expect(page.getByTestId("templates-table")).toBeVisible();
 
@@ -120,17 +116,15 @@ test("execution templates page creates a template with a read-only command and r
 
   // Pick the uploaded demo build artifact (label includes demo_phase1.egg).
   await selectOption(page, "template-artifact-select", "demo_phase1.egg");
-  // Spider list populates from the artifact. Exact match: "phase1" is also a
-  // substring of the artifact option label.
-  await selectOption(page, "template-spider-select", "phase1", { exact: true });
 
   // Project/version are resolved read-only from the artifact.
   await expect(page.getByTestId("template-project")).toHaveValue("demo");
 
-  // The Scrapy command field is read-only / disabled.
-  const command = page.getByTestId("template-command");
-  await expect(command).toBeDisabled();
+  // Phase 1.8.1: command-first. The command field is EDITABLE; it defaults from
+  // the artifact's first spider and can be replaced with a full command.
+  const command = page.getByTestId("template-command-input");
   await expect(command).toHaveValue(/scrapy crawl/);
+  await command.fill("scrapy crawl phase1");
 
   await page.getByTestId("template-submit").click();
   await expect(page.getByTestId("template-dialog")).toBeHidden();

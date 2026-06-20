@@ -37,9 +37,9 @@ def _validate_basics(data: dict[str, Any]) -> None:
             "errors.invalidNodeStrategy",
             {"node_strategy": strategy},
         )
-    # name + spider are required; project/version are derived from the artifact.
+    # name + command are required; project/version are derived from the artifact.
     missing = [
-        k for k in ("name", "spider") if not (str(data.get(k) or "")).strip()
+        k for k in ("name", "command") if not (str(data.get(k) or "")).strip()
     ]
     if missing:
         raise ApiError(
@@ -48,6 +48,8 @@ def _validate_basics(data: dict[str, Any]) -> None:
             "errors.invalidParams",
             {"missing": missing},
         )
+    # command-first: the command must satisfy the shared allowlist grammar.
+    resolve.validate_command(str(data["command"]).strip())
 
 
 async def _require_artifact(session: AsyncSession, build_artifact_id: str | None):
@@ -70,6 +72,10 @@ async def create_template(
     _validate_basics(data)
     artifact = await _require_artifact(session, data.get("build_artifact_id"))
     meta = dict(artifact.artifact_metadata or {})
+    # Once the artifact is known, the command spider must be one it exposes.
+    resolve.validate_command_for_artifact(
+        str(data["command"]).strip(), meta.get("spiders")
+    )
     template = ExecutionTemplate(
         id=new_id(),
         name=str(data["name"]).strip(),
@@ -78,9 +84,7 @@ async def create_template(
         # project/version come from the bound artifact, not the user.
         project=meta.get("project"),
         version=meta.get("version"),
-        spider=str(data["spider"]).strip(),
-        settings={str(k): str(v) for k, v in (data.get("settings") or {}).items()},
-        args={str(k): str(v) for k, v in (data.get("args") or {}).items()},
+        command=str(data["command"]).strip(),
         node_strategy=data.get("node_strategy") or "all",
         node_ids=[str(n) for n in (data.get("node_ids") or [])],
     )
@@ -94,7 +98,7 @@ async def update_template(
     """Patch mutable template fields. Always re-validates the artifact binding."""
     merged = {
         "name": data.get("name", template.name),
-        "spider": data.get("spider", template.spider),
+        "command": data.get("command", template.command),
         "node_strategy": data.get("node_strategy", template.node_strategy),
     }
     _validate_basics(merged)
@@ -103,22 +107,18 @@ async def update_template(
         session, data.get("build_artifact_id", template.build_artifact_id)
     )
     meta = dict(artifact.artifact_metadata or {})
+    # Once the artifact is known, the command spider must be one it exposes.
+    resolve.validate_command_for_artifact(
+        str(merged["command"]).strip(), meta.get("spiders")
+    )
     template.name = str(merged["name"]).strip()
     template.node_strategy = merged["node_strategy"]
-    template.spider = str(merged["spider"]).strip()
+    template.command = str(merged["command"]).strip()
     template.build_artifact_id = artifact.id
     template.project = meta.get("project")
     template.version = meta.get("version")
     if "description" in data:
         template.description = data["description"]
-    if "settings" in data:
-        template.settings = {
-            str(k): str(v) for k, v in (data.get("settings") or {}).items()
-        }
-    if "args" in data:
-        template.args = {
-            str(k): str(v) for k, v in (data.get("args") or {}).items()
-        }
     if "node_ids" in data:
         template.node_ids = [str(n) for n in (data.get("node_ids") or [])]
     return template
@@ -182,9 +182,7 @@ def template_defaults(template: ExecutionTemplate) -> dict[str, Any]:
         "name": template.name,
         "project": template.project,
         "version": template.version,
-        "spider": template.spider,
-        "settings": dict(template.settings or {}),
-        "args": dict(template.args or {}),
+        "command": template.command,
         "node_strategy": template.node_strategy,
         "node_ids": list(template.node_ids or []),
     }
@@ -216,9 +214,7 @@ def template_view(template: ExecutionTemplate) -> dict[str, Any]:
         "artifact_type": "scrapy",
         "project": template.project,
         "version": template.version,
-        "spider": template.spider,
-        "settings": template.settings or {},
-        "args": template.args or {},
+        "command": template.command,
         "node_strategy": template.node_strategy,
         "node_ids": list(template.node_ids or []),
         "created_at": _iso(template.created_at),

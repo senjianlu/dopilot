@@ -6,17 +6,36 @@ unschedulable template run -> ``no_target`` task path.
 
 from __future__ import annotations
 
+import hashlib
+
 from dopilot_protocol import ExecutionRunRequest
 from dopilot_server.services import executions as svc
 from dopilot_server.services import states
 
 
 async def _run_artifact(exec_client, seeder, spider: str):
-    """Direct-run a seeded artifact with a spider override."""
-    artifact = await seeder.build_artifact()
-    return await exec_client.post(
-        f"/api/v1/artifacts/{artifact.id}/run", json={"spider": spider}
+    """Run a seeded artifact via a command-first execution template.
+
+    The artifact must advertise ``spider`` so server-side spider-membership
+    validation accepts ``scrapy crawl <spider>``. Each spider gets a distinct
+    content hash so the seeder does not dedupe distinct spiders onto one
+    artifact.
+    """
+    artifact = await seeder.build_artifact(
+        spiders=(spider,),
+        sha256=hashlib.sha256(spider.encode()).hexdigest(),
     )
+    tpl = await exec_client.post(
+        "/api/v1/templates",
+        json={
+            "name": f"t-{spider}",
+            "build_artifact_id": artifact.id,
+            "command": f"scrapy crawl {spider}",
+            "node_strategy": "all",
+        },
+    )
+    assert tpl.status_code == 200, tpl.text
+    return await exec_client.post(f"/api/v1/templates/{tpl.json()['id']}/run")
 
 
 async def _seed_tasks(session, settings, specs):
@@ -144,7 +163,7 @@ async def test_selected_template_all_unschedulable_creates_no_target(
         json={
             "name": "sel",
             "build_artifact_id": artifact.id,
-            "spider": "phase1",
+            "command": "scrapy crawl phase1",
             "node_strategy": "selected",
             "node_ids": [str(node.id)],
         },

@@ -1,9 +1,7 @@
 import client from "./client";
 import type {
-  ArtifactRunRequest,
   ArtifactsResponse,
   BuildArtifact,
-  TaskRunResponse,
   UploadEggResponse,
 } from "./types";
 
@@ -32,18 +30,6 @@ export async function uploadEgg(
   const { data } = await client.post<UploadEggResponse>(
     "/artifacts/scrapy/egg",
     form,
-  );
-  return data;
-}
-
-// Directly create + dispatch a task from a build artifact.
-export async function runBuildArtifact(
-  id: string,
-  overrides: ArtifactRunRequest = {},
-): Promise<TaskRunResponse> {
-  const { data } = await client.post<TaskRunResponse>(
-    `/artifacts/${id}/run`,
-    overrides,
   );
   return data;
 }

@@ -138,9 +138,10 @@ checks, or broad refactors, include it.
 
 Codex must not kill or restart a Claude subprocess merely because a progress
 note is late. Prefer non-invasive checks such as `ps`, reading the progress file,
-or waiting for the subprocess result. Only terminate Claude when the user asks,
-the process is clearly runaway/destructive, or an external constraint makes it
-unsafe to continue.
+or waiting for the subprocess result. Manual Claude process stops are always
+user-controlled: Codex must not manually stop, kill, interrupt, or restart a
+running Claude subprocess unless the user has explicitly approved that specific
+stop action.
 
 Codex monitoring should be accurate but cheap:
 

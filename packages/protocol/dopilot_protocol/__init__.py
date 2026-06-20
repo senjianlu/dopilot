@@ -17,9 +17,16 @@ from .agent import (
     EggDeployResponse,
 )
 from .common import CapabilitySet, ErrorResponse
-from .execution import ExecutionRunRequest, ExecutionRunResponse
+from .execution import ExecutionRunRequest, ExecutionRunResponse, ScrapyRunPayload
 from .health import HealthResponse
 from .logs import LogStream, TailRequest, TailResponse
+from .scrapy_command import (
+    ParsedScrapyCommand,
+    ScrapyCommandError,
+    build_scrapy_command,
+    is_valid_scrapy_command,
+    parse_scrapy_command,
+)
 from .streams import (
     COMMAND_GROUP,
     EVENT_GROUP,
@@ -51,6 +58,13 @@ __all__ = [
     "TailResponse",
     "ExecutionRunRequest",
     "ExecutionRunResponse",
+    "ScrapyRunPayload",
+    # shared Scrapy command parser/validator (phase 1.8.1, command-first)
+    "ParsedScrapyCommand",
+    "ScrapyCommandError",
+    "parse_scrapy_command",
+    "is_valid_scrapy_command",
+    "build_scrapy_command",
     # server -> agent execution control (phase 1, LEGACY HTTP path)
     "AttemptStatus",
     "AgentRunRequest",
