@@ -1,10 +1,10 @@
 # dopilot 文档
 
-本目录沉淀 dopilot（私有调度平台）的**设计与实现方案**,以及 scrapydweb 的**现状行为参考**。所有文档为简体中文，关键断言均对照源码标注 `file:line`，并经多轮代码校验。
+本目录沉淀 dopilot（自托管、MIT 开源调度平台）的**设计与实现方案**,以及 scrapydweb 的**现状行为参考**。所有文档为简体中文，关键 scrapydweb 行为断言均标注 `file:line`（**相对上游 scrapydweb 1.6.0 / commit `1341cf9`**，是外部行为参考引用），并经多轮代码校验。
 
 > **【scrapydweb 参考边界】** dopilot 为 **greenfield**(全新编写,按 `apps/`+`packages/` 自有领域 structure-first 设计;权威布局见 [`dopilot/05-dev-setup-and-known-issues.md`](dopilot/05-dev-setup-and-known-issues.md) §1)。scrapydweb（[原项目](https://github.com/my8100/scrapydweb)）仅作**功能层/行为参考**与**测试 oracle**;其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 设计依据**,也**不做改名/git mv**。详见 [`dopilot/00-requirements.md`](dopilot/00-requirements.md) 决策表。
 
-> 📁 **scrapydweb 本体(只读行为参考)位于 `reference/scrapydweb/`**。本套文档中的 `scrapydweb/…`、`setup.py`、`tests/` 等路径均相对该目录（完整路径 = `reference/scrapydweb/<路径>`）;它不参与 dopilot 构建、不被 import、不改名。
+> 📁 **scrapydweb 本体仅作外部行为参考，本仓库不再保留本地快照**（为 MIT 开源已移除 `reference/scrapydweb/`）。本套文档中历史出现的 `scrapydweb/…`、`setup.py`、`tests/` 等路径均相对**上游 scrapydweb 1.6.0 / commit `1341cf9`**（公开仓库 https://github.com/my8100/scrapydweb），是外部行为参考引用，**不是本仓库内的路径**；上游代码绝不被拉取/内置/import/参与构建。
 
 ## 推荐阅读顺序
 
@@ -76,4 +76,4 @@
 - **数据库**：PostgreSQL 唯一数据库，SQLAlchemy + 裸 Alembic（FastAPI 无 Flask，不用 Flask-Migrate）；PG 存业务数据 + 日志索引/offset/状态（表 `execution_log_files`），**日志正文不进 PG，落 server 本地卷 `/server-data/logs`**
 - **实时日志**：~~server 按需从 agent tail API（HTTP `GET /logs/tail`）拉取日志增量~~ **现以 [`refactor/00-redis-streams-agent-communication.md`](refactor/00-redis-streams-agent-communication.md) 新模型为准**：改为 **agent 主动经 Redis 日志 stream（`dopilot:server:logs`，base64 字节 + offset/size_bytes/eof）推送增量、server 消费后落盘**；保留四个不变量 —— 第一版不用 WebSocket、server→web SSE、正文落 `/server-data/logs`、PostgreSQL 只存索引/offset/状态。`LogSource` 抽象保留，实现由 `AgentTailLogSource`（server pull）换为 `RedisLogSource`（agent push + server consume）。日志 RPO≠0：server 长停或 Redis 裁剪致 `partial`（新增 `log_integrity` 列），与业务状态分离、不阻塞执行收敛
 - **镜像发布**：构建推送到 Docker Hub `rabbir/dopilot:latest`；server / agent / migrate 使用同一镜像，通过启动命令选择角色；镜像命名空间 `rabbir` ≠ git origin `senjianlu`
-- **仓库结构**：monorepo（`apps/{server,agent,web}` + `packages/{protocol,client}`，权威布局见 `dopilot/05-dev-setup-and-known-issues.md` §1）—— 全新编写，`reference/scrapydweb/` 仅行为参考、不参与构建/不被 import/不改名
+- **仓库结构**：monorepo（`apps/{server,agent,web}` + `packages/{protocol,client}`，权威布局见 `dopilot/05-dev-setup-and-known-issues.md` §1）—— 全新编写；上游 scrapydweb 仅作外部行为参考，本仓库已不保留本地快照，不被拉取/内置/import/参与构建

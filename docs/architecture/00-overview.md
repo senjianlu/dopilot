@@ -5,7 +5,7 @@
 > 阅读约定：
 > - **现状事实**：当前代码确实如此（已标注 `file:line`，可自行复核）。
 > - **行为参考 / 开放问题**：dopilot 全新复刻其行为语义时的方向性意见，尚未落地，可讨论推翻。
-> - 所有 `file:line` 路径均**相对 `reference/scrapydweb/`**（如 `scrapydweb/run.py` 即 `reference/scrapydweb/scrapydweb/run.py`）。
+> - 所有 `file:line` 路径均**相对上游 scrapydweb 1.6.0 / commit `1341cf9`**（如 `scrapydweb/run.py` 即上游 `scrapydweb/run.py`；本仓库不保留本地快照）。
 
 > **【scrapydweb 参考边界】** 整个 `docs/architecture/` 树是 **scrapydweb 现状的功能层 / 行为参考**与**测试 oracle**；其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 的设计依据**。本树中任何指向 scrapydweb 源文件的「改造建议」（如「在 `scrapydweb/...` 下新建 / 改 `models.py` / 改 `default_settings.py`」），都应理解为「dopilot 在 `apps/server/dopilot_server/...`（或 `apps/agent`）下**全新实现**该行为」，而**不是**去改 scrapydweb 文件、也不照搬其结构；保留的 `file:line` 仅作行为参考引用。dopilot 为 greenfield、按 `apps/`+`packages/` 自有领域 structure-first 设计（权威布局见 [`docs/dopilot/05-dev-setup-and-known-issues.md`](../dopilot/05-dev-setup-and-known-issues.md) §1），**不对 scrapydweb 做改名 / git mv**。详见 [`docs/dopilot/00-requirements.md`](../dopilot/00-requirements.md) 决策表。
 
@@ -210,7 +210,7 @@ dopilot 的目标是在这套现成框架上扩展出三类被调度对象（Scr
 | --- | --- |
 | [`docs/dopilot/00-requirements.md`](../dopilot/00-requirements.md) | 需求与目标（北极星文档） |
 | [`docs/dopilot/05-dev-setup-and-known-issues.md`](../dopilot/05-dev-setup-and-known-issues.md) | 开发环境搭建与已知兼容性问题 |
-| [`docs/dopilot/06-frontend-rewrite.md`](../dopilot/06-frontend-rewrite.md) | 前端整体重构方案（Vue 3 + Element Plus，阶段 0） |
+| [`docs/dopilot/06-frontend-rewrite.md`](../dopilot/06-frontend-rewrite.md) | 前端整体重构方案（阶段 2.1 起为 Next.js 静态导出 + shadcn/ui） |
 
 ---
 

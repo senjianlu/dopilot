@@ -2,7 +2,7 @@
 
 > **【scrapydweb 参考边界】** scrapydweb 仅作**功能层/行为参考**与**测试 oracle**;其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 的设计依据**。dopilot 为 greenfield、按 `apps/`+`packages/` 自有领域 structure-first 设计(权威布局见 `05-dev-setup-and-known-issues.md` §1),**不对 scrapydweb 做改名/git mv**。详见 `00-requirements.md` 决策表。
 >
-> 本文为「开发环境搭建」入口文,最容易把 scrapydweb 的装机/配置/目录当成 dopilot 自身做法。请牢记:`reference/scrapydweb` 只读、不被 import、不参与 dopilot 构建、不改名;下文凡涉及 scrapydweb 安装/配置/目录之处,均为**参考观察用途**,不等于 dopilot 自身设计。
+> 本文为「开发环境搭建」入口文,最容易把 scrapydweb 的装机/配置/目录当成 dopilot 自身做法。请牢记:上游 scrapydweb 仅作外部行为参考(本仓库**已移除本地快照**)、不被拉取/内置/import、不参与 dopilot 构建、不改名;下文凡涉及 scrapydweb 安装/配置/目录之处,均为**外部参考观察用途**,不等于 dopilot 自身设计。
 
 > 记录本地导入、依赖安装、以及当前已发现的兼容性问题与修复方案。
 
@@ -10,7 +10,7 @@
 
 ## 1. 仓库与远程
 
-本仓库为 **monorepo**（`00-requirements.md` 决策 8）：server 与 agent 同仓开发，`reference/` 仅作基线参考、不参与构建。
+本仓库为 **monorepo**（`00-requirements.md` 决策 8）：server 与 agent 同仓开发；上游 scrapydweb 仅作外部基线参考（本仓库不保留本地快照）、不参与构建。
 
 > **【通信模型新口径，superseded-by】** server↔agent 通信已由"server 主动 HTTP run/status/tail pull"翻案为"server→Redis Streams 投命令、agent 主动消费/推状态/推日志 + 主动 POST heartbeat"(破坏性、无双轨)。下文布局已据此补入 `apps/server/dopilot_server/redis/`、`apps/agent/dopilot_agent/redis/` 子包与 `packages/protocol/dopilot_protocol/streams.py`;权威口径见 `docs/refactor/00-redis-streams-agent-communication.md`。
 
@@ -46,8 +46,9 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 ├── deploy/{docker/{Dockerfile.base,Dockerfile,docker-compose.yml},k8s/}
 ├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置(经 DOPILOT_CONFIG 加载,不继承 scrapydweb 硬编码 settings)
 ├── scripts/  docs/
-├── reference/scrapydweb/                 # 只读行为参考,绝不进构建上下文/不被 import/不改名
-├── README.md  pyproject.toml  pnpm-workspace.yaml  .dockerignore
+│   # 注:上游 scrapydweb 仅作外部行为参考,本仓库已移除本地 reference/scrapydweb/ 快照(MIT 开源)
+├── LICENSE  SECURITY.md  CONTRIBUTING.md
+├── README.md  README.zh-CN.md  pyproject.toml  pnpm-workspace.yaml  .dockerignore
 ```
 
 > `09-package-rename.md` 不是「把 scrapydweb 改名」的指南,而是 scrapydweb 行为参考 + 逐域移植时的注意事项;dopilot 的 server/agent 包均为全新编写、以 scrapydweb 为行为参考,不做 git mv。
@@ -70,7 +71,7 @@ Git 远程：
 
 ## 3. 搭建步骤
 
-dopilot 自身的开发搭建与「跑通 scrapydweb 基线做参考观察」是**两件不同的事**:dopilot 不依赖、不 import、不安装 `reference/scrapydweb`。
+dopilot 自身的开发搭建与「跑通 scrapydweb 基线做参考观察」是**两件不同的事**:dopilot 不依赖、不 import、不安装上游 scrapydweb;且本仓库不再保留本地快照,需观察时在**仓库之外**克隆上游公开仓库。
 
 ### 3.a dopilot 自身开发搭建(按 apps/packages 布局)
 
@@ -128,13 +129,16 @@ volumes:
 
 ### 3.c 可选:跑通 scrapydweb 基线以做行为参考观察
 
-仅用于**观察 scrapydweb 的参考行为**(功能层对照 + 测试 oracle),**不是 dopilot 自身的安装**,也不进入 dopilot 的运行/构建路径:
+仅用于**观察 scrapydweb 的参考行为**(功能层对照 + 测试 oracle),**不是 dopilot 自身的安装**,也不进入 dopilot 的运行/构建路径。本仓库不保留本地快照,需观察时在**仓库之外**克隆上游公开仓库(scrapydweb `1.6.0` / commit `1341cf9`):
 
 ```bash
+# 在 dopilot 仓库之外的目录操作,切勿把上游代码拷回本仓库
+git clone https://github.com/my8100/scrapydweb /tmp/scrapydweb-ref
+cd /tmp/scrapydweb-ref && git checkout 1341cf9
 python3 -m venv .venv-ref
 source .venv-ref/bin/activate
 pip install -U pip wheel
-pip install -e reference/scrapydweb   # editable 安装 scrapydweb 本体,仅供参考观察
+pip install -e .                      # editable 安装上游 scrapydweb,仅供外部参考观察
 # 关键修复（见下文「已知问题」）：
 pip install "setuptools<81"
 ```

@@ -161,7 +161,7 @@ dopilot **不**沿用 scrapydweb 的本机 logparser + SQLite 路线，采用 **
 - 依赖层与代码层分离，最大化 layer 缓存（依赖变动少、代码变动多）。
 - **统一应用镜像**：`rabbir/dopilot:latest` 同时包含 server、agent、protocol、Scrapy/scrapyd 运行时、Alembic 迁移资源，以及构建后的 Web 静态产物（阶段 2.1：Next.js 静态导出 `apps/web/out`，历史为 Vue SPA）。
 - **启动命令选择角色**：server 容器运行 `dopilot-server` 并**同源托管** Web UI（静态文件，无独立 Web 容器）；agent 容器运行 `dopilot-agent` 并管理本机 scrapyd；migrate 容器运行 `alembic upgrade head`。
-- `.dockerignore` 排除 `reference/`、`.venv/`、`docs/`、`**/tests/`、`*.pyc` 等（dopilot 自有数据目录由卷管理，不进镜像）。
+- `.dockerignore` 排除 `reference/`（防御性保留，本仓库已无该目录）、`.venv/`、`docs/`、`**/tests/`、`*.pyc` 等（dopilot 自有数据目录由卷管理，不进镜像）。
 
 ### 2.3 统一 Dockerfile
 
@@ -662,7 +662,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 ├── deploy/{docker/{Dockerfile.base,Dockerfile,docker-compose.yml},k8s/}
 ├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置(经 DOPILOT_CONFIG 加载,不继承 scrapydweb 硬编码 settings)
 ├── scripts/  docs/
-├── reference/scrapydweb/                 # 只读行为参考,绝不进构建上下文/不被 import/不改名
+│   # 上游 scrapydweb 仅作外部行为参考，本仓库已移除本地 reference/scrapydweb/ 快照（MIT 开源）
 ├── README.md  pyproject.toml  pnpm-workspace.yaml  .dockerignore
 ```
 
@@ -671,7 +671,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 - 统一 Dockerfile 与 compose 都在 `deploy/docker/`，构建上下文仍为仓库根；`Dockerfile.base` 构建 Python/Web 依赖基础镜像，`Dockerfile` 复用基础镜像并构建 web、server wheel、agent wheel，runtime 通过 command 选择角色。
 - `09-package-rename.md` 是 scrapydweb 行为参考与移植注意事项，**不是**对 dopilot 的改名步骤——dopilot 不对 scrapydweb 做改名/git mv。
 
-> ⚠️ `.dockerignore` **务必排除 `reference/`**，否则会把整份 scrapydweb 参考代码打进构建上下文，拖慢构建且可能误拷；scrapydweb 参考代码绝不被 dopilot import。
+> ⚠️ `.dockerignore` **保留排除 `reference/`** 作防御项（本仓库已移除该本地快照）；上游 scrapydweb 代码绝不被 dopilot 拉取/内置/import，也绝不进入构建上下文。
 
 ### 7.3 本地构建与推送（手动）
 

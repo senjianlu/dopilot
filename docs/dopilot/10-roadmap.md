@@ -50,7 +50,7 @@
 | 前端骨架 M0 | 🆕 | 阶段 0 起 SPA + 登录/布局/菜单 + axios + SSE 客户端；后端 FastAPI `/api/v1` 骨架。**阶段 2.1 起技术栈为 Next.js（静态导出）+ shadcn/ui + Recharts + TS**（替换原 Vite+Vue3+EP） | `06-frontend-rewrite.md` §2、`../phases/phase-2.1/00-brief.md` |
 | i18n 框架 | 🆕 | SPA 默认中文（阶段 2.1 起用 **react-i18next**，原 vue-i18n）；后端 `/api/v1` 仅返回结构化 message code，由前端做文案映射 | `04-gap-i18n.md` §7、`06-frontend-rewrite.md` §7 |
 | server/agent Docker 化 | 🆕 | 统一应用镜像 + PostgreSQL 服务/连接配置；server/agent/migrate 通过启动命令选择角色；reference 的 `vars.py` 启动清目录只作行为坑说明 | `08-docker-deployment.md` |
-| 镜像构建发布 + CI | 🆕 | `deploy/docker/Dockerfile` + `.dockerignore`（排除 `reference/`）+ GitHub Actions 推送 `rabbir/dopilot:latest`（决策 7、monorepo 决策 8） | `08-docker-deployment.md` §7 |
+| 镜像构建发布 + CI | 🆕 | `deploy/docker/Dockerfile` + `.dockerignore`（排除 `reference/`，防御性保留）+ GitHub Actions 推送 `rabbir/dopilot:latest`（决策 7、monorepo 决策 8） | `08-docker-deployment.md` §7 |
 | 测试基线 | 🆕 | dopilot 自有测试套件(`apps/server/tests`、`apps/agent/tests`、`apps/web`)；以 scrapydweb/tests 的行为预期作对照(oracle)校准移植正确性 | `07-testing-baseline.md` |
 | 实时日志框架(第一步) | 🆕 | **阶段1 交付** server pull（agent tail API）+ server→web SSE + LogSource 主干，先打通 scrapyd；正文落 server `/server-data/logs`，索引/offset/状态落 PostgreSQL（无 WebSocket）。**阶段1.5 起 v1 最终为 agent 经 Redis log stream 推 + server 消费（`RedisLogSource`）**，见 §3.5 | `03-gap-realtime-logs.md` §4 |
 

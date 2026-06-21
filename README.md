@@ -5,7 +5,7 @@
 <h1 align="center">dopilot</h1>
 
 <p align="center">
-  A private, single-admin scheduling platform for running Scrapy spiders and
+  A self-hosted, single-admin scheduling platform for running Scrapy spiders and
   Python scripts across worker nodes.
 </p>
 
@@ -21,9 +21,12 @@ dopilot is a self-hosted platform that schedules and runs jobs on remote worker
 nodes, streams their logs back in real time, and keeps a durable record of every
 run. It is built greenfield as an `apps/` + `packages/` monorepo.
 
-It is deliberately **single-admin**: there is no multi-user system or RBAC. The
-upstream **scrapydweb** project (under `reference/scrapydweb/`) is kept only as a
-read-only behavioral reference; it is never imported or built.
+It is deliberately **single-admin**: there is no multi-user system or RBAC. It is
+open source under the [MIT license](LICENSE). dopilot draws **behavioral**
+inspiration from the upstream
+[**scrapydweb**](https://github.com/my8100/scrapydweb) project (consulted
+externally as a behavior reference); upstream scrapydweb code is never fetched,
+vendored, imported, or built into dopilot.
 
 ### What it can run today
 
@@ -165,6 +168,13 @@ Goals, decisions, and the phased roadmap live under [`docs/`](docs/README.md):
   build/port roadmap.
 - [`CLAUDE.md`](CLAUDE.md): architecture, hard constraints, current status.
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup and verification commands, and
+[`SECURITY.md`](SECURITY.md) for vulnerability reporting and operator hardening
+(replace the default `change-me` secrets before exposing a deployment).
+
 ## License
 
-See the repository for license details.
+dopilot is released under the [MIT License](LICENSE)
+(SPDX-License-Identifier: `MIT`).

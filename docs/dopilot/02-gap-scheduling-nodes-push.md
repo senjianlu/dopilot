@@ -5,7 +5,7 @@
 > 阅读约定：
 > - **【现状事实】** = 已通过 Read/Grep 在代码中核实，标注 `file:line`。
 > - **【改造建议】 / 【开放问题】** = 设计推断，未实现，需决策。
-> - 本文所有 scrapydweb 路径均指 `reference/scrapydweb/` 下的只读基线，行号以核实当日为准，后续会漂移，请以符号名（函数/类名）为准。
+> - 本文所有 scrapydweb 路径均指上游 scrapydweb 1.6.0 / commit `1341cf9` 的只读基线（外部参考，本仓库不保留本地快照），行号以核实当日为准，后续会漂移，请以符号名（函数/类名）为准。
 
 > **【scrapydweb 参考边界】** scrapydweb 仅作**功能层/行为参考**与**测试 oracle**；其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 的设计依据**。dopilot 为 greenfield、按 `apps/`+`packages/` 自有领域 structure-first 设计（权威布局见 `05-dev-setup-and-known-issues.md` §1），**不对 scrapydweb 做改名/git mv**。本文所有 scrapydweb `file:line` 均为**行为参考引用**而非 dopilot 的待改文件；前端为 SPA greenfield（`apps/web`，直连 `/api/v1`），**无 Jinja 新旧共存式 strangler**；dopilot 自带 `migrations/`（**裸 Alembic**，SQLAlchemy + Alembic，非 Flask-Migrate——FastAPI 无 Flask app），模型演进走迁移，**不继承** scrapydweb「无 Alembic、手工 ALTER、删库重建」的形态；**PostgreSQL 为唯一库**（替换 scrapydweb 多 SQLite），APScheduler jobstore 也落 PG。详见 `00-requirements.md` 决策表。
 
@@ -331,7 +331,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 ├── deploy/{docker/{Dockerfile,docker-compose.yml},k8s/}
 ├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置(经 DOPILOT_CONFIG 加载,不继承 scrapydweb 硬编码 settings)
 ├── scripts/  docs/
-├── reference/scrapydweb/                 # 只读行为参考,绝不进构建上下文/不被 import/不改名
+│   # 上游 scrapydweb 仅作外部行为参考，本仓库已移除本地 reference/scrapydweb/ 快照（MIT 开源）
 ├── README.md  pyproject.toml  pnpm-workspace.yaml  .dockerignore
 ```
 

@@ -27,8 +27,10 @@ commands.
   before changing product behavior.
 - Read the active phase brief under `docs/phases/` before reviewing or
   continuing implementation.
-- Use `reference/scrapydweb/` only as a read-only behavioral reference and test
-  oracle. Never import it, restructure from it, or edit it.
+- Upstream scrapydweb is a **behavioral reference and oracle only, consulted
+  externally** (the public repo at `1.6.0` / commit `1341cf9`). There is no local
+  snapshot in this repo. Never fetch, vendor, copy, import, or restructure from
+  upstream scrapydweb code.
 - Use `docs/agent-governance/` for the Codex-to-Claude operating workflow.
 - Use `docs/agent-governance/02-claude-invocation.md` when launching Claude
   Code from Codex.
@@ -69,7 +71,8 @@ Codex reviews should prioritize:
 - concurrency, idempotency, and recovery gaps;
 - missing tests for changed behavior;
 - migration and deployment risks;
-- accidental use of `reference/scrapydweb/` as source code.
+- accidental fetching, vendoring, or importing of upstream scrapydweb as source
+  code.
 
 Findings must include file and line references when possible. Do not accept a
 Claude implementation until the relevant tests are green or the remaining gaps

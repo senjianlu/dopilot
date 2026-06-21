@@ -104,7 +104,9 @@ be promoted into `docs/phases/`.
   questions.
 - Codex decides whether Claude feedback requires user input. Routine
   implementation details are resolved by Codex and Claude without escalating.
-- Claude must not use `reference/scrapydweb/` as code to copy from.
+- Claude must not fetch, vendor, copy, or import upstream scrapydweb code.
+  Upstream is a behavior reference consulted externally only; there is no local
+  snapshot in this repo.
 - Codex must not accept "tests pass" without command names and outcomes.
 - If Claude cannot complete a step, Claude reports the blocker and the smallest
   next action. Codex decides whether to iterate or escalate.
