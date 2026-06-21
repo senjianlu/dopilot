@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_DIR="${REPO_ROOT}/deploy/docker"
 COMPOSE_BASE="${COMPOSE_DIR}/docker-compose.yml"
-COMPOSE_E2E="${COMPOSE_DIR}/docker-compose.e2e.yml"
+COMPOSE_BUILD="${COMPOSE_DIR}/docker-compose.build.yml"
 SERVER_CONFIG="${REPO_ROOT}/configs/server.docker.toml"
 WEB_DIR="${REPO_ROOT}/apps/web"
 
@@ -38,10 +38,10 @@ SERVER="http://localhost:5000"
 ADMIN_USER="admin"
 ADMIN_PASS="change-me"
 
-# The three agents (agent_id -> compose service key).
+# The three agents (agent_id == compose service key).
 AGENT_IDS=(scrapy-agent-1 scrapy-agent-2 scrapy-agent-3)
 declare -A SERVICE_OF=(
-  [scrapy-agent-1]=agent
+  [scrapy-agent-1]=scrapy-agent-1
   [scrapy-agent-2]=scrapy-agent-2
   [scrapy-agent-3]=scrapy-agent-3
 )
@@ -55,7 +55,7 @@ info() { printf '  ---- %s\n' "$*"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$*" >&2; }
 pass() { printf '  \033[32mPASS\033[0m %s\n' "$*"; }
 
-dc() { docker compose -f "${COMPOSE_BASE}" -f "${COMPOSE_E2E}" "$@"; }
+dc() { docker compose -f "${COMPOSE_BASE}" -f "${COMPOSE_BUILD}" "$@"; }
 
 # ---- diagnostics dump (on failure) -----------------------------------------
 dump_diagnostics() {
@@ -192,11 +192,10 @@ else
 fi
 
 # --- clean-volume bring-up --------------------------------------------------
-step "Clean-volume bring-up (down -v; build base images; up -d --build) — 3 agents"
+step "Clean-volume bring-up (down -v; up -d --build) — 3 agents"
 dc down -v --remove-orphans >/dev/null 2>&1 || true
-info "building dependency base images..."
-"${REPO_ROOT}/scripts/build-docker-base.sh"
 info "building + starting db, redis, migrate, server, and 3 agents..."
+info "(base + build override; image built from local source, public base images)"
 dc up -d --build
 
 step "Wait for services (db, migrate, 3 agents, server)"

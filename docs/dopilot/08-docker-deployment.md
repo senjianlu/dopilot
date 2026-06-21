@@ -207,17 +207,24 @@ dopilot-agent -b 0.0.0.0 -p 6800
 - `agent`：宿主机运行 dopilot-agent，阶段 1 可在本机拉起 scrapyd 子进程，经 Redis 消费命令 + 推事件/日志、并向 server POST heartbeat（不再对外暴露 server→agent 调度 API；`-p 6800` 仅用于容器本地 `/health` healthcheck）。
 - `db` / `redis`：本地开发的基础依赖；Redis 是 server↔agent 通信总线，不是业务数据库。
 
-下面的 compose 示例是**本地完整试用闭环**（server+Web UI + agent + PostgreSQL + Redis 通信总线），用于集成验收、镜像构建验证和部署演练。可执行版本以仓库内 `deploy/docker/docker-compose.yml` 为准；文档只保留关键结构，避免复制后遗漏迁移、健康检查或 compose 网络配置。
+默认 compose 栈是**面向用户的一键部署路径**：直接拉取 CI 构建的 `rabbir/dopilot` 镜像（**无 `build:`**），拉起 server + Web UI + 三个 Scrapy agent + PostgreSQL + Redis 通信总线，可在 `deploy/docker` 下用 `docker compose pull && docker compose up -d` 启动，无需本地构建。本地源码构建/smoke 用 `docker-compose.build.yml` 覆盖文件叠加（见 §7.3）。可执行版本以仓库内 `deploy/docker/docker-compose.yml` 为准；文档只保留关键结构，避免复制后遗漏迁移、健康检查或 compose 网络配置。
 
 ### 2.5 docker-compose 示例
 
+镜像默认 `${DOPILOT_IMAGE:-rabbir/dopilot:latest}`；三个 agent（`scrapy-agent-1/2/3`）对称，仅 `AGENT_ID` 与数据卷不同，共用同一镜像内置的 `/app/configs/agent.toml`（compose env 覆盖 `AGENT_ID` 等字段）。默认配置已**烤进镜像**（`/app/configs/server.toml`、`/app/configs/agent.toml`），默认路径**无需挂载 host 配置**；要定制时把自有 toml 挂到这些路径即可。仅 `scrapy-agent-1` 发布 `6800`（smoke/调试），scrapyd 的 `6801` **永不**发布到 host。
+
 ```yaml
-x-dopilot-build: &dopilot-build
-  context: ../..
-  dockerfile: deploy/docker/Dockerfile
-  args:
-    DOPILOT_PY_BASE_IMAGE: ${DOPILOT_PY_BASE_IMAGE:-rabbir/dopilot-py-base:local}
-    DOPILOT_WEB_BASE_IMAGE: ${DOPILOT_WEB_BASE_IMAGE:-rabbir/dopilot-web-base:local}
+# 共享 agent 定义；三个 agent 仅 AGENT_ID + 数据卷不同。
+x-agent: &agent
+  image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
+  command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
+  init: true
+  depends_on:
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:6800/health', timeout=3).status==200 else 1)"]
+  restart: unless-stopped
 
 services:
   db:
@@ -242,8 +249,7 @@ services:
     restart: unless-stopped
 
   migrate:
-    build: *dopilot-build
-    image: rabbir/dopilot:latest
+    image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
     command: ["alembic", "upgrade", "head"]
     environment:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
@@ -252,30 +258,40 @@ services:
         condition: service_healthy
     restart: "no"
 
-  agent:
-    build: *dopilot-build
-    image: rabbir/dopilot:latest
-    command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
-    init: true
+  scrapy-agent-1:
+    <<: *agent
     environment:
       DOPILOT_CONFIG: /app/configs/agent.toml
       AGENT_ID: scrapy-agent-1
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
-      # heartbeat 目标来自 configs/agent.example.toml 的 [agent].server_url。
     volumes:
-      - dopilot-agent-data:/agent-data
-      - ../../configs/agent.example.toml:/app/configs/agent.toml:ro
-    depends_on:
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:6800/health', timeout=3).status==200 else 1)"]
-    restart: unless-stopped
+      - dopilot-agent1-data:/agent-data
+    ports:
+      - "6800:6800"   # 仅 scrapy-agent-1 发布 HTTP；scrapyd 6801 永不发布
+
+  scrapy-agent-2:
+    <<: *agent
+    environment:
+      DOPILOT_CONFIG: /app/configs/agent.toml
+      AGENT_ID: scrapy-agent-2
+      AGENT_WORKDIR: /agent-data
+      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+    volumes:
+      - dopilot-agent2-data:/agent-data
+
+  scrapy-agent-3:
+    <<: *agent
+    environment:
+      DOPILOT_CONFIG: /app/configs/agent.toml
+      AGENT_ID: scrapy-agent-3
+      AGENT_WORKDIR: /agent-data
+      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+    volumes:
+      - dopilot-agent3-data:/agent-data
 
   server:
-    build: *dopilot-build
-    image: rabbir/dopilot:latest
+    image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
     command: ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
     init: true
     environment:
@@ -284,7 +300,6 @@ services:
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
     volumes:
       - dopilot-server-data:/server-data
-      - ../../configs/server.docker.toml:/app/configs/server.toml:ro
     ports:
       - "5000:5000"
     depends_on:
@@ -294,7 +309,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      agent:
+      scrapy-agent-1:
+        condition: service_healthy
+      scrapy-agent-2:
+        condition: service_healthy
+      scrapy-agent-3:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/api/v1/health', timeout=3).status==200 else 1)"]
@@ -303,12 +322,14 @@ services:
 
 volumes:
   dopilot-server-data:
-  dopilot-agent-data:
+  dopilot-agent1-data:
+  dopilot-agent2-data:
+  dopilot-agent3-data:
   dopilot-redis:
   dopilot-db:
 ```
 
-配置文件通过只读 toml 挂载进容器；Docker 网络内服务名使用 `db`、`redis`、`server`、`agent`。dopilot 配置形态为 toml（dopilot 自有领域键名，不照搬 scrapydweb 的 Python settings 形态）：
+默认配置已烤进镜像；要覆盖时把自有 toml 只读挂到 `/app/configs/*.toml`。Docker 网络内服务名使用 `db`、`redis`、`server`、`scrapy-agent-1/2/3`。dopilot 配置形态为 toml（dopilot 自有领域键名，不照搬 scrapydweb 的 Python settings 形态）：
 
 ```toml
 # configs/server.docker.toml（节选）
@@ -336,7 +357,7 @@ shared_token = "change-me-agent-token"
 [nodes]
 # 节点不再靠 server 轮询 /health 发现/判健康；改为 agent 主动 POST heartbeat，server 以 last_seen_at 判健康。
 # agents 仅作为尚未 heartbeat 的节点占位/提示保留；不再作为 server 主动 poll 的目标。
-agents = ["agent:6800"]
+agents = []
 
 [redis]
 # server↔agent 通信总线（命令/事件/日志三条 stream）；非 dopilot 数据库、不持久化业务真相
@@ -408,7 +429,7 @@ server_shared_token = "change-me-agent-server-token"
 | `server` | `DOPILOT_CONFIG=/app/configs/server.toml` | 显式指定配置路径，不使用 cwd 魔法。 |
 | `server` | `DOPILOT_DATABASE_URL=postgresql+psycopg://...` | 指向 PostgreSQL；可覆盖 toml `[database].url`。 |
 | `server` | `5000:5000` | API/SSE 入口，并**同源托管** Web 静态产物（阶段 2.1：Next.js 静态导出 `/app/web`，无独立 Web 容器）；外层用户托管层（可选反代）也通过该地址访问 `/api/v1`。 |
-| `server` | `configs/server.docker.toml:/app/configs/server.toml:ro` | compose 网络配置；只读挂载。 |
+| `server` | 内置 `/app/configs/server.toml`（烤进镜像，源自 `configs/server.docker.toml`） | compose 网络配置；默认无需挂载，要定制时把自有 toml 只读挂到该路径。 |
 | `server` | `dopilot-server-data:/server-data` | **重要持久化卷**：日志正文 `/server-data/logs`（PG 只存索引/offset）+ 上传中转/导出物。必须挂卷并纳入备份。 |
 | `server` | `DOPILOT_REDIS_URL=redis://:...@redis:6379/0` | 接通信总线：写 command stream、消费 agent-events / logs stream。 |
 | `server` | `init: true`（建议） | 更好处理信号转发与子进程回收。 |
@@ -416,12 +437,12 @@ server_shared_token = "change-me-agent-server-token"
 | `db` | `dopilot-db:/var/lib/postgresql/data` | PostgreSQL 核心数据卷（业务表 + `execution_log_files` 索引 + APScheduler jobstore；**不含日志正文**）。 |
 | `redis` | `--requirepass ...` + `--appendonly yes` | server↔agent 通信总线；启用 AUTH + AOF。**非 dopilot 数据库、不持久化业务真相**。 |
 | `redis` | `dopilot-redis:/data` | AOF 数据卷；瞬时传输介质，丢失只影响在途消息（日志 RPO≠0 已接受）。 |
-| `agent` | `DOPILOT_REDIS_URL=redis://:...@redis:6379/0` | 消费 `dopilot:agent:{agent_id}:commands` + 推 agent-events / logs。 |
-| `agent` | `configs/agent.example.toml:/app/configs/agent.toml:ro` | compose 示例配置；`[agent].server_url = "http://server:5000"` 是主动 POST heartbeat 的目标。 |
-| `agent` | `init: true`（建议） | agent 作 PID 1，收割 scrapyd 子进程；本机 scrapyd 内部端口（如 6801）仅本机可见，不再对外暴露 server→agent 调度端口。 |
-| `agent` | `dopilot-agent-data:/agent-data` | scrapyd `job.log` + `/agent-data/state/executions/{attempt_id}.json` 映射 + Redis event/log outbox；server drain 完成前不得删 `job.log`。 |
+| `scrapy-agent-1/2/3` | `DOPILOT_REDIS_URL=redis://:...@redis:6379/0` | 消费 `dopilot:agent:{agent_id}:commands` + 推 agent-events / logs。 |
+| `scrapy-agent-1/2/3` | 内置 `/app/configs/agent.toml`（烤进镜像） | 默认无需挂载；`[agent].server_url = "http://server:5000"` 是主动 POST heartbeat 的目标。要定制时把自有 toml 挂到该路径。 |
+| `scrapy-agent-1/2/3` | `init: true` | agent 作 PID 1，收割 scrapyd 子进程；本机 scrapyd 内部端口（如 6801）仅本机可见，不再对外暴露 server→agent 调度端口（仅 `scrapy-agent-1` 发布 6800 供 smoke/调试）。 |
+| `scrapy-agent-1/2/3` | `dopilot-agent{1,2,3}-data:/agent-data` | 每个 agent 各自的数据卷：scrapyd `job.log` + `/agent-data/state/executions/{attempt_id}.json` 映射 + Redis event/log outbox；server drain 完成前不得删 `job.log`。 |
 
-agent（阶段 1 即落地）使用 `configs/agent.toml`；主 compose 示例已包含 `DOPILOT_CONFIG`、稳定 `AGENT_ID`、`AGENT_WORKDIR`、`DOPILOT_REDIS_URL` 与只读配置挂载。heartbeat 目标从 `[agent].server_url` 读取，当前提交未通过 `DOPILOT_SERVER_URL` 环境变量注入。
+三个对称 agent（`scrapy-agent-1/2/3`，阶段 1 即落地）共用镜像内置的 `/app/configs/agent.toml`，仅 `AGENT_ID` 与数据卷不同；compose 为每个 agent 注入 `DOPILOT_CONFIG`、稳定 `AGENT_ID`、`AGENT_WORKDIR`、`DOPILOT_REDIS_URL`。heartbeat 目标从 `[agent].server_url` 读取，当前提交未通过 `DOPILOT_SERVER_URL` 环境变量注入。
 
 > 重构后 server↔agent 经 **Redis 通信总线**：agent 主动消费命令、主动 `XADD` 推状态/日志，并**主动 POST heartbeat**。agent 启动必须携带稳定 `agent_id`（环境变量 `AGENT_ID` 或 `configs/agent.toml`），server 据 heartbeat 写入 `nodes.last_seen_at` 并判健康（不再轮询 `/health`）。agent→server 鉴权用独立 `server_shared_token`（config-present-or-off：非空才校验），**不复用** server→agent 旧 token、也不复用 Web 管理员账号密码；agent 仍不直连 PostgreSQL。
 
@@ -675,27 +696,31 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 
 ### 7.3 本地构建与推送（手动）
 
+默认部署路径**拉取 CI 镜像**，不在本地构建：
+
+```bash
+cd deploy/docker
+docker compose pull
+docker compose up -d
+```
+
+要用本地源码构建（而非拉取），叠加 build 覆盖文件 `docker-compose.build.yml`。其 build args 默认指向**公共 CI 依赖基础镜像**（`rabbir/dopilot-py-base:latest`、`rabbir/dopilot-web-base:latest`），无需本地先构建 base 镜像（可用 `DOPILOT_PY_BASE_IMAGE` / `DOPILOT_WEB_BASE_IMAGE` 覆盖）：
+
+```bash
+cd deploy/docker
+docker compose -f docker-compose.yml -f docker-compose.build.yml build
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+手动构建并推送统一应用镜像（构建上下文为仓库根，Dockerfile 在 deploy/docker/）：
+
 ```bash
 # 在仓库根，先登录 Docker Hub（rabbir 账号）
 docker login -u rabbir
 
-# 本地先构建依赖基础镜像。默认产物：
-#   rabbir/dopilot-py-base:local
-#   rabbir/dopilot-web-base:local
-scripts/build-docker-base.sh
-
-# 本地完整 compose 构建/启动：
-docker compose -f deploy/docker/docker-compose.yml build
-docker compose -f deploy/docker/docker-compose.yml up -d --build
-
-# 如果本机有 make，也可以用快捷入口：
-# make compose-build
-# make compose-up
-
-# 构建并推送统一应用镜像（构建上下文为仓库根，Dockerfile 在 deploy/docker/）
 docker build \
-  --build-arg DOPILOT_PY_BASE_IMAGE=rabbir/dopilot-py-base:local \
-  --build-arg DOPILOT_WEB_BASE_IMAGE=rabbir/dopilot-web-base:local \
+  --build-arg DOPILOT_PY_BASE_IMAGE=rabbir/dopilot-py-base:latest \
+  --build-arg DOPILOT_WEB_BASE_IMAGE=rabbir/dopilot-web-base:latest \
   -f deploy/docker/Dockerfile \
   -t rabbir/dopilot:latest \
   -t rabbir/dopilot:$(git rev-parse --short HEAD) \
@@ -768,7 +793,7 @@ GitHub 配置：
 
 - 当前 `Dockerfile.base` 的 Python 依赖写在 Dockerfile 内，`apps/*/pyproject.toml` 也声明依赖。正式 CI 前需要决定依赖真相来源：要么让 base 依赖从 pyproject/lock 生成，要么增加检查确保 base 覆盖 pyproject 的运行时依赖，避免 `--no-deps` 安装应用 wheel 时漏装新依赖。
 - Python 依赖目前仍有范围版本（如 `fastapi>=0.110`、`redis>=5,<9`），相同 `<deps-hash>` 在不同日期可能解析出不同实际版本。若要强可重复构建，应引入 Python lock/constraints，并将其纳入 hash。
-- CI 版 base 构建已使用 `docker/build-push-action` + buildx；本地脚本 `scripts/build-docker-base.sh` 保持单机 `docker build`。
+- CI 版 base 构建用 `docker/build-push-action` + buildx 推送 `rabbir/dopilot-*-base`（`Dockerfile.base` + `scripts/docker-deps-hash.sh` 计算 deps-hash）。本地源码构建不再单独构建 base 镜像，而是经 `docker-compose.build.yml` 直接复用公共 CI base 镜像（默认 `:latest`）。
 
 落地前置：
 

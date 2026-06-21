@@ -42,7 +42,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_DIR="${REPO_ROOT}/deploy/docker"
 COMPOSE_BASE="${COMPOSE_DIR}/docker-compose.yml"
-COMPOSE_E2E="${COMPOSE_DIR}/docker-compose.e2e.yml"
+COMPOSE_BUILD="${COMPOSE_DIR}/docker-compose.build.yml"
 SERVER_CONFIG="${REPO_ROOT}/configs/server.docker.toml"
 EGG_PATH="${REPO_ROOT}/tests/fixtures/scrapy_demo/eggs/demo_phase1.egg"
 
@@ -59,11 +59,11 @@ MARKER_DONE="phase1 demo spider done"
 SERVER="http://localhost:5000"
 AGENT1="http://localhost:6800"   # only scrapy-agent-1 publishes its HTTP port
 
-# The three agents. agent_id -> compose service key. scrapy-agent-1 is the base
-# `agent` service; -2 and -3 come from docker-compose.e2e.yml.
+# The three agents. agent_id == compose service key (the base compose defines
+# scrapy-agent-1/2/3 symmetrically; the build override only adds `build:`).
 AGENT_IDS=(scrapy-agent-1 scrapy-agent-2 scrapy-agent-3)
 declare -A SERVICE_OF=(
-  [scrapy-agent-1]=agent
+  [scrapy-agent-1]=scrapy-agent-1
   [scrapy-agent-2]=scrapy-agent-2
   [scrapy-agent-3]=scrapy-agent-3
 )
@@ -99,9 +99,9 @@ fail() {
   return 1
 }
 
-dc() { docker compose -f "${COMPOSE_BASE}" -f "${COMPOSE_E2E}" "$@"; }
+dc() { docker compose -f "${COMPOSE_BASE}" -f "${COMPOSE_BUILD}" "$@"; }
 
-# ---- diagnostics dump (on any compose-smoke failure) -----------------------
+# ---- diagnostics dump (on any smoke failure) -------------------------------
 dump_diagnostics() {
   local why="$1"
   printf '\n\033[31m==== SMOKE DIAGNOSTICS (%s) ====\033[0m\n' "${why}" >&2
@@ -349,9 +349,8 @@ printf '======================================================================\n
 # --- Case 1: clean-volume bring-up -----------------------------------------
 step "Case 1. Clean-volume bring-up (down -v; up -d --build) — 3 agents"
 dc down -v --remove-orphans >/dev/null 2>&1 || true
-info "building dependency base images..."
-"${REPO_ROOT}/scripts/build-docker-base.sh"
 info "building + starting db, redis, migrate, server, and 3 agents..."
+info "(base + build override; image built from local source, public base images)"
 dc up -d --build
 
 step "Case 1. Wait for services (db, migrate, 3 agents, server)"
@@ -423,7 +422,7 @@ if [ -f "${EGG_PATH}" ]; then
   pass "committed egg present: ${EGG_PATH}"
 else
   info "committed egg missing -> building it inside the scrapy-agent-1 container"
-  A1_CID="$(dc ps -q agent)"
+  A1_CID="$(dc ps -q scrapy-agent-1)"
   docker cp "${REPO_ROOT}/tests/fixtures/scrapy_demo/." "${A1_CID}:/tmp/scrapy_demo"
   docker exec "${A1_CID}" sh -c 'cd /tmp/scrapy_demo && rm -rf build dist demo.egg-info && python3 setup.py bdist_egg && cp dist/*.egg /tmp/demo_phase1.egg'
   mkdir -p "$(dirname "${EGG_PATH}")"

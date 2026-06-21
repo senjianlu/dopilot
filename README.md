@@ -90,21 +90,33 @@ agent environment.
 
 ## Quick deploy (Docker Compose)
 
-The compose stack builds from two local base images
-(`rabbir/dopilot-py-base:local`, `rabbir/dopilot-web-base:local`). `make
-compose-up` builds those base images first, then brings up the full stack
-(PostgreSQL + Redis + one-shot migrate + agent + server):
+The default compose stack pulls the CI-built `rabbir/dopilot` image — no local
+build required. It brings up the full stack (PostgreSQL + Redis + one-shot
+migrate + three Scrapy agents + server):
 
 ```bash
-make compose-up
+cd deploy/docker
+docker compose pull
+docker compose up -d
 ```
 
 The server is then reachable at **http://localhost:5000** (web UI and API). The
 server runs single-replica only (in-process scheduler + in-memory SSE tables).
+Override the image with `DOPILOT_IMAGE` (default `rabbir/dopilot:latest`).
+
+To build the image from local source instead of pulling, layer the build
+override (used by the smoke scripts):
+
+```bash
+cd deploy/docker
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
 
 > Compose configs set `[auth]`, so web auth is **on** there. The default
 > `change-me` credentials are not production-safe; change them before exposing
-> the server.
+> the server. The default TOML files are baked into the image; mount edited
+> config files over `/app/configs/server.toml` and `/app/configs/agent.toml` in a
+> compose override when you need real secrets.
 
 ## Local development
 
@@ -113,8 +125,12 @@ and Docker (for PostgreSQL and Redis).
 
 ```bash
 # 1. Python packages (protocol first; server/agent depend on it)
-make install
+python3.12 -m venv .venv
 source .venv/bin/activate
+pip install -U pip wheel
+pip install -e ./packages/protocol
+pip install -e "./apps/server[dev]"
+pip install -e "./apps/agent[dev]"
 
 # 2. Backing services.
 # Postgres can use the committed compose service; Redis needs a host port for
@@ -124,14 +140,14 @@ docker run -d --rm --name dopilot-redis-dev -p 6379:6379 \
   redis:7 redis-server --appendonly yes
 
 # 3. Apply migrations (server owns the schema)
-make migrate
+(cd apps/server && DOPILOT_CONFIG=../../configs/server.example.toml alembic upgrade head)
 
 # 4. Run the services (separate terminals).
 # For the agent, copy configs/agent.example.toml to a local file and set:
 #   [agent].server_url = "http://localhost:5000"
 #   [agent].advertise_endpoint = "localhost:6800"
 #   [redis].url = "redis://localhost:6379/0"
-make server
+DOPILOT_CONFIG=configs/server.example.toml dopilot-server
 DOPILOT_CONFIG=configs/agent.local.toml dopilot-agent
 
 # 5. Web UI in dev mode (Next.js)
@@ -152,7 +168,8 @@ no Node production runtime.
 ## Tests & lint
 
 ```bash
-make test                          # pytest (server/agent/protocol) + web vitest
+pytest                             # pytest (server/agent/protocol)
+corepack pnpm --filter web test    # web vitest
 corepack pnpm --filter web build   # static export build
 ruff check apps packages           # lint
 cd deploy/docker && docker compose config
