@@ -13,6 +13,10 @@
   <b>English</b> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
+<p align="center">
+  <img src="screenshot.png" alt="dopilot dashboard screenshot" width="960" />
+</p>
+
 ---
 
 ## What dopilot is
