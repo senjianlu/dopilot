@@ -4,6 +4,7 @@ import {
   AGENT_IDS,
   confirmMessageBox,
   login,
+  MARKER_START,
   selectOption,
   waitForExecutionCount,
   waitForLogContaining,
@@ -178,6 +179,19 @@ test("execution templates page creates a command template and runs it", async ()
   const logText = await waitForLogMarkers(page);
   expect(logText).toContain("phase1 demo spider started");
   expect(logText).toContain("phase1 demo spider done");
+
+  // Per-execution log selection: a multi-execution task renders one log tab per
+  // child execution, and selecting a different execution loads THAT execution's
+  // own log (each demo execution emits the start marker). This proves the detail
+  // page lets the user view each child execution's log, not only the primary.
+  const logTabs = page.locator('[data-testid^="execution-log-tab-"]');
+  await expect(logTabs).toHaveCount(AGENT_IDS.length);
+  await logTabs.nth(1).click();
+  await expect
+    .poll(async () => (await page.getByTestId("log-body").innerText()) ?? "", {
+      timeout: 30_000,
+    })
+    .toContain(MARKER_START);
 });
 
 test("build artifacts page lists the built-in demo wheel as runnable", async () => {

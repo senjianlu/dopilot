@@ -100,7 +100,7 @@ async def _apply(session, settings, execution, offset, content, *, mgr=None, eof
 async def test_contiguous_appends_and_publishes_sse(db_session, exec_settings):
     _t, execution, lf = await _seed(db_session, exec_settings)
     manager = SubscriptionManager()
-    q = manager.subscribe(execution.task_id)
+    q = manager.subscribe(execution.id)
 
     out1 = await _apply(db_session, exec_settings, execution, 0, b"hello\n", mgr=manager)
     out2 = await _apply(db_session, exec_settings, execution, 6, b"world\n", mgr=manager)

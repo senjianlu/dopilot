@@ -24,6 +24,15 @@ vi.mock("@/lib/api/maintenance", () => ({
   markTaskLost: (id: string) => markTaskLost(id),
 }));
 
+const logViewerMock = vi.hoisted(() =>
+  vi.fn(({ executionId }: { taskId: string; executionId?: string }) => (
+    <div data-testid="log-viewer" data-execution-id={executionId ?? ""} />
+  )),
+);
+vi.mock("@/components/features/log-viewer", () => ({
+  LogViewer: logViewerMock,
+}));
+
 import TaskDetailPage from "@/app/(app)/tasks/detail/page";
 
 function makeTask(overrides: Partial<TaskView> = {}): TaskView {
@@ -67,6 +76,7 @@ beforeEach(() => {
     executions_marked: 1,
     already_terminal: [],
   });
+  logViewerMock.mockClear();
 });
 
 afterEach(() => vi.clearAllMocks());
@@ -77,6 +87,66 @@ describe("TaskDetailPage", () => {
     await waitFor(() => expect(getTask).toHaveBeenCalledWith("task-1"));
     expect(await screen.findByTestId("task-status")).toHaveTextContent("running");
     expect(screen.getByTestId("execution-agent-agent-1")).toBeInTheDocument();
+    expect(screen.getByTestId("log-viewer")).toHaveAttribute(
+      "data-execution-id",
+      "ex-1",
+    );
+    expect(screen.queryByTestId("execution-log-tab-ex-1")).not.toBeInTheDocument();
+  });
+
+  it("switches the log viewer between child executions", async () => {
+    const user = userEvent.setup();
+    getTask.mockResolvedValue(
+      makeTask({
+        executions: [
+          {
+            id: "ex-1",
+            task_id: "task-1",
+            agent_id: "agent-1",
+            node_id: "node-1",
+            endpoint: "http://a1:6800",
+            remote_job_id: "job-1",
+            status: "running",
+            started_at: null,
+            finished_at: null,
+            exit_code: null,
+            error_code: null,
+            error_detail: null,
+          },
+          {
+            id: "ex-2",
+            task_id: "task-1",
+            agent_id: "agent-2",
+            node_id: "node-2",
+            endpoint: "http://a2:6800",
+            remote_job_id: "job-2",
+            status: "running",
+            started_at: null,
+            finished_at: null,
+            exit_code: null,
+            error_code: null,
+            error_detail: null,
+          },
+        ],
+      }),
+    );
+
+    renderWithProviders(<TaskDetailPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("log-viewer")).toHaveAttribute(
+        "data-execution-id",
+        "ex-1",
+      ),
+    );
+
+    await user.click(screen.getByTestId("execution-log-tab-ex-2"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("log-viewer")).toHaveAttribute(
+        "data-execution-id",
+        "ex-2",
+      ),
+    );
   });
 
   it("cancels an active task after confirmation", async () => {

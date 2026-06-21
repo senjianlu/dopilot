@@ -6,6 +6,7 @@ import asyncio
 
 from dopilot_server.logs import files
 from dopilot_server.logs.sse import CLOSE, SubscriptionManager
+from dopilot_server.services import executions as svc
 
 # ---- SubscriptionManager unit ----
 
@@ -23,6 +24,18 @@ def test_subscribe_publish_fanout_and_hot():
     assert m.subscriber_count("e") == 1
     m.unsubscribe("e", q2)
     assert m.hot_execution_ids() == set()
+
+
+def test_publish_isolated_by_execution_id():
+    m = SubscriptionManager()
+    q1 = m.subscribe("e1")
+    q2 = m.subscribe("e2")
+
+    m.publish("e1", {"type": "log", "end_offset": 5})
+
+    assert q1.get_nowait()["end_offset"] == 5
+    assert q2.empty()
+    assert m.hot_execution_ids() == {"e1", "e2"}
 
 
 def test_close_sentinel():
@@ -74,8 +87,8 @@ async def test_stream_backfill_then_complete(exec_client, seeder, db_session):
     task.status = "complete"
     await db_session.commit()
 
-    # web seam: the route's {execution_id} is the parent (task) id; SSE fan-out
-    # is keyed on it too.
+    # Omitting execution_id keeps the public default: stream the primary
+    # execution for this task.
     url = f"/api/v1/tasks/{task.id}/logs/stream"
     text = await _run_sse(exec_client, url)
     assert "phase1 demo spider started" in text
@@ -85,24 +98,69 @@ async def test_stream_backfill_then_complete(exec_client, seeder, db_session):
 async def test_stream_live_increment(
     exec_client, seeder, subscriptions, db_session
 ):
-    task, _execution, _log = await seeder.running_task()
+    task, execution, _log = await seeder.running_task()
     url = f"/api/v1/tasks/{task.id}/logs/stream"
 
     async def driver():
         for _ in range(300):
-            if subscriptions.subscriber_count(task.id) > 0:
+            if subscriptions.subscriber_count(execution.id) > 0:
                 break
             await asyncio.sleep(0.01)
         subscriptions.publish(
-            task.id,
+            execution.id,
             {"type": "log", "start_offset": 0, "end_offset": 5, "content": "hi123"},
         )
         subscriptions.publish(
-            task.id, {"type": "complete", "status": "complete"}
+            execution.id, {"type": "complete", "status": "complete"}
         )
 
     text = await _run_sse(exec_client, url, driver=driver)
     assert "hi123" in text
+    assert "event: complete" in text
+
+
+async def test_stream_is_isolated_by_execution_id(
+    exec_client, seeder, subscriptions, db_session
+):
+    """A stream opened for one execution must subscribe under that atomic
+    ``execution.id`` (not the parent ``task.id``) and must NOT receive frames
+    published for a sibling execution of the same task."""
+    task, exec_a, _log_a = await seeder.running_task()
+    # A second per-node execution of the SAME parent task.
+    node_b = await seeder.healthy_node(
+        agent_id="agent-2", endpoint="http://agent-2:6800"
+    )
+    exec_b = svc.create_execution(db_session, task, node_b)
+    exec_b.status = exec_a.status
+    svc.create_log_file(db_session, seeder.settings, task, exec_b)
+    await db_session.commit()
+
+    url = f"/api/v1/tasks/{task.id}/logs/stream?execution_id={exec_a.id}"
+
+    async def driver():
+        for _ in range(300):
+            if subscriptions.subscriber_count(exec_a.id) > 0:
+                break
+            await asyncio.sleep(0.01)
+        # Keyed by atomic execution id, never the parent task id.
+        assert subscriptions.subscriber_count(task.id) == 0
+        assert subscriptions.subscriber_count(exec_b.id) == 0
+        # A sibling execution's frame must not leak into this stream.
+        subscriptions.publish(
+            exec_b.id,
+            {"type": "log", "start_offset": 0, "end_offset": 6, "content": "leakB"},
+        )
+        subscriptions.publish(
+            exec_a.id,
+            {"type": "log", "start_offset": 0, "end_offset": 5, "content": "goodA"},
+        )
+        subscriptions.publish(
+            exec_a.id, {"type": "complete", "status": "complete"}
+        )
+
+    text = await _run_sse(exec_client, url, driver=driver)
+    assert "goodA" in text
+    assert "leakB" not in text
     assert "event: complete" in text
 
 
@@ -111,19 +169,19 @@ async def test_normal_api_works_while_sse_stream_open(
 ):
     """P2 regression: an open SSE stream must NOT pin the request DB session;
     a normal DB-backed API call still works while the stream is open."""
-    task, _e, _l = await seeder.running_task()
+    task, execution, _l = await seeder.running_task()
     url = f"/api/v1/tasks/{task.id}/logs/stream"
 
     async def driver():
         for _ in range(300):
-            if subscriptions.subscriber_count(task.id) > 0:
+            if subscriptions.subscriber_count(execution.id) > 0:
                 break
             await asyncio.sleep(0.01)
         # A normal DB-backed endpoint must still succeed while the SSE is open.
         listing = await exec_client.get("/api/v1/tasks")
         assert listing.status_code == 200
         subscriptions.publish(
-            task.id, {"type": "complete", "status": "complete"}
+            execution.id, {"type": "complete", "status": "complete"}
         )
 
     text = await _run_sse(exec_client, url, driver=driver)

@@ -313,7 +313,7 @@ async def stream_logs(
     async def generator():
         # Subscribe BEFORE backfilling so nothing produced during backfill is
         # lost; dedup forwarded events by server-file offset.
-        queue = manager.subscribe(task_id)
+        queue = manager.subscribe(execution.id)
         cursor = 0
         try:
             if path is not None:
@@ -387,7 +387,7 @@ async def stream_logs(
                 )
                 cursor = end
         finally:
-            manager.unsubscribe(task_id, queue)
+            manager.unsubscribe(execution.id, queue)
 
     return StreamingResponse(
         generator(),
