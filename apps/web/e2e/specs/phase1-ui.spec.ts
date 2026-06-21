@@ -80,8 +80,9 @@ test("nodes page renders the three agents as scrapy-healthy", async () => {
     // Online + healthy => green (success) badge. This is the authoritative
     // "scrapy-capable + healthy + schedulable" signal the server computes from
     // the heartbeat (capabilities.scrapy + status=healthy).
-    await expect(page.getByTestId(`node-badge-${agentId}`)).toHaveClass(
-      /el-tag--success/,
+    await expect(page.getByTestId(`node-badge-${agentId}`)).toHaveAttribute(
+      "data-tone",
+      "green",
     );
     // The scrapy capability tag renders. Phase 1.8.2 replaced the standalone
     // scrapyd-subprocess health column with a per-capability tag column, so the
@@ -93,11 +94,13 @@ test("nodes page renders the three agents as scrapy-healthy", async () => {
     // Phase 2b: the agent image advertises `script = true`, so the script
     // capability tag is the ACTIVE (green/success) variant — this is the
     // "script-capable" signal the python_wheel run dispatches against.
-    await expect(page.getByTestId(`node-cap-${agentId}-scrapy`)).toHaveClass(
-      /el-tag--success/,
+    await expect(page.getByTestId(`node-cap-${agentId}-scrapy`)).toHaveAttribute(
+      "data-tone",
+      "green",
     );
-    await expect(page.getByTestId(`node-cap-${agentId}-script`)).toHaveClass(
-      /el-tag--success/,
+    await expect(page.getByTestId(`node-cap-${agentId}-script`)).toHaveAttribute(
+      "data-tone",
+      "green",
     );
   }
   const rendered = await page
@@ -161,7 +164,7 @@ test("execution templates page creates a command template and runs it", async ()
     page.getByTestId(`template-name-${TEMPLATE_NAME}`),
   ).toBeVisible();
   await page.getByTestId(`template-run-${TEMPLATE_NAME}`).click();
-  await expect(page).toHaveURL(/\/tasks\/[^/]+$/, { timeout: 30_000 });
+  await expect(page).toHaveURL(/\/tasks\/detail\/?\?id=/, { timeout: 30_000 });
   await expect(page.getByTestId("task-detail")).toBeVisible();
 
   // Task detail shows the three child executions...
@@ -233,7 +236,7 @@ test("templates page creates a python-wheel template and runs it to completion",
     page.getByTestId(`template-name-${WHEEL_TEMPLATE_NAME}`),
   ).toBeVisible();
   await page.getByTestId(`template-run-${WHEEL_TEMPLATE_NAME}`).click();
-  await expect(page).toHaveURL(/\/tasks\/[^/]+$/, { timeout: 30_000 });
+  await expect(page).toHaveURL(/\/tasks\/detail\/?\?id=/, { timeout: 30_000 });
   await expect(page.getByTestId("task-detail")).toBeVisible();
 
   // It dispatched to all three script-capable nodes (one execution each).
@@ -267,7 +270,7 @@ test("tasks page lists created tasks and opens a detail page", async () => {
   expect(await viewLinks.count()).toBeGreaterThan(0);
 
   await viewLinks.first().click();
-  await expect(page).toHaveURL(/\/tasks\/[^/]+$/);
+  await expect(page).toHaveURL(/\/tasks\/detail\/?\?id=/);
   await expect(page.getByTestId("task-detail")).toBeVisible();
   await expect(page.getByTestId("task-status")).toBeVisible();
 });
@@ -294,7 +297,7 @@ test("schedules page creates an interval schedule and trigger-now lands on a tas
 
   // Trigger-now creates a task and navigates to its detail page.
   await page.getByTestId(`schedule-trigger-${SCHEDULE_NAME}`).click();
-  await expect(page).toHaveURL(/\/tasks\/[^/]+$/, { timeout: 30_000 });
+  await expect(page).toHaveURL(/\/tasks\/detail\/?\?id=/, { timeout: 30_000 });
   await expect(page.getByTestId("task-detail")).toBeVisible();
 });
 
@@ -307,16 +310,18 @@ test("nodes page offline/online/delete actions update visible state", async () =
   const offlineTarget = "scrapy-agent-1";
   await page.getByTestId(`node-offline-${offlineTarget}`).click();
   await confirmMessageBox(page);
-  await expect(page.getByTestId(`node-badge-${offlineTarget}`)).toHaveClass(
-    /el-tag--danger/,
+  await expect(page.getByTestId(`node-badge-${offlineTarget}`)).toHaveAttribute(
+    "data-tone",
+    "red",
   );
   await expect(page.getByTestId(`node-online-${offlineTarget}`)).toBeVisible();
 
   // Bring it back online -> green (success) badge, schedulable again.
   // Online is not a confirmed action (no message box).
   await page.getByTestId(`node-online-${offlineTarget}`).click();
-  await expect(page.getByTestId(`node-badge-${offlineTarget}`)).toHaveClass(
-    /el-tag--success/,
+  await expect(page.getByTestId(`node-badge-${offlineTarget}`)).toHaveAttribute(
+    "data-tone",
+    "green",
   );
 
   // Soft-delete scrapy-agent-3 -> gray (info) badge, no action controls left.
@@ -324,8 +329,9 @@ test("nodes page offline/online/delete actions update visible state", async () =
   const deleteTarget = "scrapy-agent-3";
   await page.getByTestId(`node-delete-${deleteTarget}`).click();
   await confirmMessageBox(page);
-  await expect(page.getByTestId(`node-badge-${deleteTarget}`)).toHaveClass(
-    /el-tag--info/,
+  await expect(page.getByTestId(`node-badge-${deleteTarget}`)).toHaveAttribute(
+    "data-tone",
+    "gray",
   );
   await expect(
     page.getByTestId(`node-offline-${deleteTarget}`),

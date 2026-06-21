@@ -47,6 +47,7 @@ build/
 
 .idea
 .vscode/
+.claude/
 
 # --- dopilot (greenfield) ---
 .venv-ref/
@@ -67,4 +68,3 @@ apps/web/test-results/
 apps/web/playwright-report/
 apps/web/blob-report/
 apps/web/.cache/
-

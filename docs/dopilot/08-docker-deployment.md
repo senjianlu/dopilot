@@ -6,6 +6,8 @@
 > dopilot 计划分 **server**（Web 控制台 + 调度中枢）与 **agent**（执行器）两种 Docker 角色部署，单管理员，执行能力分期推进 scrapy egg → python 脚本 → docker 长连接。
 > 关联文档：`docs/dopilot/01-gap-executors.md`（执行器）、`docs/dopilot/02-gap-scheduling-nodes-push.md`（调度/节点/推送）、`docs/architecture/01-bootstrap-and-config.md`（启动与配置加载）。
 
+> **⚠️【阶段 2.1 前端部署模型已更新】** 自**阶段 2.1**起前端为 **Next.js 静态导出**（`output: export` + `trailingSlash`，产物 `apps/web/out`：每路由一个 HTML + `_next/` 资源 + `404.html`），由 **dopilot-server 同源托管**（`DOPILOT_WEB_DIST=/app/web`，`/api/*` 不被改写为 HTML）；**无 `next start`、无 Node 生产运行时、无独立 Web 容器**。镜像 web 构建阶段执行 `pnpm --filter web build` 并将 `apps/web/out` 拷入 `/app/web`。下文涉及前端构建/静态资源/Web 容器/开发代理的旧 Vue/Vite 描述一律以阶段 2.1 为准；权威说明见 `docs/dopilot/06-frontend-rewrite.md` 顶部对照表与 `docs/phases/phase-2.1/01-claude-implementation-report.md`。
+
 ---
 
 ## dopilot 目标决策（当前版本）
@@ -150,30 +152,30 @@ dopilot **不**沿用 scrapydweb 的本机 logparser + SQLite 路线，采用 **
 
 ```
 统一应用镜像：
-  阶段 1  web-build : 构建 apps/web Vue SPA
+  阶段 1  web-build : 构建 apps/web（阶段 2.1：Next.js 静态导出 `pnpm --filter web build` → apps/web/out；历史为 Vue/Vite SPA）
   阶段 2  py-deps   : 构建 protocol/server/agent wheels
-  阶段 3  runtime   : slim 基础镜像 + server/agent + scrapy/scrapyd + Alembic + Web dist
+  阶段 3  runtime   : slim 基础镜像 + server/agent + scrapy/scrapyd + Alembic + Web 静态产物（apps/web/out → /app/web）
 ```
 
 分层要点：
 - 依赖层与代码层分离，最大化 layer 缓存（依赖变动少、代码变动多）。
-- **统一应用镜像**：`rabbir/dopilot:latest` 同时包含 server、agent、protocol、Scrapy/scrapyd 运行时、Alembic 迁移资源，以及构建后的 Vue SPA。
-- **启动命令选择角色**：server 容器运行 `dopilot-server` 并托管 Web UI；agent 容器运行 `dopilot-agent` 并管理本机 scrapyd；migrate 容器运行 `alembic upgrade head`。
+- **统一应用镜像**：`rabbir/dopilot:latest` 同时包含 server、agent、protocol、Scrapy/scrapyd 运行时、Alembic 迁移资源，以及构建后的 Web 静态产物（阶段 2.1：Next.js 静态导出 `apps/web/out`，历史为 Vue SPA）。
+- **启动命令选择角色**：server 容器运行 `dopilot-server` 并**同源托管** Web UI（静态文件，无独立 Web 容器）；agent 容器运行 `dopilot-agent` 并管理本机 scrapyd；migrate 容器运行 `alembic upgrade head`。
 - `.dockerignore` 排除 `reference/`、`.venv/`、`docs/`、`**/tests/`、`*.pyc` 等（dopilot 自有数据目录由卷管理，不进镜像）。
 
 ### 2.3 统一 Dockerfile
 
 ```dockerfile
 # deploy/docker/Dockerfile
-# 1. node:22-slim 构建 apps/web -> dist
+# 1. node:22-slim 构建 apps/web（阶段 2.1：pnpm --filter web build → apps/web/out 静态导出；历史为 Vite dist）
 # 2. python:3.12-slim 构建 protocol/server/agent wheels
-# 3. runtime 安装 server + agent + scrapy/scrapyd，复制 Alembic 迁移和 Web dist
+# 3. runtime 安装 server + agent + scrapy/scrapyd，复制 Alembic 迁移和 Web 静态产物（apps/web/out → /app/web）
 #
 # 默认 CMD 为 server 模式：
 CMD ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
 ```
 
-完整实现以仓库中的 `deploy/docker/Dockerfile` 为准。server 模式会读取 `DOPILOT_WEB_DIST=/app/web`，当存在 `index.html` 时由 FastAPI 直接托管 Vue SPA；`/api/*` 始终保留为 API 路径，不做 SPA fallback。
+完整实现以仓库中的 `deploy/docker/Dockerfile` 为准。server 模式会读取 `DOPILOT_WEB_DIST=/app/web`，托管 web 构建阶段拷入的静态产物（阶段 2.1：Next.js 静态导出 `apps/web/out`——每路由一个 HTML + `_next/` 资源 + `404.html`；历史为 Vue/Vite `dist` + `index.html` SPA fallback）；`/api/*` 始终保留为 API 路径，**不被改写为 HTML**。
 
 ### 2.4 agent 角色（执行器，分期）
 
@@ -201,7 +203,7 @@ dopilot-agent -b 0.0.0.0 -p 6800
 本地日常开发不要求把所有角色都容器化。推荐最小模式只启动 PostgreSQL 与 Redis 容器，`server` / `web` / `agent` 在宿主机运行：
 
 - `server`：宿主机运行 FastAPI/uvicorn，连接 `localhost:5432` 的 PostgreSQL。
-- `web`：宿主机运行 Vite dev server，通过 proxy 访问 server `/api/v1` 与 SSE。
+- `web`：宿主机运行前端 dev server（阶段 2.1：`next dev`；历史为 Vite dev server），通过 proxy 访问 server `/api/v1` 与 SSE。生产形态为 Next.js 静态导出，由 dopilot-server 同源托管，无独立 Web 容器、无 Node 生产运行时。
 - `agent`：宿主机运行 dopilot-agent，阶段 1 可在本机拉起 scrapyd 子进程，经 Redis 消费命令 + 推事件/日志、并向 server POST heartbeat（不再对外暴露 server→agent 调度 API；`-p 6800` 仅用于容器本地 `/health` healthcheck）。
 - `db` / `redis`：本地开发的基础依赖；Redis 是 server↔agent 通信总线，不是业务数据库。
 
@@ -405,7 +407,7 @@ server_shared_token = "change-me-agent-server-token"
 | --- | --- | --- |
 | `server` | `DOPILOT_CONFIG=/app/configs/server.toml` | 显式指定配置路径，不使用 cwd 魔法。 |
 | `server` | `DOPILOT_DATABASE_URL=postgresql+psycopg://...` | 指向 PostgreSQL；可覆盖 toml `[database].url`。 |
-| `server` | `5000:5000` | API/SSE 入口；Web 独立容器或用户托管层通过该地址访问 `/api/v1`。 |
+| `server` | `5000:5000` | API/SSE 入口，并**同源托管** Web 静态产物（阶段 2.1：Next.js 静态导出 `/app/web`，无独立 Web 容器）；外层用户托管层（可选反代）也通过该地址访问 `/api/v1`。 |
 | `server` | `configs/server.docker.toml:/app/configs/server.toml:ro` | compose 网络配置；只读挂载。 |
 | `server` | `dopilot-server-data:/server-data` | **重要持久化卷**：日志正文 `/server-data/logs`（PG 只存索引/offset）+ 上传中转/导出物。必须挂卷并纳入备份。 |
 | `server` | `DOPILOT_REDIS_URL=redis://:...@redis:6379/0` | 接通信总线：写 command stream、消费 agent-events / logs stream。 |
@@ -621,7 +623,7 @@ scrapydweb 的后台执行分两类，共 3 个单元：
 | agent（worker 执行器） | **`rabbir/dopilot:latest`** | `dopilot-agent -b 0.0.0.0 -p 6800` | `deploy/docker/Dockerfile` |
 | migrate（一次性迁移） | **`rabbir/dopilot:latest`** | `alembic upgrade head` | `deploy/docker/Dockerfile` |
 
-统一约定：只发布一个应用镜像 `rabbir/dopilot:latest`。镜像内包含 server、agent、protocol、Scrapy/scrapyd 运行时、Alembic 迁移资源，以及构建后的 Vue SPA；容器启动时通过 command 选择运行模式。
+统一约定：只发布一个应用镜像 `rabbir/dopilot:latest`。镜像内包含 server、agent、protocol、Scrapy/scrapyd 运行时、Alembic 迁移资源，以及构建后的 Web 静态产物（阶段 2.1：Next.js 静态导出 `apps/web/out` → `/app/web`，由 server 同源托管；历史为 Vue SPA）；容器启动时通过 command 选择运行模式。
 
 约定：
 - **命名空间区分**：git `origin` = `senjianlu/dopilot`（源码托管），镜像命名空间 = `rabbir`（Docker Hub 账号，对应 `rabbirbot00@gmail.com`）。两者**互不等同**，CI/文档里不要把 `senjianlu` 当镜像前缀。
@@ -651,9 +653,9 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 │   │   │   ├── runners/                   # base.py scrapyd.py script.py docker.py
 │   │   │   ├── logs/  workspace/  heartbeat/  config/  main.py
 │   │   ├── tests/  pyproject.toml
-│   └── web/                              # Vue3 + Element Plus + Vite + TS SPA(greenfield,直连 /api/v1)
-│       ├── src/{api,pages,components,layouts,stores,router,i18n}/  public/
-│       ├── package.json  vite.config.ts
+│   └── web/                              # 前端(greenfield,直连 /api/v1)。阶段 2.1:Next.js 静态导出(output: export + trailingSlash) + shadcn/ui + Recharts + react-i18next + TS,产物 apps/web/out;历史为 Vue3 + Element Plus + Vite SPA
+│       ├── (阶段 2.1: app/ 或 src/ 路由 + components/ + 静态导出产物 out/)  public/
+│       ├── package.json  next.config.* (历史: vite.config.ts)
 ├── packages/
 │   ├── protocol/                         # server↔agent 共享协议 schema(dopilot_protocol/streams.py: AgentCommand/AgentEvent/AgentLogEvent/AgentHeartbeat*;旧 AgentRunRequest/AgentStatusResponse/Tail* 标 legacy)
 │   └── client/                           # 可选:Redis 总线/heartbeat 客户端 SDK

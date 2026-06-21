@@ -5,7 +5,7 @@
 # signaling relies on glibc libc.so.6 prctl.
 #
 # This image contains both runtime roles:
-#   - server mode: dopilot-server + bundled Vue SPA + Alembic migrations
+#   - server mode: dopilot-server + bundled Next static export web UI + Alembic
 #   - agent mode: dopilot-agent + scrapy/scrapyd runtime
 #
 # The role is selected at container start with the command, e.g.
@@ -22,6 +22,7 @@ WORKDIR /build
 
 COPY apps/web ./apps/web
 
+# Next.js static export (output: "export") -> apps/web/out.
 RUN pnpm --filter web build
 
 # ---- Stage: build Python wheels ------------------------------------------
@@ -104,9 +105,10 @@ PY
 COPY apps/server/alembic.ini ./alembic.ini
 COPY apps/server/migrations ./migrations
 
-# Built Vue SPA. dopilot_server.app serves this directory when index.html is
-# present, while /api/* remains API-only.
-COPY --from=web-build /build/apps/web/dist ./web
+# Built Next.js static export. dopilot_server.app serves this directory (one
+# HTML file per route + _next assets + 404.html) when index.html is present,
+# while /api/* remains API-only.
+COPY --from=web-build /build/apps/web/out ./web
 
 ENV DOPILOT_WEB_DIST=/app/web
 ENV DOPILOT_CONFIG=/app/configs/server.toml

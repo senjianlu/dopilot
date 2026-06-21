@@ -1,9 +1,12 @@
 packages:
   - "apps/web"
-# pnpm blocks dependency build scripts by default. esbuild needs its build step
-# to wire up the platform binary that vite/vitest use; vue-demi runs a small
-# post-install. Approve both so a fresh `pnpm install` runs them non-interactively
-# (this is the pnpm v10+/v11 `allowBuilds` map; the value must be true to allow).
+# pnpm blocks dependency build scripts by default. Phase 2.1 (Next.js + shadcn):
+# esbuild wires up the platform binary that vitest uses; @tailwindcss/oxide is the
+# Tailwind v4 native engine that needs its postinstall; sharp is pulled in by Next
+# (unused at runtime since images are unoptimized, but its install script must run
+# cleanly). Approve them so a fresh `pnpm install` runs non-interactively (this is
+# the pnpm v10+/v11 `allowBuilds` map; the value must be true to allow).
 allowBuilds:
   esbuild: true
-  vue-demi: true
+  "@tailwindcss/oxide": true
+  sharp: true

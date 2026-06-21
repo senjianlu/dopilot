@@ -26,26 +26,24 @@ export const WHEEL_MARKER_HEADERS = "dopilot-demo: response headers";
 // Log in through the real UI and land on the app shell.
 export async function login(page: Page): Promise<void> {
   await page.goto("/login");
-  // Element Plus el-input sets inheritAttrs:false and forwards data-testid onto
-  // the inner <input>, so the testid IS the input element (no .locator('input')).
+  // shadcn <Input> forwards data-testid onto the <input> element itself, so the
+  // testid IS the input (no .locator('input')).
   await page.getByTestId("login-username").fill(ADMIN_USER);
   await page.getByTestId("login-password").fill(ADMIN_PASS);
   await page.getByTestId("login-submit").click();
   await expect(page.getByTestId("app-shell")).toBeVisible({ timeout: 30_000 });
 }
 
-// Accept the Element Plus confirmation message box. Phase 1.8.2 routed the
-// node offline/delete actions through @/utils/confirm (ElMessageBox.confirm), so
-// those clicks now open a modal that must be confirmed before the request fires.
-// Target the primary button by its stable EP class so this is locale-independent.
+// Accept the shared confirmation dialog. The node offline/delete, template/
+// schedule delete, and task cancel/mark-lost actions route through the shadcn
+// AlertDialog exposed by the useConfirm hook; its primary button carries a
+// stable data-testid (locale-independent).
 export async function confirmMessageBox(page: Page): Promise<void> {
-  await page
-    .locator(".el-message-box__btns button.el-button--primary")
-    .click();
+  await page.getByTestId("confirm-accept").click();
 }
 
-// Click an Element Plus el-select (identified by data-testid) and pick an
-// option by its accessible name. EP options are teleported to <body> with
+// Open a shadcn <Select> (identified by its trigger's data-testid) and pick an
+// option by accessible name. Radix renders options into a portal with
 // role="option". Use `exact` to avoid substring collisions (e.g. the spider
 // "phase1" is a substring of the artifact label "demo · demo_phase1.egg").
 export async function selectOption(
@@ -73,7 +71,6 @@ export async function waitForExecutionCount(
 ): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   let count = 0;
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     count = await page.locator('[data-testid^="execution-agent-"]').count();
     if (count >= expected) {
@@ -99,7 +96,6 @@ export async function waitForLogContaining(
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   let text = "";
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     text = (await page.getByTestId("log-body").innerText()) ?? "";
     if (substrings.every((s) => text.includes(s))) {
@@ -132,7 +128,6 @@ export async function waitForTaskStatus(
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   let status = "";
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     status = (await page.getByTestId("task-status").innerText())?.trim() ?? "";
     if (status === expected) {
