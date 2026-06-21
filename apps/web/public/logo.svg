@@ -1,0 +1,12 @@
+<svg
+  viewBox="0 0 280 160"
+  xmlns="http://www.w3.org/2000/svg"
+  fill="currentColor"
+>
+  <title>Dopilot logo</title>
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M0 0H280V120H240V160H0ZM40 40V120H120V40ZM160 40V120H240V40Z"
+  />
+</svg>

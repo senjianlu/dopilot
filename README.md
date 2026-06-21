@@ -1,176 +1,170 @@
-# dopilot
+<p align="center">
+  <img src="apps/web/public/logo.svg" alt="dopilot logo" width="120" />
+</p>
 
-dopilot is a private, single-admin scheduling platform (Scrapy → Python scripts →
-Docker long-running crawlers), built greenfield as an `apps/` + `packages/`
-monorepo. Goals, decisions and the phased roadmap live in **`docs/`** — start with
-[`docs/dopilot/00-requirements.md`](docs/dopilot/00-requirements.md) and
-[`CLAUDE.md`](CLAUDE.md). `reference/scrapydweb/` is a read-only behavioral
-reference only (never imported, never built).
+<h1 align="center">dopilot</h1>
 
-> **Status:** Phase 0 (platform skeleton) is implemented. It boots and is testable
-> but does **not** yet run real Scrapy/script/docker work — see
-> [`docs/phases/phase-0/00-brief.md`](docs/phases/phase-0/00-brief.md).
+<p align="center">
+  A private, single-admin scheduling platform for running Scrapy spiders and
+  Python scripts across worker nodes.
+</p>
 
-## Layout
+<p align="center">
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+---
+
+## What dopilot is
+
+dopilot is a self-hosted platform that schedules and runs jobs on remote worker
+nodes, streams their logs back in real time, and keeps a durable record of every
+run. It is built greenfield as an `apps/` + `packages/` monorepo.
+
+It is deliberately **single-admin**: there is no multi-user system or RBAC. The
+upstream **scrapydweb** project (under `reference/scrapydweb/`) is kept only as a
+read-only behavioral reference; it is never imported or built.
+
+### What it can run today
+
+| Job type | Status | How it runs |
+| --- | --- | --- |
+| **Scrapy spiders** | Available | Upload a built `.egg`; the agent runs the spider on its in-process scrapyd. |
+| **Python scripts** | Available | Upload a `.whl`; the agent runs a shell command with the wheel on `PYTHONPATH`. |
+| **Docker long-running crawlers** | Planned | A future phase. Not implemented yet. |
+
+## How it works
+
+dopilot has two Docker roles, both built from one unified image
+(`rabbir/dopilot:latest`); the runtime role is selected by the container command:
+
+- **server**: the FastAPI hub. Serves the `/api/v1/*` JSON/SSE API and the
+  bundled web UI, owns scheduling (APScheduler), persists business data and log
+  indexes in **PostgreSQL**, and writes log bodies to files under
+  `/server-data/logs`.
+- **agent**: a worker. Consumes commands, runs jobs, and pushes status events and
+  log increments back.
+
+The server and agents talk over **Redis Streams** plus an agent heartbeat. Redis
+is a transient message bus, not a database, and never the source of business
+truth. The agent never connects to PostgreSQL directly.
 
 ```
-apps/
-  server/   dopilot-server  — FastAPI hub: /api/v1 JSON, auth, nodes, PostgreSQL + Alembic
-  agent/    dopilot-agent   — worker HTTP service: /health, /logs/tail, /status, cleanup
-  web/      Vue 3 + Element Plus + Vite + TS SPA (login, layout, dashboard, nodes, zh/en i18n)
-packages/
-  protocol/ dopilot-protocol — shared server↔agent Pydantic schemas (no app deps)
-deploy/docker/  Dockerfile.server, Dockerfile.agent, docker-compose.yml (server + agent + db)
-configs/        server.example.toml, agent.example.toml   (loaded via DOPILOT_CONFIG)
+ server ──XADD command──►  Redis Streams  ──consume──►  agent ──run──► scrapyd / python
+   ▲                                                       │
+   └────── status events · log increments · heartbeat ─────┘
 ```
 
-## Prerequisites
+Core domain model (snapshot is frozen at task creation):
 
-- Python **3.12** (with `python3-venv`/`ensurepip`; if your distro lacks it, see *Troubleshooting*)
-- Node **22+** with `pnpm` (this repo uses Corepack: `corepack pnpm …`)
-- Docker + Docker Compose (for PostgreSQL and the backend compose loop)
+```
+BuildArtifact → ExecutionTemplate → Schedule → Task → Execution
+```
 
-## Backend (server + agent + protocol)
+A **Task** is one trigger; it fans out to one **Execution** per selected node,
+chosen by the node strategy (`selected`, `all`, or `random`, filtered by node
+capability and health).
+
+### Python script execution model
+
+A Python script is packaged as a `.whl` build artifact. On the agent, each wheel
+is installed once per `sha256` with:
 
 ```bash
-python3 -m venv .venv
+pip install --no-deps --target <agent-cache>/python_wheel/<sha256>/site <wheel>
+```
+
+The shell command then runs with that directory injected on `PYTHONPATH`:
+
+```bash
+PYTHONPATH=<site-dir>:$PYTHONPATH /bin/sh -c "<command>"
+```
+
+There is **no virtualenv**, no dependency resolution (`--no-deps`), and no
+console-script entry point. Run importable modules, e.g. `python -m main`.
+Dependencies the script needs beyond the wheel must already be present in the
+agent environment.
+
+## Quick deploy (Docker Compose)
+
+The compose stack builds from two local base images
+(`rabbir/dopilot-py-base:local`, `rabbir/dopilot-web-base:local`). `make
+compose-up` builds those base images first, then brings up the full stack
+(PostgreSQL + Redis + one-shot migrate + agent + server):
+
+```bash
+make compose-up
+```
+
+The server is then reachable at **http://localhost:5000** (web UI and API). The
+server runs single-replica only (in-process scheduler + in-memory SSE tables).
+
+> Compose configs set `[auth]`, so web auth is **on** there. The default
+> `change-me` credentials are not production-safe; change them before exposing
+> the server.
+
+## Local development
+
+Prerequisites: Python **3.12**, Node **22+** with Corepack (`corepack pnpm …`),
+and Docker (for PostgreSQL and Redis).
+
+```bash
+# 1. Python packages (protocol first; server/agent depend on it)
+make install
 source .venv/bin/activate
-pip install -U pip wheel
-pip install -e packages/protocol          # install protocol first (server/agent depend on it)
-pip install -e "apps/server[dev]"
-pip install -e "apps/agent[dev]"
+
+# 2. Backing services.
+# Postgres can use the committed compose service; Redis needs a host port for
+# host-run server/agent processes.
+scripts/dev-db.sh up
+docker run -d --rm --name dopilot-redis-dev -p 6379:6379 \
+  redis:7 redis-server --appendonly yes
+
+# 3. Apply migrations (server owns the schema)
+make migrate
+
+# 4. Run the services (separate terminals).
+# For the agent, copy configs/agent.example.toml to a local file and set:
+#   [agent].server_url = "http://localhost:5000"
+#   [agent].advertise_endpoint = "localhost:6800"
+#   [redis].url = "redis://localhost:6379/0"
+make server
+DOPILOT_CONFIG=configs/agent.local.toml dopilot-agent
+
+# 5. Web UI in dev mode (Next.js)
+NEXT_PUBLIC_API_BASE=http://localhost:5000/api/v1 corepack pnpm --filter web dev
 ```
 
-Run a local PostgreSQL, apply migrations, then start both services:
+Stop the local Redis container with `docker stop dopilot-redis-dev`.
+
+`DOPILOT_CONFIG` points at a TOML config under `configs/`; `DOPILOT_DATABASE_URL`
+and `DOPILOT_REDIS_URL` override the database and Redis URLs. Web auth and agent
+auth are **config-present-or-off**: each is enabled only when its credentials are
+set.
+
+The web app is a **Next.js static export** (shadcn/ui + react-i18next) served by
+`dopilot-server` from the same container; there is no separate web container and
+no Node production runtime.
+
+## Tests & lint
 
 ```bash
-cd deploy/docker && docker compose up -d db && cd ../..        # PostgreSQL on :5432
-(cd apps/server && DOPILOT_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot \
-   alembic upgrade head)
-
-DOPILOT_CONFIG=configs/server.example.toml dopilot-server      # http://localhost:5000/api/v1
-DOPILOT_CONFIG=configs/agent.example.toml  dopilot-agent       # http://localhost:6800
-```
-
-Config is read from the TOML pointed to by `DOPILOT_CONFIG`; `DOPILOT_DATABASE_URL`
-overrides `[database].url`, and `AGENT_ID` / `AGENT_WORKDIR` override the agent TOML.
-Web auth is **config-present-or-off**: it is enabled only when `[auth]`
-`admin_username` + `admin_password` + `token_secret` are all set (the example
-`change-me` values are **not** production-safe). Agent auth is enabled only when
-`[auth].shared_token` is set.
-
-## Web SPA
-
-```bash
-corepack pnpm install            # approves esbuild/vue-demi build scripts (pnpm-workspace.yaml)
-corepack pnpm --filter web dev   # http://localhost:5173, proxies /api -> http://localhost:5000
-corepack pnpm --filter web build
-```
-
-## Tests / lint
-
-```bash
-pytest                                   # all suites (server 24, agent 15, protocol 9)
-corepack pnpm --filter web test          # vitest
-ruff check apps packages                 # lint (pip install ruff)
+make test                          # pytest (server/agent/protocol) + web vitest
+corepack pnpm --filter web build   # static export build
+ruff check apps packages           # lint
 cd deploy/docker && docker compose config
 ```
 
-A `Makefile` wraps the common flows: `make install web-install db-up migrate server agent web test compose-config lint`.
+## Documentation
 
-## Docker (backend loop)
+Goals, decisions, and the phased roadmap live under [`docs/`](docs/README.md):
 
-`deploy/docker/docker-compose.yml` builds and runs `db` + a one-shot `migrate`
-step (`alembic upgrade head`) + `agent` + `server` (images `rabbir/dopilot:latest`
-/ `rabbir/dopilot-agent:latest`; build context is the repo root and `.dockerignore`
-excludes `reference/`). The server mounts `configs/server.docker.toml`, which
-reaches `db`/`agent` by compose **service name** (not `localhost`). The web SPA
-runs separately via Vite. server is single-replica only (`uvicorn workers=1`).
+- [`docs/dopilot/00-requirements.md`](docs/dopilot/00-requirements.md): the
+  north-star: product goals, confirmed decisions, the phased roadmap.
+- [`docs/dopilot/10-roadmap.md`](docs/dopilot/10-roadmap.md): the consolidated
+  build/port roadmap.
+- [`CLAUDE.md`](CLAUDE.md): architecture, hard constraints, current status.
 
-```bash
-cd deploy/docker && docker compose up -d --build     # db -> migrate -> agent -> server
-```
+## License
 
-The `agent` image bundles `scrapy` + `scrapyd`; the agent process spawns a local
-`scrapyd` child (config `[scrapyd].start = true`) listening on container-internal
-`127.0.0.1:6801`. Only the agent HTTP API (`6800`) is published — `6801` is never
-exposed to the host. Both `agent` and `server` declare healthchecks, so
-`server` only starts once `agent` is `service_healthy` (and the scrapyd
-subprocess is up).
-
-## Phase 1: Scrapy chain
-
-Phase 1 runs the first real execution loop: upload a built Scrapy egg, run a
-spider on an agent's in-process scrapyd, pull the job log back to the server, and
-land it under `/server-data/logs` with the offset/status index in PostgreSQL.
-
-Fixed names used below come from the demo fixture
-(`tests/fixtures/scrapy_demo/`): Scrapy project `demo`, spider `phase1`,
-committed egg `tests/fixtures/scrapy_demo/eggs/demo_phase1.egg`. The spider is
-offline and deterministic — it logs `phase1 demo spider started` /
-`phase1 demo spider done` and scrapes 2 items.
-
-### Compose smoke (recommended)
-
-One repeatable, clean-volume end-to-end check that builds the images and drives
-the whole chain (clean volumes -> migrate -> agent+scrapyd -> upload egg -> run
-spider -> assert log markers -> assert `complete` -> tear down):
-
-```bash
-make compose-smoke           # == scripts/smoke-phase1.sh
-```
-
-It tears the stack down (`docker compose down -v`) on exit. Set `KEEP_UP=1` to
-leave a passing stack running for inspection. It needs `docker`, `curl` and
-`python3` on the host (no venv). If the committed egg is absent it is rebuilt
-inside the agent container via `python3 setup.py bdist_egg`.
-
-### Local dev (host processes + db container)
-
-Run the db in Docker and the server+agent on the host. The agent spawns its own
-scrapyd child, so it needs `scrapy` + `scrapyd` importable in the same env:
-
-```bash
-# 0. install deps (server + agent need scrapy/scrapyd for the local agent run)
-pip install -e packages/protocol -e "apps/server[dev]" -e "apps/agent[dev]"
-pip install 'scrapy>=2.11,<3' 'scrapyd>=1.4,<2'
-
-# 1. db + migrations
-scripts/dev-db.sh up                                          # PostgreSQL on :5432
-(cd apps/server && DOPILOT_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot \
-   alembic upgrade head)
-
-# 2. run agent + server (separate terminals)
-DOPILOT_CONFIG=configs/agent.example.toml  dopilot-agent      # :6800 (+ internal scrapyd :6801)
-DOPILOT_CONFIG=configs/server.example.toml dopilot-server     # :5000
-
-# 3. (re)build the demo egg only if you changed the fixture source
-tests/fixtures/scrapy_demo/build_egg.sh                       # -> eggs/demo_phase1.egg
-
-# 4. upload the egg, run the spider, watch the logs (web auth off in the
-#    *.example.toml configs -> no token needed locally)
-curl -fsS -X POST http://localhost:5000/api/v1/artifacts/scrapy/egg \
-  -F project=demo -F version=$(date +%s) \
-  -F file=@tests/fixtures/scrapy_demo/eggs/demo_phase1.egg
-
-curl -fsS -X POST http://localhost:5000/api/v1/executions/run \
-  -H 'Content-Type: application/json' \
-  -d '{"task_type":"scrapy","target":"demo:phase1","node_strategy":"all","params":{"project":"demo","spider":"phase1"}}'
-# -> {"execution_id": "..."}; then poll status / read logs:
-curl -fsS http://localhost:5000/api/v1/executions/<id>
-curl -fsS http://localhost:5000/api/v1/executions/<id>/logs
-```
-
-> The compose configs (`configs/server.docker.toml`) set `[auth]`, so web auth is
-> **ON** there and API calls need a bearer token from `POST /api/v1/auth/login`
-> (`admin` / `change-me`); the smoke script handles this. The local
-> `*.example.toml` configs leave auth off, so the curl calls above need no token.
-
-## Troubleshooting
-
-- **`python3 -m venv` fails with "ensurepip is not available"** — install
-  `python3.12-venv`, or bootstrap pip into a pip-less venv:
-  `python3 -m venv --without-pip .venv && curl -sSL https://bootstrap.pypa.io/get-pip.py | .venv/bin/python`.
-- **`pnpm install` reports `ERR_PNPM_IGNORED_BUILDS`** — `esbuild`/`vue-demi` are
-  pre-approved in `pnpm-workspace.yaml` (`allowBuilds`); on older pnpm use
-  `pnpm approve-builds`.
+See the repository for license details.

@@ -9,7 +9,6 @@ import {
   LayoutDashboard,
   ListChecks,
   Package,
-  Rocket,
   ScrollText,
   Server,
   Wrench,
@@ -51,7 +50,24 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
             <SidebarMenuButton size="lg" asChild>
               <Link href="/dashboard">
                 <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <Rocket className="size-4" />
+                  {/* Brand mark from the committed public asset. The logo is a
+                      currentColor monochrome SVG, so we render it as a mask
+                      tinted with the foreground color to stay legible in both
+                      light and dark sidebars (a plain <img> would paint black). */}
+                  <span
+                    aria-hidden
+                    className="size-4 bg-current"
+                    style={{
+                      maskImage: "url(/logo.svg)",
+                      WebkitMaskImage: "url(/logo.svg)",
+                      maskSize: "contain",
+                      WebkitMaskSize: "contain",
+                      maskRepeat: "no-repeat",
+                      WebkitMaskRepeat: "no-repeat",
+                      maskPosition: "center",
+                      WebkitMaskPosition: "center",
+                    }}
+                  />
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-semibold">
