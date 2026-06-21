@@ -36,9 +36,9 @@
 | [`01-gap-executors.md`](dopilot/01-gap-executors.md) | 多类型执行器抽象（Scrapy/脚本/Docker）—— 方案 A |
 | [`02-gap-scheduling-nodes-push.md`](dopilot/02-gap-scheduling-nodes-push.md) | 定时 + 节点策略(指定/全部/随机) + 推模式 |
 | [`03-gap-realtime-logs.md`](dopilot/03-gap-realtime-logs.md) | 实时日志 —— agent 经 Redis log stream 主动推增量、server 消费落盘（`RedisLogSource`，详见 [`refactor/00`](refactor/00-redis-streams-agent-communication.md)）+ server→web SSE，正文落 /server-data/logs、索引/offset/状态落 PostgreSQL；第一版无 WebSocket |
-| [`04-gap-i18n.md`](dopilot/04-gap-i18n.md) | 国际化（默认中文）—— 前端 vue-i18n（greenfield，不用 Flask-Babel） |
+| [`04-gap-i18n.md`](dopilot/04-gap-i18n.md) | 国际化（默认中文）—— 前端 react-i18next（阶段 2.1 起，原 vue-i18n；greenfield，不用 Flask-Babel） |
 | [`05-dev-setup-and-known-issues.md`](dopilot/05-dev-setup-and-known-issues.md) | 环境搭建 + `pkg_resources` 等已知坑 |
-| [`06-frontend-rewrite.md`](dopilot/06-frontend-rewrite.md) | 前端整体构建（Vue 3 + Element Plus，greenfield SPA，分阶段交付） |
+| [`06-frontend-rewrite.md`](dopilot/06-frontend-rewrite.md) | 前端整体构建（greenfield SPA，分阶段交付；阶段 2.1 起 Next.js 静态导出 + shadcn/ui，替换原 Vue/Element Plus 选型） |
 | [`07-testing-baseline.md`](dopilot/07-testing-baseline.md) | 测试基线（scrapydweb 测试=reference 行为 oracle；dopilot 自有测试在 apps/*/tests） |
 | [`08-docker-deployment.md`](dopilot/08-docker-deployment.md) | server/agent Docker 化 + 数据持久化 |
 | [`09-package-rename.md`](dopilot/09-package-rename.md) | scrapydweb 行为/契约移植注意事项（非改名；保留耦合点分析供移植参考） |
@@ -72,7 +72,7 @@
 - **推模式**：主动下发到指定 worker 立即执行
 - **认证**：单用户唯一管理员
 - **后端**：FastAPI + Pydantic + ASGI（`apps/server`），提供 `/api/v1/*` JSON/SSE API
-- **前端**：Vue 3 + Element Plus + Vite + TS（`apps/web`），前后端分离，**greenfield SPA** 直连 `/api/v1`、分阶段交付页面（无 Jinja 共存/strangler）
+- **前端**：Next.js 静态导出（`output: export`）+ shadcn/ui + Recharts + TS（`apps/web`，自阶段 2.1 起替换原 Vue 3 + Element Plus 选型），前后端分离，**greenfield SPA** 直连 `/api/v1`、分阶段交付页面（无 Jinja 共存/strangler）；静态产物由 dopilot-server 托管，无独立 Web 容器/Node 生产运行时
 - **数据库**：PostgreSQL 唯一数据库，SQLAlchemy + 裸 Alembic（FastAPI 无 Flask，不用 Flask-Migrate）；PG 存业务数据 + 日志索引/offset/状态（表 `execution_log_files`），**日志正文不进 PG，落 server 本地卷 `/server-data/logs`**
 - **实时日志**：~~server 按需从 agent tail API（HTTP `GET /logs/tail`）拉取日志增量~~ **现以 [`refactor/00-redis-streams-agent-communication.md`](refactor/00-redis-streams-agent-communication.md) 新模型为准**：改为 **agent 主动经 Redis 日志 stream（`dopilot:server:logs`，base64 字节 + offset/size_bytes/eof）推送增量、server 消费后落盘**；保留四个不变量 —— 第一版不用 WebSocket、server→web SSE、正文落 `/server-data/logs`、PostgreSQL 只存索引/offset/状态。`LogSource` 抽象保留，实现由 `AgentTailLogSource`（server pull）换为 `RedisLogSource`（agent push + server consume）。日志 RPO≠0：server 长停或 Redis 裁剪致 `partial`（新增 `log_integrity` 列），与业务状态分离、不阻塞执行收敛
 - **镜像发布**：构建推送到 Docker Hub `rabbir/dopilot:latest`；server / agent / migrate 使用同一镜像，通过启动命令选择角色；镜像命名空间 `rabbir` ≠ git origin `senjianlu`

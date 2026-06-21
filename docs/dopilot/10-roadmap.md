@@ -20,7 +20,7 @@
 阶段1 Scrapy ───┤  dopilot-agent(内管本机 scrapyd) + ScrapydExecutor(全新实现) + server pull 日志 + 定时 + 节点策略 + 推模式 + 前端 M1~M3 │
 阶段1.5 重构 ──┤  server↔agent 通信 HTTP pull → Redis Streams(命令/事件/日志) + agent 主动 heartbeat（破坏性、无双轨；见 §3.5 / phase-1.5）│
 阶段1.8 清理 ──┤  BuildArtifact + ExecutionTemplate + Schedule overrides + Task/Execution public clean-cut，为 python_wheel/docker_image 预留类型与能力过滤 │
-阶段2 脚本 ─────┤  PythonWheelExecutor(复用阶段1 agent) + .whl/venv/subprocess + stdout/stderr 日志源                      │
+阶段2 脚本 ─────┤  PythonWheelExecutor(复用阶段1 agent) + .whl/pip --no-deps --target/PYTHONPATH/subprocess + stdout/stderr 日志源        │
 阶段3 长连接 ───┤  DockerExecutor(Docker/K3s SDK) + 容器生命周期 + 容器日志源                      │
                 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -109,7 +109,7 @@
 
 | Epic | 类型 | 说明 | 文档 |
 |------|------|------|------|
-| `PythonWheelExecutor` / Script runner | 🆕 | Python 脚本以 `.whl` 构建产物接入。agent 下载 wheel、校验 sha256、按构建产物 hash 缓存 venv，使用 `asyncio.create_subprocess_exec` 启动 venv 内 Python/console script。 | `01-gap-executors.md` §6 |
+| `PythonWheelExecutor` / Script runner | 🆕 | Python 脚本以 `.whl` 构建产物接入。agent 下载 wheel、校验 sha256，按 sha256 用 `pip install --no-deps --target <cache>/python_wheel/<sha256>/site` 安装一次（无 venv、无依赖解析、无 console-script），把该 site 目录注入 `PYTHONPATH` 后以 `/bin/sh -c "<command>"` 启动（如 `python -m main`）。详见 `phases/phase-2b/00-brief.md`。 | `01-gap-executors.md` §6 |
 | 脚本状态 | 🆕 | agent 以子进程生命周期为权威：准备环境→启动成功发 running→退出码 0 为 succeeded/finished，非 0 为 failed，取消时 SIGTERM→grace→SIGKILL 后 canceled。第一版不要求脚本 SDK/心跳协议。 | `phases/phase-1.8/00-brief.md` |
 | 脚本日志源 | 🆕 | LogSource 接脚本 `stream=stdout/stderr`；agent 强制 `PYTHONUNBUFFERED=1` / `python -u`，异步读取 stdout/stderr 并经 Redis log stream 推送，server 消费落盘 + SSE。 | `03-gap-realtime-logs.md` §2 |
 | 定时/节点/推模式 | ♻️ | 复用 dopilot 阶段1 已建能力（dopilot 自有，非 scrapydweb） | `02-gap` |
