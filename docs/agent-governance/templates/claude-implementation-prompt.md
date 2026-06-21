@@ -20,8 +20,9 @@ Read these before editing:
 ## Constraints
 
 - Keep changes scoped to the brief.
-- Do not edit `reference/scrapydweb/`.
-- Do not copy structure or code from `reference/scrapydweb/`.
+- Do not fetch, vendor, copy, or import upstream scrapydweb code. There is no
+  local snapshot; upstream is a behavior reference consulted externally only.
+- Do not copy structure or code from upstream scrapydweb.
 - Preserve existing public behavior unless the brief explicitly changes it.
 - Add or update tests for changed behavior.
 

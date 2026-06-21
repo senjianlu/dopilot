@@ -2,7 +2,7 @@
 
 > 适用对象：后续承接 dopilot 改造的工程师。
 > 阅读约定：本文严格区分「**现状事实**」（已 Read/Grep 核实源码，标注 `文件:行号`）与「**改造建议 / 开放问题**」（设计推演，需团队决策）。
-> 行为参考基线：`reference/scrapydweb/`（**只读**，仅作功能 / 行为对照与测试 oracle）；dopilot 代码**全新编写**于 `apps/server/dopilot_server/` 等骨架，本文所有 `文件:行号` 引用均指向 `reference/scrapydweb/` 的行为参考，**不是** dopilot 待改文件。
+> 行为参考基线：上游 scrapydweb 1.6.0 / commit `1341cf9`（外部只读参考，本仓库不保留本地快照，仅作功能 / 行为对照与测试 oracle）；dopilot 代码**全新编写**于 `apps/server/dopilot_server/` 等骨架，本文所有 `文件:行号` 引用均指向上游 scrapydweb 的行为参考，**不是** dopilot 待改文件。
 
 > **【scrapydweb 参考边界】** scrapydweb 仅作**功能层/行为参考**与**测试 oracle**；其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 的设计依据**。dopilot 为 greenfield、按 `apps/`+`packages/` 自有领域 structure-first 设计(权威布局见 `05-dev-setup-and-known-issues.md` §1)，**不对 scrapydweb 做改名/git mv**。详见 `00-requirements.md` 决策表。
 
@@ -202,7 +202,7 @@ assert any(results), "None of your SCRAPYD_SERVERS could be connected. "
 
 理由：
 1. 无论 task_type 为何，都**需要一个 `task_type` 多态分派层**，且能最大化复用 `TaskExecutor.main` 的现成编排资产（R1-R3）。
-2. 先按 scrapyd 的 `schedule.json` 调用语义**全新实现 ScrapydExecutor**（以 `reference/scrapydweb` 的 scrapyd 下发行为为对照 oracle，验证其输出契约一致）；注意 dopilot 的 ScrapydExecutor **不直连裸 scrapyd**，而是 `server XADD run 命令 → agent 消费 → 本机 scrapyd`，agent 内部再调 scrapyd `schedule.json`/`addversion.json`。
+2. 先按 scrapyd 的 `schedule.json` 调用语义**全新实现 ScrapydExecutor**（以上游 scrapydweb 的 scrapyd 下发行为为对照 oracle，验证其输出契约一致）；注意 dopilot 的 ScrapydExecutor **不直连裸 scrapyd**，而是 `server XADD run 命令 → agent 消费 → 本机 scrapyd`，agent 内部再调 scrapyd `schedule.json`/`addversion.json`。
 3. 实时日志（B-1）由 **agent 经 Redis log 流推送、server 消费落盘** 的链路承载：agent 主动 XADD `dopilot:server:logs`（base64 字节、带逻辑 byte offset）→ server log consumer 按 offset 串行追加写 `/server-data/logs` 正文 + PG 索引（offset gap → 标 `partial` 并插 gap marker，黏性）、经 server→web SSE 推前端，**第一版完全不用 WebSocket**（scrapy 用 scrapyd job.log；脚本阶段用 stdout/stderr 流）。详见 03-gap-realtime-logs。
 4. egg 部署 **第一版仅支持上传已构建 egg**：用户上传 → server → 经 agent（egg 部署仍可走 agent 本地通道）→ agent 调本机 scrapyd `/addversion.json`，不做本地/源码/Git/CI 构建。
 5. **务必先加 `Task.task_type` 列并放宽 `project/version/spider/jobid` 的 nullable**，否则三类对象无法共表。
@@ -321,9 +321,9 @@ executor.run()                                     # 执行编排（遍历节点
 
 ## 7. dopilot 新建文件 ↔ 行为参考映射
 
-> 左列为 dopilot **全新实现**的文件（`apps/server/dopilot_server/` 等 canon 路径，权威布局见 `05-dev-setup-and-known-issues.md` §1）；右列为「要实现的行为 + `reference/scrapydweb/` 中可对照的行为语义（`文件:行号`，仅作参考，**非**待改文件）」。reference/scrapydweb 只读、不被 import、不进构建上下文。
+> 左列为 dopilot **全新实现**的文件（`apps/server/dopilot_server/` 等 canon 路径，权威布局见 `05-dev-setup-and-known-issues.md` §1）；右列为「要实现的行为 + 上游 scrapydweb 中可对照的行为语义（`文件:行号`，仅作外部参考，**非**待改文件）」。上游 scrapydweb 外部只读、不被拉取/内置/import、不进构建上下文（本仓库不保留本地快照）。
 
-| dopilot 新建文件 | 要实现的行为 + 行为参考（reference/scrapydweb） |
+| dopilot 新建文件 | 要实现的行为 + 行为参考（上游 scrapydweb） |
 |------|---------|
 | `apps/server/dopilot_server/executors/base.py` | 定义 `BaseExecutor` 抽象基类（`run_on_node`=经 command outbox + dispatcher XADD `run` 命令；`stop`=XADD `stop` 命令（带 intent）；`get_status`=由 server event consumer 消费 `agent-events` 更新，**非轮询、非 server→agent HTTP**）与 `EXECUTOR_REGISTRY`（`task_type → Executor`），供 scheduler 回调按 `task_type` 分派（缝①）。**日志不在 Executor 接口上**——为 agent XADD `logs` 流 + server 消费落盘（见 03）|
 | `apps/server/dopilot_server/executors/scrapyd.py` | `ScrapydExecutor`：经 Redis 命令流 → dopilot-agent 调**本机** scrapyd（server 不直连裸 scrapyd）。`run_on_node` → XADD `run`(task_type=scrapy) 命令，agent 消费后调本机 scrapyd `schedule.json`；egg 仅上传部署，经 agent 调本机 scrapyd `addversion.json`。行为参考：`schedule_task`（`execute_task.py:75-104`）+ `ScheduleTaskView`（`schedule.py:617`）的 `schedule.json` 下发语义，作对照 oracle 验证输出契约一致 |

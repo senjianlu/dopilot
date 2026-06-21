@@ -1,6 +1,6 @@
 # 04 · Web 视图、路由与前端
 
-> **【scrapydweb 行为参考·边界】** 本文描述 **scrapydweb 现状行为/语义**，作为 dopilot 的**功能层参考**；其代码写法、目录结构、模块划分**不得作为 dopilot 设计依据**。文中 `file:line` 路径均**相对 `reference/scrapydweb/`**（如 `scrapydweb/run.py` 即 `reference/scrapydweb/scrapydweb/run.py`；该目录只读、不被 import、不参与构建、不改名）。任何"改造切入点/复用/保留"类措辞，一律理解为"dopilot 需在 `apps/` 下**全新复刻其行为语义**"，而非改动或照搬 scrapydweb 文件。详见 `../dopilot/00-requirements.md` 决策表。
+> **【scrapydweb 行为参考·边界】** 本文描述 **scrapydweb 现状行为/语义**，作为 dopilot 的**功能层参考**；其代码写法、目录结构、模块划分**不得作为 dopilot 设计依据**。文中 `file:line` 路径均**相对上游 scrapydweb 1.6.0 / commit `1341cf9`**（如 `scrapydweb/run.py` 即上游 `scrapydweb/run.py`；本仓库不保留本地快照，上游只读、不被拉取/内置/import、不参与构建）。任何"改造切入点/复用/保留"类措辞，一律理解为"dopilot 需在 `apps/` 下**全新复刻其行为语义**"，而非改动或照搬 scrapydweb 文件。详见 `../dopilot/00-requirements.md` 决策表。
 >
 > 面向后续 dopilot 工程师。本篇覆盖 scrapydweb 的 Flask Web 层（视图 / 路由）与前端（模板 / 静态资源）的**现状行为**，并标注 dopilot 三类被调度对象、实时日志、定时调度、节点选择、推模式、i18n 的**行为映射参考**。
 >
@@ -514,7 +514,7 @@ TaskExecutor.main()  (execute_task.py:42)
 
 ## 14. 行为映射参考总表（一页速查）
 
-> 下表"主要文件:符号"列均为 scrapydweb 现状行为的定位（相对 `reference/scrapydweb/`，只读参考）；"dopilot 实现要点"列描述 dopilot 在 `apps/` 下全新复刻其行为语义的做法，而非改动 scrapydweb 文件。
+> 下表"主要文件:符号"列均为 scrapydweb 现状行为的定位（相对上游 scrapydweb 1.6.0 / commit `1341cf9`，外部只读参考）；"dopilot 实现要点"列描述 dopilot 在 `apps/` 下全新复刻其行为语义的做法，而非改动 scrapydweb 文件。
 
 | 需求 | scrapydweb 行为定位:符号 | 现状语义 | dopilot 实现要点（全新复刻其行为语义） |
 |---|---|---|---|

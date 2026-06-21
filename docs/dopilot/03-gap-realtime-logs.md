@@ -4,7 +4,7 @@
 >
 > **【已被通信重构取代 / superseded】** 本文 dopilot 侧的「server 主动 pull 调 agent tail/status/cleanup」日志模型已被 `docs/refactor/00-redis-streams-agent-communication.md` 翻案：日志由 **agent 经 Redis log stream（`dopilot:server:logs`）主动推增量，server 消费后落盘**，`LogSource` 抽象保留但实现由 `AgentTailLogSource` 换为 `RedisLogSource`。本文 dopilot 段已据该 refactor 同步；scrapydweb 现状事实（§1、§2「现状对接」、§6「为什么是缺口」依据、文末「scrapydweb 行为参考」）为行为参考，不随重构改动。细节以该 refactor 文档为准。
 >
-> 本文区分「现状事实」（基于 scrapydweb 参考基线源码核实，标注 `file:line`——**这些路径相对 `reference/scrapydweb/`，是行为参考引用，不是 dopilot 源码位置**）与「改造建议 / 开放问题」。实时日志能力由 dopilot 全新实现，采用 **agent 经 Redis log stream 主动推、server 消费落盘** 模型：agent tail 本地日志并 `XADD` 到 `dopilot:server:logs`（base64 字节，带 `offset`/`size_bytes`/`eof`）；server 端的 log consumer 消费该 stream，按 offset 落盘并更新 PG，`LogSource` 抽象在 `apps/server/dopilot_server/`（`logs/`、`api/v1/`）保留但**数据源由 Redis log stream 驱动**（实现为 `RedisLogSource`）；server 把日志正文写入本地文件卷 `/server-data/logs`，把索引 / offset / 状态写入 **PostgreSQL**（`execution_log_files` 表，PG 不存正文），并通过 **SSE** 单向推给 Vue SPA（原生 `EventSource`）。跨进程协议在 `packages/protocol/`，配置在 `configs/`（toml）。
+> 本文区分「现状事实」（基于 scrapydweb 参考基线源码核实，标注 `file:line`——**这些路径相对上游 scrapydweb 1.6.0 / commit `1341cf9`，是外部行为参考引用，不是 dopilot 源码位置（本仓库不保留本地快照）**）与「改造建议 / 开放问题」。实时日志能力由 dopilot 全新实现，采用 **agent 经 Redis log stream 主动推、server 消费落盘** 模型：agent tail 本地日志并 `XADD` 到 `dopilot:server:logs`（base64 字节，带 `offset`/`size_bytes`/`eof`）；server 端的 log consumer 消费该 stream，按 offset 落盘并更新 PG，`LogSource` 抽象在 `apps/server/dopilot_server/`（`logs/`、`api/v1/`）保留但**数据源由 Redis log stream 驱动**（实现为 `RedisLogSource`）；server 把日志正文写入本地文件卷 `/server-data/logs`，把索引 / offset / 状态写入 **PostgreSQL**（`execution_log_files` 表，PG 不存正文），并通过 **SSE** 单向推给 Vue SPA（原生 `EventSource`）。跨进程协议在 `packages/protocol/`，配置在 `configs/`（toml）。
 > 第一版**仍完全不使用 WebSocket、server→web 仍单向 SSE、正文仍落 `/server-data/logs`、PG 仍只存索引/offset/状态**（决策 #11 的四不变量）。日志 **RPO≠0**：server 长停或 Redis log stream 超出保留窗口会导致日志缺片（`log_integrity=partial`），业务执行状态收敛与日志完整性分离，缺片不阻塞 attempt 进入 terminal。
 > 目标：为三类被调度对象（Scrapy/scrapyd 爬虫、Docker 常驻爬虫、Python 一次性脚本）提供统一的**真·实时日志流**。
 
@@ -28,11 +28,11 @@
 
 ## 1. 现状事实：logparser + 硬刷新轮询
 
-scrapydweb 参考基线 **并无真正的「实时日志流」**。其日志能力完全建立在 scrapyd 的「日志文件 + logparser 解析」模型上，并且是**拉取式 + 整段读取 + 前端硬刷新**。以下为对该参考基线行为的核实，**所有 `file:line` 相对 `reference/scrapydweb/`，是行为参考、非 dopilot 源码路径**。
+scrapydweb 参考基线 **并无真正的「实时日志流」**。其日志能力完全建立在 scrapyd 的「日志文件 + logparser 解析」模型上，并且是**拉取式 + 整段读取 + 前端硬刷新**。以下为对该参考基线行为的核实，**所有 `file:line` 相对上游 scrapydweb 1.6.0 / commit `1341cf9`，是外部行为参考、非 dopilot 源码路径**。
 
 ### 1.1 唯一的日志页：`LogView`（参考基线行为）
 
-参考文件：`reference/scrapydweb/scrapydweb/views/files/log.py`
+参考文件：上游 `scrapydweb/views/files/log.py`
 
 `LogView` 按 `opt` 分三种模式（`log.py:89-96`）：
 
@@ -319,7 +319,7 @@ agent log publisher 在 `XACK` / outbox 语义下保证日志至少一次到达 
 
 ### scrapydweb 行为参考（只读，移植时对照的语义点）
 
-以下为 scrapydweb 参考基线在该领域的行为/语义，仅供 dopilot 移植时对照，**`file:line` 相对 `reference/scrapydweb/`，不是 dopilot 待改文件**：
+以下为 scrapydweb 参考基线在该领域的行为/语义，仅供 dopilot 移植时对照，**`file:line` 相对上游 scrapydweb 1.6.0 / commit `1341cf9`，不是 dopilot 待改文件**：
 
 - `log.py:89-96, 116-170, 221-248`：`LogView` 的 `opt`（utf8/stats/report）分派、node 寻址、整段一次性读取（`f.read()` / 整段 GET）——dopilot 以其取数**语义**为参考，自行实现增量 tail。
 - `__init__.py:245-246`、`baseview.py:257-262`：`register_view` / `with_node` 路由风格与 `get_selected_nodes` 节点选择**语义**——dopilot 在 `api/v1` 与 `nodes/` 自有路由/选择逻辑实现，不沿用其路由写法。

@@ -5,7 +5,7 @@
 > 适用范围：本文聚焦 **B-5「多语言 i18n：预留国际化框架，当前只需支持中文」** 的需求落地。〔阶段 2.1 起：前端改为 Next.js 静态导出 + shadcn/ui + TS，i18n 改用 **react-i18next**（`apps/web/lib/i18n/locales/{zh,en}.ts`，插值 `{{var}}`）；下文出现的 Vue 3 / Element Plus / Vite / vue-i18n 均为历史设计描述。〕下文凡引用 scrapydweb `file:line` 的内容，**仅为理解其界面文案规模/分布的行为参考**，不是 dopilot 的改动目标。
 >
 > 阅读约定：
-> - **【scrapydweb 行为参考】**：已逐一 Read/Grep 核实的 scrapydweb 代码事实，标注 `file:line`（路径相对 `reference/scrapydweb/`），仅供理解其文案体量与分布。
+> - **【scrapydweb 行为参考】**：已逐一 Read/Grep 核实的 scrapydweb 代码事实，标注 `file:line`（路径相对上游 scrapydweb 1.6.0 / commit `1341cf9`），仅供理解其文案体量与分布。
 > - **【dopilot 设计】 / 【开放问题】**：dopilot greenfield 的落地方案与待决策项，与上面的参考事实严格区分。
 
 > **⚠️【历史文档 —— 阶段 2.1 已迁移前端技术栈】** 本文部分内容按**阶段 2.1 之前**的原始前端设计（**Vue 3 + Element Plus + Vite + vue-i18n + Pinia**）撰写，仅作历史/需求参考保留，**不再代表当前实现**。当前前端 i18n 为 **react-i18next**（单实例、默认中文、`apps/web/lib/i18n/locales/{zh,en}.ts`，插值 `{{var}}`），整体技术栈为 **Next.js（静态导出）+ shadcn/ui + Recharts + react-i18next + TypeScript**，纯静态产物由 dopilot-server 托管。权威说明见 `docs/dopilot/06-frontend-rewrite.md` 顶部对照表与 `docs/phases/phase-2.1/01-claude-implementation-report.md`。下文涉及 i18n 框架、前端目录路径、开发服务器、部署与静态资源策略的旧指引，一律以阶段 2.1 为准。
@@ -287,7 +287,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 ├── deploy/{docker/{Dockerfile,docker-compose.yml},k8s/}
 ├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置(经 DOPILOT_CONFIG 加载,不继承 scrapydweb 硬编码 settings)
 ├── scripts/  docs/
-├── reference/scrapydweb/                 # 只读行为参考,绝不进构建上下文/不被 import/不改名
+│   # 上游 scrapydweb 仅作外部行为参考，本仓库已移除本地 reference/scrapydweb/ 快照（MIT 开源）
 ├── README.md  pyproject.toml  pnpm-workspace.yaml  .dockerignore
 ```
 
@@ -333,7 +333,7 @@ timezone = "Asia/Shanghai"
 
 ## 11. 改动文件清单（dopilot canon 路径下新建）
 
-> 全部为 dopilot 自有路径下的**新建/编写**；**不触碰 `reference/scrapydweb/*`**（只读、不进构建、不改名）。
+> 全部为 dopilot 自有路径下的**新建/编写**；**不拉取/内置上游 scrapydweb 代码**（外部只读参考，不进构建，本仓库不保留本地快照）。
 
 > 〔阶段 2.1 —— 历史〕下表为旧 Vue/vue-i18n 设计的改动清单。当前 react-i18next 的对应实现：依赖为 `react-i18next` + `i18next`（无 Element Plus locale）；i18n 实例与译文在 `apps/web/lib/i18n/index.ts` 与 `apps/web/lib/i18n/locales/{zh,en}.ts`（插值 `{{var}}`）；provider 在 `apps/web/app`/`apps/web/components` 注册（无 `main.ts`、无 `ElConfigProvider`）；页面/组件落在 `apps/web/app`/`apps/web/components`。后端 `message_key` 与 `configs` 行不变。
 

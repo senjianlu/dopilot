@@ -1,8 +1,8 @@
 # 01 应用启动、CLI 与配置
 
-> **【scrapydweb 行为参考·边界】** 本文描述 **scrapydweb 现状行为/语义**，作为 dopilot 的**功能层参考**；其代码写法、目录结构、模块划分**不得作为 dopilot 设计依据**。文中 `file:line` 路径均**相对 `reference/scrapydweb/`**（如 `scrapydweb/run.py` 即 `reference/scrapydweb/scrapydweb/run.py`；该目录只读、不被 import、不参与构建、不改名）。任何"改造切入点/复用/保留"类措辞，一律理解为"dopilot 需在 `apps/` 下**全新复刻其行为语义**"，而非改动或照搬 scrapydweb 文件。详见 `../dopilot/00-requirements.md` 决策表。
+> **【scrapydweb 行为参考·边界】** 本文描述 **scrapydweb 现状行为/语义**，作为 dopilot 的**功能层参考**；其代码写法、目录结构、模块划分**不得作为 dopilot 设计依据**。文中 `file:line` 路径均**相对上游 scrapydweb 1.6.0 / commit `1341cf9`**（如 `scrapydweb/run.py` 即上游 `scrapydweb/run.py`；本仓库不保留本地快照，上游只读、不被拉取/内置/import、不参与构建）。任何"改造切入点/复用/保留"类措辞，一律理解为"dopilot 需在 `apps/` 下**全新复刻其行为语义**"，而非改动或照搬 scrapydweb 文件。详见 `../dopilot/00-requirements.md` 决策表。
 
-> 面向以 scrapydweb 为行为参考、全新构建私有调度平台 **dopilot** 的工程师。
+> 面向以 scrapydweb 为行为参考、全新构建自托管调度平台 **dopilot** 的工程师。
 >
 > 本文描述 **现状事实**（基于代码实测，标注 `file:line`）与 **改造建议 / 开放问题**（明确标识）。
 > 所有路径均为仓库内绝对路径。本文不涉及任务执行、日志解析等子系统的内部细节（另见后续文档）。
@@ -12,7 +12,7 @@
 ## 0. 一句话总览
 
 scrapydweb 通过 setuptools `console_scripts` 暴露 `scrapydweb` 命令，入口是
-`reference/scrapydweb/scrapydweb/run.py` 的 `main()`。它用 **app factory 模式**
+上游 scrapydweb/run.py 的 `main()`。它用 **app factory 模式**
 创建 Flask app，按 **4 层 + 1 旁路** 的优先级加载配置，做断言式校验并触发一堆运行时副作用
 （建表、连通性检查、起子进程、注册定时 job），最后用 **werkzeug 内置开发服务器** 阻塞运行。
 
@@ -440,16 +440,16 @@ SMTP（`SMTP_SERVER` / `SMTP_PORT` / `SMTP_OVER_SSL` / `SMTP_CONNECTION_TIMEOUT`
 
 | 文件 | 角色 |
 |---|---|
-| `reference/scrapydweb/setup.py` | 打包、console_scripts 入口、钉死依赖 |
-| `reference/scrapydweb/scrapydweb/run.py` | CLI 入口与主启动序列（`main` / `parse_args` / `load_custom_settings` / `update_app_config`） |
-| `reference/scrapydweb/scrapydweb/__init__.py` | app factory（`create_app` / `handle_db` / `handle_route` / `handle_template_context`） |
-| `reference/scrapydweb/scrapydweb/vars.py` | import 期全局初始化（目录、DB URI、常量、历史日志） |
-| `reference/scrapydweb/scrapydweb/__version__.py` | 元数据单一来源（`__title__` / `__version__` 等） |
-| `reference/scrapydweb/scrapydweb/default_settings.py` | 默认配置模板（首次运行被拷到 cwd） |
-| `reference/scrapydweb/scrapydweb/utils/check_app_config.py` | 配置校验 + 派生 + 运行时副作用（建表/连通性/起子进程/注册定时 job） |
-| `reference/scrapydweb/scrapydweb/utils/scheduler.py` | 全局 BackgroundScheduler（import 时 `start(paused=True)`） |
-| `reference/scrapydweb/scrapydweb/utils/sub_process.py` | LogParser/Monitor 子进程管理（Popen + prctl + atexit） |
-| `reference/scrapydweb/scrapydweb/common.py` | `find_scrapydweb_settings_py` / `handle_metadata` / `authenticate` |
-| `reference/scrapydweb/scrapydweb/views/baseview.py` | 配置消费统一入口（app.config → self.*） |
-| `reference/scrapydweb/scrapydweb/views/system/settings.py` | `/settings` 配置查看页（密码脱敏） |
-| `reference/scrapydweb/scrapydweb/views/operations/schedule.py` | 任务下发 / 节点选择实际消费点 |
+| `scrapydweb/setup.py` | 打包、console_scripts 入口、钉死依赖 |
+| `scrapydweb/scrapydweb/run.py` | CLI 入口与主启动序列（`main` / `parse_args` / `load_custom_settings` / `update_app_config`） |
+| `scrapydweb/scrapydweb/__init__.py` | app factory（`create_app` / `handle_db` / `handle_route` / `handle_template_context`） |
+| `scrapydweb/scrapydweb/vars.py` | import 期全局初始化（目录、DB URI、常量、历史日志） |
+| `scrapydweb/scrapydweb/__version__.py` | 元数据单一来源（`__title__` / `__version__` 等） |
+| `scrapydweb/scrapydweb/default_settings.py` | 默认配置模板（首次运行被拷到 cwd） |
+| `scrapydweb/scrapydweb/utils/check_app_config.py` | 配置校验 + 派生 + 运行时副作用（建表/连通性/起子进程/注册定时 job） |
+| `scrapydweb/scrapydweb/utils/scheduler.py` | 全局 BackgroundScheduler（import 时 `start(paused=True)`） |
+| `scrapydweb/scrapydweb/utils/sub_process.py` | LogParser/Monitor 子进程管理（Popen + prctl + atexit） |
+| `scrapydweb/scrapydweb/common.py` | `find_scrapydweb_settings_py` / `handle_metadata` / `authenticate` |
+| `scrapydweb/scrapydweb/views/baseview.py` | 配置消费统一入口（app.config → self.*） |
+| `scrapydweb/scrapydweb/views/system/settings.py` | `/settings` 配置查看页（密码脱敏） |
+| `scrapydweb/scrapydweb/views/operations/schedule.py` | 任务下发 / 节点选择实际消费点 |

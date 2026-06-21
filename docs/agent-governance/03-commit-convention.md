@@ -52,7 +52,7 @@ dopilot is a monorepo; the scope names the area touched:
 |------------|----------------------------------------------------------------|
 | `server`   | `apps/server` (FastAPI hub, scheduler, executors, migrations)  |
 | `agent`    | `apps/agent` (worker executor)                                 |
-| `web`      | `apps/web` (Vue 3 SPA)                                          |
+| `web`      | `apps/web` (Next.js static export SPA)                          |
 | `protocol` | `packages/protocol` (shared server<->agent schemas)            |
 | `deploy`   | `deploy/docker`, compose, image build/publish                  |
 | `ci`       | CI workflows                                                   |

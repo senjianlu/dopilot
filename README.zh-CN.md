@@ -5,7 +5,7 @@
 <h1 align="center">dopilot</h1>
 
 <p align="center">
-  一个面向单管理员的私有调度平台，用于在多个 worker 节点上运行 Scrapy 爬虫与
+  一个面向单管理员的自托管调度平台，用于在多个 worker 节点上运行 Scrapy 爬虫与
   Python 脚本。
 </p>
 
@@ -20,9 +20,10 @@
 dopilot 是一个自托管平台：在远端 worker 节点上调度并运行任务，实时回传日志，并为
 每一次运行保留可追溯的记录。它以 `apps/` + `packages/` monorepo 全新构建。
 
-它刻意只支持**单管理员**——没有多用户体系，也没有 RBAC。上游的 **scrapydweb**
-项目（位于 `reference/scrapydweb/`）仅作只读行为参考保留，**不被 import、不参与
-构建**。
+它刻意只支持**单管理员**——没有多用户体系，也没有 RBAC。项目以 [MIT 许可证](LICENSE)
+开源。dopilot 在**行为层面**参考了上游的
+[**scrapydweb**](https://github.com/my8100/scrapydweb) 项目（仅作外部行为参考查阅）；
+上游 scrapydweb 代码**绝不被拉取、内置、import 或参与构建**。
 
 ### 当前可运行的任务类型
 
@@ -155,6 +156,11 @@ cd deploy/docker && docker compose config
   路线图。
 - [`CLAUDE.md`](CLAUDE.md) —— 架构、硬约束与当前状态。
 
+## 贡献
+
+设置与验证命令见 [`CONTRIBUTING.md`](CONTRIBUTING.md)；漏洞上报与运维加固（对外暴露前
+请替换默认 `change-me` 凭据）见 [`SECURITY.md`](SECURITY.md)。
+
 ## 许可
 
-许可详情见本仓库。
+dopilot 以 [MIT 许可证](LICENSE) 发布（SPDX-License-Identifier: `MIT`）。

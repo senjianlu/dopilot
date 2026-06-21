@@ -9,8 +9,9 @@
 #   - agent mode: dopilot-agent + scrapy/scrapyd runtime
 #
 # The role is selected at container start with the command, e.g.
-# `dopilot-server ...` or `dopilot-agent ...`. The image MUST NOT contain
-# reference/ (read-only scrapydweb behavioral reference).
+# `dopilot-server ...` or `dopilot-agent ...`. The image MUST NOT contain any
+# upstream scrapydweb code; `.dockerignore` keeps a defensive `reference/`
+# exclusion even though no local snapshot exists in the tree anymore.
 
 ARG DOPILOT_PY_BASE_IMAGE=rabbir/dopilot-py-base:local
 ARG DOPILOT_WEB_BASE_IMAGE=rabbir/dopilot-web-base:local
