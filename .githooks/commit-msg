@@ -1,0 +1,40 @@
+#!/bin/sh
+# dopilot commit-msg hook — enforce Conventional Commits header.
+# Enable with:  git config core.hooksPath .githooks
+# Spec:         docs/agent-governance/03-commit-convention.md
+
+msg_file="$1"
+
+# First non-comment, non-blank line is the header.
+header=$(grep -v '^#' "$msg_file" | sed '/^[[:space:]]*$/d' | head -n1)
+
+# Let merge / revert / fixup / squash machinery through untouched.
+case "$header" in
+  "Merge "*|"Revert "*|"fixup! "*|"squash! "*) exit 0 ;;
+esac
+
+types='feat|fix|docs|refactor|perf|test|build|ci|chore|style|revert'
+
+fail() {
+  echo "[commit-msg] rejected: $1" >&2
+  echo "  header: $header" >&2
+  echo "  expected: <type>(<scope>): <subject>" >&2
+  echo "  types: feat fix docs refactor perf test build ci chore style revert" >&2
+  echo "  see docs/agent-governance/03-commit-convention.md" >&2
+  exit 1
+}
+
+printf '%s' "$header" | grep -Eq "^(${types})(\([a-z0-9_-]+\))?!?: .+" \
+  || fail "header is not <type>(<scope>): <subject>"
+
+if [ "$(printf '%s' "$header" | wc -m | tr -d ' ')" -gt 72 ]; then
+  fail "header exceeds 72 characters"
+fi
+
+subject=$(printf '%s' "$header" | sed -E "s/^(${types})(\([a-z0-9_-]+\))?!?: //")
+case "$subject" in
+  *.) fail "subject must not end with a period" ;;
+  '') fail "subject is empty" ;;
+esac
+
+exit 0
