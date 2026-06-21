@@ -19,9 +19,12 @@ server_shared_token = "change-me-agent-server-token"
 # server -> agent token (egg deploy). Must match server's [agent_auth].shared_token.
 shared_token = "change-me-agent-token"
 
+# Phase 2b: the unified agent image ships python + pip, so it can run
+# python_wheel ("script") tasks via `pip install --no-deps --target` + PYTHONPATH.
+# Scrapy stays enabled; docker long-lived crawlers are a later phase.
 [capabilities]
 scrapy = true
-script = false
+script = true
 docker = false
 
 # Redis Streams transport (phase 1.5). Reach redis by compose service name.

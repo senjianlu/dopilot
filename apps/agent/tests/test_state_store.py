@@ -90,3 +90,58 @@ def test_updated_at_refreshed_on_rewrite(tmp_path: Path) -> None:
     assert again is not None
     assert again.canceled is True
     assert again.updated_at >= first
+
+
+# --- phase 2b: additive runner/process fields -----------------------------
+def test_legacy_scrapy_state_loads_with_default_runner_type(tmp_path: Path) -> None:
+    """A pre-2b state file (no runner fields) still loads as a Scrapy attempt."""
+    store = StateStore(tmp_path / "state")
+    store.dir.mkdir(parents=True, exist_ok=True)
+    legacy = (
+        '{"task_id": "e1", "execution_id": "a1", "scrapyd_job_id": "job-1", '
+        '"project": "demo", "spider": "phase1", "phase": "started"}'
+    )
+    store.path_for("a1").write_text(legacy, encoding="utf-8")
+    state = store.read("a1")
+    assert state is not None
+    assert state.runner_type == "scrapy"
+    assert state.pid is None and state.pgid is None
+    assert state.workspace_path == "" and state.install_path == ""
+
+
+def test_create_reserved_wheel_records_runner_type(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state")
+    reserved = store.create_reserved(
+        task_id="e1",
+        execution_id="a1",
+        runner_type="python_wheel",
+        shell_command="python -m main",
+    )
+    assert reserved is not None
+    state = store.read("a1")
+    assert state.runner_type == "python_wheel"
+    assert state.shell_command == "python -m main"
+    assert state.phase == "reserved"
+    assert state.project == "" and state.spider == ""
+
+
+def test_promote_started_wheel_records_process_fields(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state")
+    store.create_reserved(
+        task_id="e1", execution_id="a1", runner_type="python_wheel"
+    )
+    promoted = store.promote_started_wheel(
+        "a1",
+        pid=4242,
+        pgid=4242,
+        workspace_path="/wd/a1",
+        install_path="/cache/python_wheel/abc/site",
+        log_path="/wd/a1/job.log",
+    )
+    assert promoted is not None
+    state = store.read("a1")
+    assert state.phase == "started"
+    assert state.pid == 4242 and state.pgid == 4242
+    assert state.workspace_path == "/wd/a1"
+    assert state.install_path == "/cache/python_wheel/abc/site"
+    assert state.log_path == "/wd/a1/job.log"

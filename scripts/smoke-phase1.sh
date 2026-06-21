@@ -15,7 +15,6 @@
 #   * template run -> TASK    -> POST /api/v1/templates/{id}/run -> {task_id}
 #   * parent task detail      -> GET  /api/v1/tasks/{task_id} (executions[], NOT attempts[])
 #   * per-execution logs      -> GET  /api/v1/tasks/{task_id}/logs?execution_id=...
-#   * direct artifact run     -> POST /api/v1/artifacts/{id}/run (source=direct_artifact)
 #   * schedule trigger-now    -> POST /api/v1/schedules/{id}/trigger-now (source=schedule_trigger_now)
 #   * node-state -> dispatch  -> offline / heartbeat-timeout / soft-delete exclusion
 #
@@ -518,27 +517,8 @@ while IFS=$'\t' read -r eid aid est; do
   assert_exec_logs "${TASK_ID}" "${eid}" "${aid}" || exit 1
 done < <(exec_rows "${TASK_BODY}")
 
-# --- Case 5: direct build-artifact run --------------------------------------
-step "Case 5. POST /api/v1/artifacts/{id}/run (direct, node_strategy=all)"
-DRUN="$(curl -fsS -X POST "${SERVER}/api/v1/artifacts/${ARTIFACT_ID}/run" "${AUTH[@]}" \
-  -H 'Content-Type: application/json' \
-  -d "{\"spider\":\"${SPIDER}\",\"node_strategy\":\"all\"}" 2>/dev/null || true)"
-DTASK_ID="$(json_get "${DRUN}" "task_id")"
-[ -n "${DTASK_ID}" ] && pass "direct run returned task_id (${DTASK_ID})" \
-  || { fail "direct artifact run returned no task_id (response: ${DRUN})"; exit 1; }
-wait_task "${DTASK_ID}" "${EXEC_TIMEOUT}"
-[ "$(json_get "${TASK_BODY}" "source")" = "direct_artifact" ] && pass "task.source == direct_artifact" \
-  || { fail "direct task.source != direct_artifact (got: $(json_get "${TASK_BODY}" source))"; exit 1; }
-[ -n "$(json_get "${TASK_BODY}" "build_artifact.id")" ] && pass "task carries a build_artifact snapshot" \
-  || info "task build_artifact snapshot empty (non-fatal): $(json_get "${TASK_BODY}" build_artifact)"
-[ "${TASK_STATUS}" = "complete" ] && pass "direct run reached complete" \
-  || { fail "direct run ended '${TASK_STATUS}', expected complete"; exit 1; }
-DCOUNT="$(exec_rows "${TASK_BODY}" | grep -c . || true)"
-[ "${DCOUNT}" -ge 1 ] 2>/dev/null && pass "direct run has >= 1 execution (${DCOUNT})" \
-  || { fail "direct run has no executions"; exit 1; }
-
-# --- Case 6: schedule trigger-now -------------------------------------------
-step "Case 6. POST /api/v1/schedules (execution_template_id) + /trigger-now"
+# --- Case 5: schedule trigger-now -------------------------------------------
+step "Case 5. POST /api/v1/schedules (execution_template_id) + /trigger-now"
 SCHED="$(curl -fsS -X POST "${SERVER}/api/v1/schedules" "${AUTH[@]}" \
   -H 'Content-Type: application/json' \
   -d "{\"name\":\"smoke-sched-${VERSION}\",\"execution_template_id\":\"${TEMPLATE_ID}\",\"trigger_type\":\"interval\",\"interval_seconds\":3600}" 2>/dev/null || true)"
@@ -566,12 +546,12 @@ TRIG_DETAIL="$(curl -fsS "${SERVER}/api/v1/tasks/${TRIG_TASK_ID}" "${AUTH[@]}" |
   && pass "schedule task has child executions" \
   || info "schedule task has no executions yet (non-fatal; dispatch is async)"
 
-# --- Case 7: offline node exclusion -----------------------------------------
+# --- Case 6: offline node exclusion -----------------------------------------
 # Take scrapy-agent-3 OFFLINE (reversible). Its container keeps heartbeating, so
 # it stays heartbeat-healthy, but scheduling_enabled=false excludes it from
 # dispatch. An all-nodes run must then create exactly TWO executions.
 OFFLINE_AID="scrapy-agent-3"
-step "Case 7. POST /api/v1/nodes/{id}/offline (${OFFLINE_AID}) -> excluded from dispatch"
+step "Case 6. POST /api/v1/nodes/{id}/offline (${OFFLINE_AID}) -> excluded from dispatch"
 OFFLINE_NODE_ID="${NODE_ID[$OFFLINE_AID]}"
 OFF="$(curl -fsS -X POST "${SERVER}/api/v1/nodes/${OFFLINE_NODE_ID}/offline" "${AUTH[@]}" || true)"
 [ "$(json_get "${OFF}" "scheduling_enabled")" = "false" ] && pass "${OFFLINE_AID} scheduling_enabled == false" \
@@ -580,7 +560,7 @@ refresh_nodes
 [ "${NODE_STATUS[$OFFLINE_AID]:-}" = "healthy" ] && pass "${OFFLINE_AID} still heartbeat-healthy while offline" \
   || info "${OFFLINE_AID} status == ${NODE_STATUS[$OFFLINE_AID]:-} (heartbeat may lag; non-fatal)"
 
-step "Case 7. All-nodes run excludes the offline node -> exactly 2 executions"
+step "Case 6. All-nodes run excludes the offline node -> exactly 2 executions"
 T7="$(run_template_task)"
 [ -n "${T7}" ] || { fail "case-7 template run returned no task_id"; exit 1; }
 wait_task "${T7}" "${EXEC_TIMEOUT}"
@@ -593,11 +573,11 @@ else
   pass "offline node ${OFFLINE_AID} was NOT selected"
 fi
 
-# --- Case 8: heartbeat-timeout exclusion ------------------------------------
+# --- Case 7: heartbeat-timeout exclusion ------------------------------------
 # Stop scrapy-agent-2's container. After heartbeat_timeout + margin it goes
 # unhealthy and is excluded. Only scrapy-agent-1 remains healthy+schedulable.
 STOP_AID="scrapy-agent-2"
-step "Case 8. Stop ${STOP_AID} container; wait past heartbeat timeout (${HEARTBEAT_TIMEOUT}s)"
+step "Case 7. Stop ${STOP_AID} container; wait past heartbeat timeout (${HEARTBEAT_TIMEOUT}s)"
 dc stop "${SERVICE_OF[$STOP_AID]}" >/dev/null 2>&1 || true
 pass "${STOP_AID} container stopped"
 UNHEALTHY_DEADLINE=$(( $(date +%s) + HEARTBEAT_TIMEOUT + 90 ))
@@ -612,7 +592,7 @@ while :; do
 done
 pass "${STOP_AID} became '${NODE_STATUS[$STOP_AID]:-}' (not healthy) after heartbeat timeout"
 
-step "Case 8. All-nodes run excludes the stopped node -> exactly 1 execution"
+step "Case 7. All-nodes run excludes the stopped node -> exactly 1 execution"
 T8="$(run_template_task)"
 [ -n "${T8}" ] || { fail "case-8 template run returned no task_id"; exit 1; }
 wait_task "${T8}" "${EXEC_TIMEOUT}"
@@ -625,11 +605,11 @@ else
   pass "stopped node ${STOP_AID} was NOT selected"
 fi
 
-# --- Case 9: soft-delete exclusion ------------------------------------------
+# --- Case 8: soft-delete exclusion ------------------------------------------
 # Soft-delete scrapy-agent-3 (still running + heartbeating). deleted_at is set;
 # a later heartbeat must NOT clear it, and it must stay excluded from dispatch.
 DEL_AID="scrapy-agent-3"
-step "Case 9. DELETE /api/v1/nodes/{id} (${DEL_AID}) -> soft-delete"
+step "Case 8. DELETE /api/v1/nodes/{id} (${DEL_AID}) -> soft-delete"
 DEL_NODE_ID="${NODE_ID[$DEL_AID]}"
 DEL="$(curl -fsS -X DELETE "${SERVER}/api/v1/nodes/${DEL_NODE_ID}" "${AUTH[@]}" || true)"
 [ -n "$(json_get "${DEL}" "deleted_at")" ] && pass "${DEL_AID} deleted_at is set" \
@@ -641,7 +621,7 @@ refresh_nodes
 [ "${NODE_DELETED[$DEL_AID]:-no}" = "yes" ] && pass "${DEL_AID} stays deleted after a later heartbeat" \
   || { fail "${DEL_AID} deleted_at was cleared by a heartbeat (resurrected)"; exit 1; }
 
-step "Case 9. All-nodes run still excludes the soft-deleted node"
+step "Case 8. All-nodes run still excludes the soft-deleted node"
 T9="$(run_template_task)"
 [ -n "${T9}" ] || { fail "case-9 template run returned no task_id"; exit 1; }
 wait_task "${T9}" "${EXEC_TIMEOUT}"

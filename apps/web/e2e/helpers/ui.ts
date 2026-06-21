@@ -13,6 +13,16 @@ export const DEMO_SPIDER = "phase1";
 export const MARKER_START = "phase1 demo spider started";
 export const MARKER_DONE = "phase1 demo spider done";
 
+// Phase 2b demo wheel (seeded into the image at
+// /server-data/artifacts/python_wheel by deploy/docker/Dockerfile). The wheel's
+// METADATA Name is "dopilot-demo" (hyphen), so the build-artifact NAME — and
+// thus its row testids — use "dopilot-demo"; the wheel FILENAME keeps the
+// underscore form. main.py prints these two markers (requesting + headers).
+export const WHEEL_ARTIFACT_NAME = "dopilot-demo";
+export const WHEEL_FILENAME = "dopilot_demo-0.1.0-py3-none-any.whl";
+export const WHEEL_MARKER_REQUEST = "dopilot-demo: requesting";
+export const WHEEL_MARKER_HEADERS = "dopilot-demo: response headers";
+
 // Log in through the real UI and land on the app shell.
 export async function login(page: Page): Promise<void> {
   await page.goto("/login");
@@ -78,10 +88,13 @@ export async function waitForExecutionCount(
   }
 }
 
-// Reload the task-detail page until the (live SSE) log body contains both demo
-// markers, or the timeout elapses. Returns the final log text.
-export async function waitForLogMarkers(
+// Reload the task-detail page until the (live SSE) log body contains ALL of the
+// given substrings, or the timeout elapses. Returns the final log text. The
+// detail page connects the SSE log stream on mount and does not re-subscribe, so
+// we reload to re-open the stream and observe newly persisted log increments.
+export async function waitForLogContaining(
   page: Page,
+  substrings: string[],
   timeoutMs = 90_000,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
@@ -89,11 +102,44 @@ export async function waitForLogMarkers(
   // eslint-disable-next-line no-constant-condition
   while (true) {
     text = (await page.getByTestId("log-body").innerText()) ?? "";
-    if (text.includes(MARKER_START) && text.includes(MARKER_DONE)) {
+    if (substrings.every((s) => text.includes(s))) {
       return text;
     }
     if (Date.now() >= deadline) {
       return text;
+    }
+    await page.waitForTimeout(3_000);
+    await page.reload();
+    await expect(page.getByTestId("task-detail")).toBeVisible();
+  }
+}
+
+// Back-compat wrapper for the Scrapy flow: wait for both demo spider markers.
+export async function waitForLogMarkers(
+  page: Page,
+  timeoutMs = 90_000,
+): Promise<string> {
+  return waitForLogContaining(page, [MARKER_START, MARKER_DONE], timeoutMs);
+}
+
+// Reload the task-detail page until the task status tag reaches `expected` (e.g.
+// "complete"), or the timeout elapses. Returns the final observed status text.
+// The detail page loads once on mount, so we reload to observe roll-up.
+export async function waitForTaskStatus(
+  page: Page,
+  expected: string,
+  timeoutMs = 90_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let status = "";
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    status = (await page.getByTestId("task-status").innerText())?.trim() ?? "";
+    if (status === expected) {
+      return status;
+    }
+    if (Date.now() >= deadline) {
+      return status;
     }
     await page.waitForTimeout(3_000);
     await page.reload();

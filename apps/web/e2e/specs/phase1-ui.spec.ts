@@ -6,7 +6,13 @@ import {
   login,
   selectOption,
   waitForExecutionCount,
+  waitForLogContaining,
   waitForLogMarkers,
+  waitForTaskStatus,
+  WHEEL_ARTIFACT_NAME,
+  WHEEL_FILENAME,
+  WHEEL_MARKER_HEADERS,
+  WHEEL_MARKER_REQUEST,
 } from "../helpers/ui";
 
 // Demo Scrapy egg fixture lives at the repo root, four levels up from this spec
@@ -21,6 +27,13 @@ const EGG_PATH = fileURLToPath(
 // Names created through the UI during this run (kept stable for selector reuse).
 const TEMPLATE_NAME = "e2e-template";
 const SCHEDULE_NAME = "e2e-schedule";
+const WHEEL_TEMPLATE_NAME = "e2e-wheel-template";
+
+// Phase 2b wheel command: a SHELL command (not a scrapy parse). An inline env
+// var points the demo at the server's own /api/v1/health so the run proves an
+// HTTP request + header print without depending on external network (httpbin).
+const WHEEL_COMMAND =
+  "DOPILOT_DEMO_URL=http://server:5000/api/v1/health python -m main";
 
 // Single shared page so the serial flow keeps one logged-in session and the
 // state created by earlier steps (artifact -> template -> task) is visible to
@@ -77,6 +90,15 @@ test("nodes page renders the three agents as scrapy-healthy", async () => {
     await expect(
       page.getByTestId(`node-cap-${agentId}-scrapy`),
     ).toBeVisible();
+    // Phase 2b: the agent image advertises `script = true`, so the script
+    // capability tag is the ACTIVE (green/success) variant — this is the
+    // "script-capable" signal the python_wheel run dispatches against.
+    await expect(page.getByTestId(`node-cap-${agentId}-scrapy`)).toHaveClass(
+      /el-tag--success/,
+    );
+    await expect(page.getByTestId(`node-cap-${agentId}-script`)).toHaveClass(
+      /el-tag--success/,
+    );
   }
   const rendered = await page
     .locator('[data-testid^="node-agent-"]')
@@ -153,6 +175,87 @@ test("execution templates page creates a command template and runs it", async ()
   const logText = await waitForLogMarkers(page);
   expect(logText).toContain("phase1 demo spider started");
   expect(logText).toContain("phase1 demo spider done");
+});
+
+test("build artifacts page lists the built-in demo wheel as runnable", async () => {
+  await page.getByTestId("nav-artifacts").click();
+  await expect(page.getByTestId("artifacts-table")).toBeVisible();
+
+  // Phase 2b: the image seeds the demo wheel into
+  // /server-data/artifacts/python_wheel, so a clean-volume stack already lists
+  // it (no host upload). Its build-artifact row is type=python_wheel,
+  // format=wheel, and runnable.
+  await expect(
+    page.getByTestId(`artifact-name-${WHEEL_ARTIFACT_NAME}`),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByTestId(`artifact-type-${WHEEL_ARTIFACT_NAME}`),
+  ).toHaveText("python_wheel");
+  await expect(
+    page.getByTestId(`artifact-format-${WHEEL_ARTIFACT_NAME}`),
+  ).toHaveText("wheel");
+
+  // Open the details dialog: distribution is shown for a python_wheel (instead
+  // of the scrapy project), and the filename keeps the underscore wheel name.
+  await page.getByTestId(`artifact-details-${WHEEL_ARTIFACT_NAME}`).click();
+  const dialog = page.getByTestId("artifact-details-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(WHEEL_ARTIFACT_NAME);
+  await expect(dialog).toContainText(WHEEL_FILENAME);
+  await page.getByTestId("artifact-details-close").click();
+  await expect(dialog).toBeHidden();
+});
+
+test("templates page creates a python-wheel template and runs it to completion", async () => {
+  await page.getByTestId("nav-templates").click();
+  await expect(page.getByTestId("templates-table")).toBeVisible();
+
+  await page.getByTestId("template-create").click();
+  await expect(page.getByTestId("template-dialog")).toBeVisible();
+
+  await page.getByTestId("template-name-input").fill(WHEEL_TEMPLATE_NAME);
+
+  // Pick the seeded demo wheel (option label includes the wheel filename).
+  await selectOption(page, "template-artifact-select", WHEEL_FILENAME);
+
+  // For a python_wheel the command field is a free-form SHELL command (no scrapy
+  // parser). It defaults to `python -m main`; replace it with the env-pinned
+  // form so the demo targets the in-cluster server instead of public httpbin.
+  const command = page.getByTestId("template-command-input");
+  await expect(command).toHaveValue("python -m main");
+  await command.fill(WHEEL_COMMAND);
+
+  await page.getByTestId("template-submit").click();
+  await expect(page.getByTestId("template-dialog")).toBeHidden();
+
+  // The template row appears, and running it lands on a task detail page.
+  await expect(
+    page.getByTestId(`template-name-${WHEEL_TEMPLATE_NAME}`),
+  ).toBeVisible();
+  await page.getByTestId(`template-run-${WHEEL_TEMPLATE_NAME}`).click();
+  await expect(page).toHaveURL(/\/tasks\/[^/]+$/, { timeout: 30_000 });
+  await expect(page.getByTestId("task-detail")).toBeVisible();
+
+  // It dispatched to all three script-capable nodes (one execution each).
+  const count = await waitForExecutionCount(page, AGENT_IDS.length);
+  expect(count).toBe(AGENT_IDS.length);
+  for (const agentId of AGENT_IDS) {
+    await expect(page.getByTestId(`execution-agent-${agentId}`)).toBeVisible();
+  }
+
+  // The wheel run reaches the COMPLETE terminal (natural exit 0 rolled up).
+  const status = await waitForTaskStatus(page, "complete");
+  expect(status).toBe("complete");
+
+  // The log viewer surfaces the demo wheel markers: the request line and the
+  // printed response headers (proves the wheel installed + ran + did the HTTP
+  // request through the injected PYTHONPATH).
+  const logText = await waitForLogContaining(page, [
+    WHEEL_MARKER_REQUEST,
+    WHEEL_MARKER_HEADERS,
+  ]);
+  expect(logText).toContain(WHEEL_MARKER_REQUEST);
+  expect(logText).toContain(WHEEL_MARKER_HEADERS);
 });
 
 test("tasks page lists created tasks and opens a detail page", async () => {

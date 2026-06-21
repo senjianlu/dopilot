@@ -40,7 +40,8 @@ async def create_template(
 ) -> ExecutionTemplateView:
     template = await svc.create_template(session, body.model_dump())
     await session.commit()
-    return ExecutionTemplateView(**svc.template_view(template))
+    artifact_type = await svc.artifact_type_for_template(session, template)
+    return ExecutionTemplateView(**svc.template_view(template, artifact_type))
 
 
 @router.get("/templates", response_model=ExecutionTemplatesResponse)
@@ -49,8 +50,16 @@ async def list_templates(
     session: AsyncSession = Depends(get_session),
 ) -> ExecutionTemplatesResponse:
     templates = await svc.list_templates(session)
+    type_map = await svc.artifact_types_for_templates(session, templates)
     return ExecutionTemplatesResponse(
-        templates=[ExecutionTemplateView(**svc.template_view(t)) for t in templates]
+        templates=[
+            ExecutionTemplateView(
+                **svc.template_view(
+                    t, type_map.get(t.build_artifact_id or "", "scrapy")
+                )
+            )
+            for t in templates
+        ]
     )
 
 
@@ -61,7 +70,8 @@ async def get_template(
     session: AsyncSession = Depends(get_session),
 ) -> ExecutionTemplateView:
     template = await svc.get_template_or_404(session, template_id)
-    return ExecutionTemplateView(**svc.template_view(template))
+    artifact_type = await svc.artifact_type_for_template(session, template)
+    return ExecutionTemplateView(**svc.template_view(template, artifact_type))
 
 
 @router.put("/templates/{template_id}", response_model=ExecutionTemplateView)
@@ -78,7 +88,8 @@ async def update_template(
     # refresh: the onupdate `updated_at` is server-generated, so reload it before
     # building the view (avoids a lazy-IO access on a stale attribute).
     await session.refresh(template)
-    return ExecutionTemplateView(**svc.template_view(template))
+    artifact_type = await svc.artifact_type_for_template(session, template)
+    return ExecutionTemplateView(**svc.template_view(template, artifact_type))
 
 
 @router.delete("/templates/{template_id}")

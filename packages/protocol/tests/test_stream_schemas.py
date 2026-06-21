@@ -67,6 +67,29 @@ def test_agent_command_defaults_and_roundtrip() -> None:
     assert AgentCommand.model_validate(cmd.model_dump()) == cmd
 
 
+def test_run_command_python_wheel_task_type_roundtrip() -> None:
+    from dopilot_protocol import PythonWheelRunPayload
+
+    payload = PythonWheelRunPayload(
+        shell_command="python -m main",
+        artifact={"sha256": "a" * 64, "fetch_path": "/x/wheel"},
+    ).model_dump()
+    cmd = AgentCommand(
+        command_id="c1",
+        type=AgentCommandType.run,
+        agent_id="agent-01",
+        task_id="t1",
+        execution_id="x1",
+        task_type="python_wheel",
+        payload=payload,
+        created_at="2026-06-21T00:00:00Z",
+    )
+    assert cmd.task_type == "python_wheel"
+    assert cmd.payload["shell_command"] == "python -m main"
+    # full wire round trip (stream codec) preserves the discriminator + payload.
+    assert from_stream_entry(AgentCommand, to_stream_entry(cmd)) == cmd
+
+
 def test_stop_command_carries_intent() -> None:
     cmd = AgentCommand(
         command_id="c1",

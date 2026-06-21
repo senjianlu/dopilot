@@ -9,6 +9,8 @@ from dopilot_protocol import (
     ExecutionRunResponse,
     HealthResponse,
     LogStream,
+    PythonWheelRunPayload,
+    ScrapyRunPayload,
     __version__,
 )
 
@@ -108,3 +110,36 @@ def test_execution_run_request_defaults_and_roundtrip() -> None:
 def test_execution_run_response_roundtrip() -> None:
     resp = ExecutionRunResponse(task_id="t1", status="queued")
     assert ExecutionRunResponse.model_validate(resp.model_dump()) == resp
+
+
+def test_scrapy_run_payload_discriminator_default() -> None:
+    payload = ScrapyRunPayload(command="scrapy crawl s1")
+    assert payload.task_type == "scrapy"
+    assert payload.artifact == {}
+
+
+def test_python_wheel_run_payload_defaults_and_roundtrip() -> None:
+    payload = PythonWheelRunPayload(shell_command="python -m main")
+    # wire discriminator the agent runner branches on (distinct from capability).
+    assert payload.task_type == "python_wheel"
+    assert payload.artifact == {}
+    assert payload.env == {}
+    assert payload.working_dir is None
+
+    # default_factory must yield independent containers.
+    other = PythonWheelRunPayload(shell_command="python -m other")
+    assert payload.artifact is not other.artifact
+    assert payload.env is not other.env
+
+    dumped = payload.model_dump()
+    assert dumped["task_type"] == "python_wheel"
+    assert dumped["shell_command"] == "python -m main"
+    assert PythonWheelRunPayload.model_validate(dumped) == payload
+
+    explicit = PythonWheelRunPayload(
+        shell_command="python -m main",
+        artifact={"sha256": "a" * 64, "fetch_path": "/x"},
+        env={"PYTHONUNBUFFERED": "1"},
+        working_dir="sub/dir",
+    )
+    assert PythonWheelRunPayload.model_validate(explicit.model_dump()) == explicit

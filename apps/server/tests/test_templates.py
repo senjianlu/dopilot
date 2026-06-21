@@ -116,8 +116,9 @@ async def test_create_template_unknown_build_artifact_404(exec_client):
 async def test_create_template_reserved_artifact_not_runnable_400(
     exec_client, seeder
 ):
+    # docker_image is still reserved/not runnable in phase 2b (python_wheel now is).
     artifact = await seeder.build_artifact(
-        artifact_type="python_wheel", package_format="wheel", sha256="c" * 64
+        artifact_type="docker_image", package_format="image", sha256="c" * 64
     )
     r = await exec_client.post(
         "/api/v1/templates",

@@ -294,19 +294,21 @@ class Seeder:
         agent_id: str = "agent-1",
         endpoint: str = "http://agent:6800",
         scrapy: bool = True,
+        script: bool = False,
         status: str = "healthy",
         last_seen_age_seconds: float = 0.0,
     ) -> Node:
         # Phase 1.5: node selection is heartbeat-recency based, so a "healthy"
         # node must carry a fresh last_seen_at. last_seen_age_seconds backdates
         # it (e.g. to test heartbeat-timeout exclusion).
+        # Phase 2b: ``script`` advertises the python_wheel capability.
         last_seen = datetime.now(UTC) - timedelta(seconds=last_seen_age_seconds)
         node = Node(
             id=uuid.uuid4(),
             agent_id=agent_id,
             endpoint=endpoint,
             status=status,
-            capabilities={"scrapy": scrapy},
+            capabilities={"scrapy": scrapy, "script": script},
             health={
                 "scrapyd": {"running": True, "port": 6801},
                 "redis": {
@@ -348,20 +350,31 @@ class Seeder:
         if existing is not None:
             return existing
 
+        if artifact_type == "python_wheel":
+            metadata = {
+                "distribution": project,
+                "version": f"sha256-{sha256[:12]}",
+                "fetch_path": f"/api/v1/artifacts/python_wheel/{sha256}/wheel",
+            }
+            filename = f"{project}.whl"
+        else:
+            metadata = {
+                "project": project,
+                "version": f"sha256-{sha256[:12]}",
+                "spiders": list(spiders),
+                "fetch_path": f"/api/v1/artifacts/scrapy/{sha256}/egg",
+            }
+            filename = f"{project}.egg"
+
         artifact = BuildArtifact(
             id=uuid.uuid4().hex,
             artifact_type=artifact_type,
             package_format=package_format,
             name=project,
-            filename=f"{project}.egg",
+            filename=filename,
             content_hash=sha256,
             size_bytes=123,
-            artifact_metadata={
-                "project": project,
-                "version": f"sha256-{sha256[:12]}",
-                "spiders": list(spiders),
-                "fetch_path": f"/api/v1/artifacts/scrapy/{sha256}/egg",
-            },
+            artifact_metadata=metadata,
         )
         self.session.add(artifact)
         await self.session.commit()

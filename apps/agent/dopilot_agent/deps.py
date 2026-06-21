@@ -23,9 +23,11 @@ from fastapi import Request
 
 from . import __version__
 from .artifacts.cache import ScrapyArtifactCache
+from .artifacts.wheel_cache import PythonWheelCache
 from .config.settings import Settings
 from .redis.heartbeat import HeartbeatWorker
 from .redis.status import RedisRuntimeStatus
+from .runners.python_wheel import PythonWheelRunner
 from .runners.scrapyd import ScrapyRunner
 from .scrapyd.client import ScrapydClient
 from .scrapyd.process import ScrapydProcess
@@ -43,6 +45,8 @@ class AgentRuntime:
     runner: ScrapyRunner
     redis_status: RedisRuntimeStatus | None = None
     artifact_cache: ScrapyArtifactCache | None = None
+    wheel_cache: PythonWheelCache | None = None
+    wheel_runner: PythonWheelRunner | None = None
     heartbeat: HeartbeatWorker | None = None
 
 
@@ -54,6 +58,11 @@ def state_dir(workdir: str | Path) -> Path:
 def scrapyd_logs_dir(workdir: str | Path) -> Path:
     """Directory scrapyd writes job logs into."""
     return Path(workdir) / "scrapyd" / "logs"
+
+
+def wheel_workspace_dir(workdir: str | Path) -> Path:
+    """Root for per-execution Python-wheel workspaces (cwd + merged job.log)."""
+    return Path(workdir) / "python_wheel" / "workspaces"
 
 
 def build_runtime(settings: Settings) -> AgentRuntime:
@@ -83,6 +92,7 @@ def build_runtime(settings: Settings) -> AgentRuntime:
     )
     redis_status = RedisRuntimeStatus() if settings.redis.url else None
     artifact_cache: ScrapyArtifactCache | None = None
+    wheel_cache: PythonWheelCache | None = None
     if settings.agent.server_url:
         artifact_cache = ScrapyArtifactCache(
             root_dir=Path(workdir) / "artifacts",
@@ -90,6 +100,14 @@ def build_runtime(settings: Settings) -> AgentRuntime:
             server_shared_token=settings.agent.server_shared_token,
             scrapyd=client,
         )
+        wheel_cache = PythonWheelCache(
+            root_dir=Path(workdir) / "artifacts",
+            server_url=settings.agent.server_url,
+            server_shared_token=settings.agent.server_shared_token,
+        )
+    # The Python-wheel runner needs no server URL (it spawns local shell
+    # commands); the cache that fetches the wheel does.
+    wheel_runner = PythonWheelRunner(workspace_root=wheel_workspace_dir(workdir))
     # Heartbeat worker is built only when a server_url is configured; the task
     # itself is started by the lifespan (not under the test ASGI transport).
     heartbeat: HeartbeatWorker | None = None
@@ -108,6 +126,8 @@ def build_runtime(settings: Settings) -> AgentRuntime:
         runner=runner,
         redis_status=redis_status,
         artifact_cache=artifact_cache,
+        wheel_cache=wheel_cache,
+        wheel_runner=wheel_runner,
         heartbeat=heartbeat,
     )
 

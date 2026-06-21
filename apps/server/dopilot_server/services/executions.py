@@ -104,6 +104,48 @@ def parse_scrapy_params(request: ExecutionRunRequest) -> dict[str, Any]:
     }
 
 
+def parse_wheel_params(request: ExecutionRunRequest) -> dict[str, Any]:
+    """Validate the Python-wheel run inputs carried in ``params`` (phase 2b).
+
+    The wheel run is command-first: ``shell_command`` is a free-form shell
+    command (NOT a ``scrapy crawl`` command) serialized to the agent payload, and
+    ``artifact`` is the build-artifact fetch context the agent needs to download
+    + install the wheel (``pip install --no-deps --target`` + PYTHONPATH, packet
+    2b-2). ``env`` defaults to ``{}`` and ``working_dir`` to ``None``. Raises a
+    400 on an empty command or a missing wheel fetch context. The server NEVER
+    executes Python here.
+    """
+    params = request.params or {}
+    artifact = (
+        params.get("artifact") if isinstance(params.get("artifact"), dict) else None
+    )
+    shell_command = str(
+        params.get("shell_command") or params.get("command") or ""
+    ).strip()
+    if not shell_command:
+        raise ApiError(
+            400,
+            "execution.invalid_params",
+            "errors.invalidParams",
+            {"missing": ["shell_command"]},
+        )
+    if not artifact or not artifact.get("fetch_path"):
+        raise ApiError(
+            400,
+            "execution.invalid_params",
+            "errors.invalidParams",
+            {"missing": ["artifact"]},
+        )
+    env = params.get("env") if isinstance(params.get("env"), dict) else {}
+    working_dir = params.get("working_dir")
+    return {
+        "shell_command": shell_command,
+        "artifact": dict(artifact),
+        "env": {str(k): str(v) for k, v in (env or {}).items()},
+        "working_dir": str(working_dir) if working_dir else None,
+    }
+
+
 def create_task(
     session: AsyncSession,
     request: ExecutionRunRequest,

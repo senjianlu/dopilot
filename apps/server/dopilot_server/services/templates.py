@@ -20,9 +20,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..errors import ApiError
+from ..models.execution import BuildArtifact
 from ..models.scheduling import ExecutionTemplate, Schedule
 from . import artifacts as artifact_svc
-from . import resolve
+from . import resolve, states
 from .executions import _iso, new_id
 
 VALID_NODE_STRATEGIES = frozenset({"all", "random", "selected"})
@@ -48,8 +49,9 @@ def _validate_basics(data: dict[str, Any]) -> None:
             "errors.invalidParams",
             {"missing": missing},
         )
-    # command-first: the command must satisfy the shared allowlist grammar.
-    resolve.validate_command(str(data["command"]).strip())
+    # Type-specific command grammar is validated AFTER the artifact binding is
+    # resolved (scrapy parser vs python_wheel non-empty); here we only assert the
+    # generic non-empty requirement above.
 
 
 async def _require_artifact(session: AsyncSession, build_artifact_id: str | None):
@@ -66,16 +68,27 @@ async def _require_artifact(session: AsyncSession, build_artifact_id: str | None
     )
 
 
+def _validate_command_for_artifact(artifact: BuildArtifact, command: str) -> None:
+    """Type-aware command validation for the bound artifact (phase 2b).
+
+    Scrapy keeps the ``scrapy crawl`` parser + spider-in-artifact check; a
+    Python wheel only requires a non-empty (free-form shell) command.
+    """
+    if artifact.artifact_type == states.ARTIFACT_SCRAPY:
+        meta = dict(artifact.artifact_metadata or {})
+        resolve.validate_command_for_artifact(command, meta.get("spiders"))
+    else:
+        resolve.validate_wheel_command(command)
+
+
 async def create_template(
     session: AsyncSession, data: dict[str, Any]
 ) -> ExecutionTemplate:
     _validate_basics(data)
     artifact = await _require_artifact(session, data.get("build_artifact_id"))
     meta = dict(artifact.artifact_metadata or {})
-    # Once the artifact is known, the command spider must be one it exposes.
-    resolve.validate_command_for_artifact(
-        str(data["command"]).strip(), meta.get("spiders")
-    )
+    # Once the artifact is known, validate the command for its type.
+    _validate_command_for_artifact(artifact, str(data["command"]).strip())
     template = ExecutionTemplate(
         id=new_id(),
         name=str(data["name"]).strip(),
@@ -107,10 +120,8 @@ async def update_template(
         session, data.get("build_artifact_id", template.build_artifact_id)
     )
     meta = dict(artifact.artifact_metadata or {})
-    # Once the artifact is known, the command spider must be one it exposes.
-    resolve.validate_command_for_artifact(
-        str(merged["command"]).strip(), meta.get("spiders")
-    )
+    # Once the artifact is known, validate the command for its type.
+    _validate_command_for_artifact(artifact, str(merged["command"]).strip())
     template.name = str(merged["name"]).strip()
     template.node_strategy = merged["node_strategy"]
     template.command = str(merged["command"]).strip()
@@ -199,19 +210,54 @@ async def build_run_request(
     return resolve.resolve_run(
         build_artifact=artifact,
         template_defaults=template_defaults(template),
-        overrides=resolve.sanitize_overrides(overrides),
+        overrides=resolve.sanitize_overrides(
+            overrides, artifact_type=artifact.artifact_type
+        ),
         name=template.name,
         execution_template_id=template.id,
     )
 
 
-def template_view(template: ExecutionTemplate) -> dict[str, Any]:
+async def artifact_type_for_template(
+    session: AsyncSession, template: ExecutionTemplate
+) -> str:
+    """Resolve the core-domain ``artifact_type`` from the bound build artifact.
+
+    Templates carry no ``task_type`` column; the type is derived from the bound
+    artifact. Falls back to ``scrapy`` for a legacy/dangling binding.
+    """
+    if not template.build_artifact_id:
+        return states.ARTIFACT_SCRAPY
+    artifact = await artifact_svc.get_build_artifact(
+        session, template.build_artifact_id
+    )
+    return artifact.artifact_type if artifact else states.ARTIFACT_SCRAPY
+
+
+async def artifact_types_for_templates(
+    session: AsyncSession, templates: list[ExecutionTemplate]
+) -> dict[str, str]:
+    """Batch ``build_artifact_id -> artifact_type`` map for a template list."""
+    ids = {t.build_artifact_id for t in templates if t.build_artifact_id}
+    if not ids:
+        return {}
+    rows = await session.execute(
+        select(BuildArtifact.id, BuildArtifact.artifact_type).where(
+            BuildArtifact.id.in_(ids)
+        )
+    )
+    return {row[0]: row[1] for row in rows.all()}
+
+
+def template_view(
+    template: ExecutionTemplate, artifact_type: str = "scrapy"
+) -> dict[str, Any]:
     return {
         "id": template.id,
         "name": template.name,
         "description": template.description,
         "build_artifact_id": template.build_artifact_id,
-        "artifact_type": "scrapy",
+        "artifact_type": artifact_type,
         "project": template.project,
         "version": template.version,
         "command": template.command,

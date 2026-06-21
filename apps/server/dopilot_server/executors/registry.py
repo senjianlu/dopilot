@@ -1,7 +1,7 @@
 """Executor registry: maps ``artifact_type`` -> executor instance (phase 1.8).
 
-Only ``"scrapy"`` is registered/runnable in phase 1.8. ``"python_wheel"`` and
-``"docker_image"`` arrive in later phases; both register here without changing
+``"scrapy"`` (phase 1.8) and ``"python_wheel"`` (phase 2b) are runnable.
+``"docker_image"`` arrives in a later phase; it registers here without changing
 dispatch code.
 """
 
@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from ..errors import ApiError
 from .base import BaseExecutor
+from .python_wheel import PythonWheelExecutor
 from .scrapyd import ScrapydExecutor
 
 EXECUTOR_REGISTRY: dict[str, BaseExecutor] = {
     "scrapy": ScrapydExecutor(),
-    # "python_wheel": PythonWheelExecutor(),   # later phase
+    "python_wheel": PythonWheelExecutor(),
     # "docker_image": DockerExecutor(),        # later phase
 }
 

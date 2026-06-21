@@ -26,15 +26,35 @@ function makeArtifact(overrides: Partial<BuildArtifact> = {}): BuildArtifact {
   };
 }
 
+function makeWheel(overrides: Partial<BuildArtifact> = {}): BuildArtifact {
+  return makeArtifact({
+    id: "whl-1",
+    artifact_type: "python_wheel",
+    package_format: "wheel",
+    name: "dopilot-demo",
+    filename: "dopilot_demo-0.1.0-py3-none-any.whl",
+    project: null,
+    version: "0.1.0",
+    distribution: "dopilot-demo",
+    spiders: [],
+    ...overrides,
+  });
+}
+
 const listBuildArtifacts = vi.fn(async () => [makeArtifact()]);
 const uploadEgg = vi.fn(async (_input: unknown) => ({
   artifact: makeArtifact(),
+  spiders: [] as string[],
+}));
+const uploadWheel = vi.fn(async (_input: unknown) => ({
+  artifact: makeWheel(),
   spiders: [] as string[],
 }));
 
 vi.mock("@/api/artifacts", () => ({
   listBuildArtifacts: () => listBuildArtifacts(),
   uploadEgg: (input: unknown) => uploadEgg(input),
+  uploadWheel: (input: unknown) => uploadWheel(input),
 }));
 
 import BuildArtifactsPage from "@/pages/BuildArtifactsPage.vue";
@@ -78,6 +98,7 @@ describe("BuildArtifactsPage", () => {
     setActivePinia(createPinia());
     listBuildArtifacts.mockClear();
     uploadEgg.mockClear();
+    uploadWheel.mockClear();
   });
 
   it("formats size as MB", async () => {
@@ -92,6 +113,42 @@ describe("BuildArtifactsPage", () => {
     expect(vm.formatMB(1290000)).toBe("1.23 MB");
     expect(vm.formatMB(0)).toBe("0.00 MB");
     expect(vm.formatMB(2097152)).toBe("2.00 MB");
+  });
+
+  it("uploads a wheel via the wheel upload handler", async () => {
+    const wrapper = mount(BuildArtifactsPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      onUploadWheel: (o: { file: File }) => Promise<void>;
+    };
+    const file = new File([new Uint8Array([1, 2, 3])], "demo.whl");
+    await vm.onUploadWheel({ file });
+    expect(uploadWheel).toHaveBeenCalledWith({ file });
+    // the list is refreshed after a successful upload.
+    expect(listBuildArtifacts).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the distribution (not project) for a wheel artifact", async () => {
+    const wrapper = mount(BuildArtifactsPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      detailsVisible: boolean;
+      selected: BuildArtifact | null;
+      openDetails: (a: BuildArtifact) => void;
+    };
+    vm.openDetails(makeWheel());
+    await flushPromises();
+    expect(vm.selected?.artifact_type).toBe("python_wheel");
+    expect(vm.selected?.distribution).toBe("dopilot-demo");
+    expect(wrapper.text()).toContain(zh.artifacts.distribution);
+    // wheels have no spiders -> the spiders box is not rendered.
+    expect(
+      wrapper.find('[data-testid="artifact-details-spiders"]').exists(),
+    ).toBe(false);
   });
 
   it("opens Details with the artifact's spiders for read-only display", async () => {

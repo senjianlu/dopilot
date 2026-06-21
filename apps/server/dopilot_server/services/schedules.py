@@ -81,9 +81,12 @@ async def create_schedule(
             {"missing": ["name"]},
         )
     # execution template must exist (FK + a friendly 404-equivalent at create).
-    await templates.get_template_or_404(
+    template = await templates.get_template_or_404(
         session, data.get("execution_template_id") or ""
     )
+    # Type-aware override validation: a wheel template's command override is a
+    # free-form shell command, not a ``scrapy crawl`` command (phase 2b).
+    artifact_type = await templates.artifact_type_for_template(session, template)
     _validate_trigger(data)
     trigger_type = data.get("trigger_type") or "interval"
     schedule = Schedule(
@@ -96,7 +99,9 @@ async def create_schedule(
             int(data["interval_seconds"]) if trigger_type == "interval" else None
         ),
         cron=(str(data["cron"]).strip() if trigger_type == "cron" else None),
-        overrides=resolve.sanitize_overrides(data.get("overrides")),
+        overrides=resolve.sanitize_overrides(
+            data.get("overrides"), artifact_type=artifact_type
+        ),
     )
     session.add(schedule)
     return schedule
@@ -115,7 +120,15 @@ async def update_schedule(
     if "description" in data:
         schedule.description = data["description"]
     if "overrides" in data:
-        schedule.overrides = resolve.sanitize_overrides(data.get("overrides"))
+        template = await templates.get_template_or_404(
+            session, schedule.execution_template_id
+        )
+        artifact_type = await templates.artifact_type_for_template(
+            session, template
+        )
+        schedule.overrides = resolve.sanitize_overrides(
+            data.get("overrides"), artifact_type=artifact_type
+        )
     # Re-validate the trigger as a whole when any trigger field changes.
     if {"trigger_type", "interval_seconds", "cron"} & set(data):
         merged = {

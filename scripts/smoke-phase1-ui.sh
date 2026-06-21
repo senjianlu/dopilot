@@ -131,8 +131,10 @@ wait_migrate() {
   done
 }
 
-# Poll the API for exactly 3 healthy, scrapy-capable, schedulable nodes so the
-# browser does not race agent registration / scrapyd startup.
+# Poll the API for exactly 3 healthy, scrapy- AND script-capable, schedulable
+# nodes so the browser does not race agent registration / scrapyd startup.
+# Phase 2b: the wheel run dispatches to `capabilities.script == true` nodes, so
+# gate on script too — otherwise the wheel browser step could race the heartbeat.
 wait_nodes_ready() {
   local timeout="$1" deadline token resp ready
   deadline=$(( $(date +%s) + timeout ))
@@ -155,6 +157,7 @@ for n in data.get("nodes", []):
     if (
         n.get("status") == "healthy"
         and caps.get("scrapy")
+        and caps.get("script")
         and n.get("scheduling_enabled")
         and not n.get("deleted_at")
     ):

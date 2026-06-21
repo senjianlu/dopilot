@@ -73,6 +73,8 @@ class BuildArtifactView(BaseModel):
     project: str | None = None
     version: str | None = None
     spiders: list[str] = Field(default_factory=list)
+    # Python-wheel type-specific metadata (phase 2b): the distribution name.
+    distribution: str | None = None
     fetch_path: str | None = None
     runnable: bool = False
     created_at: str | None = None

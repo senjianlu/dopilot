@@ -15,7 +15,12 @@ from .agent import (
     EggDeployResponse,
 )
 from .common import CapabilitySet, ErrorResponse
-from .execution import ExecutionRunRequest, ExecutionRunResponse, ScrapyRunPayload
+from .execution import (
+    ExecutionRunRequest,
+    ExecutionRunResponse,
+    PythonWheelRunPayload,
+    ScrapyRunPayload,
+)
 from .health import HealthResponse
 from .logs import LogStream
 from .scrapy_command import (
@@ -55,6 +60,7 @@ __all__ = [
     "ExecutionRunRequest",
     "ExecutionRunResponse",
     "ScrapyRunPayload",
+    "PythonWheelRunPayload",
     # shared Scrapy command parser/validator (phase 1.8.1, command-first)
     "ParsedScrapyCommand",
     "ScrapyCommandError",
