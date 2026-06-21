@@ -1,0 +1,9 @@
+# <type>(<scope>): <subject>   (<=72 chars, imperative, lowercase, no period)
+#
+# <body: what & why, wrapped ~72-100 cols>
+#
+# <footer: Co-Authored-By: / Refs: / Phase: / BREAKING CHANGE:>
+#
+# types:  feat fix docs refactor perf test build ci chore style revert
+# scopes: server agent web protocol deploy ci configs docs repo
+# spec:   docs/agent-governance/03-commit-convention.md
