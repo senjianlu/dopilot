@@ -200,6 +200,7 @@ const zh = {
     remoteJobId: "远端任务 ID",
     exitCode: "退出码",
     errorCode: "错误码",
+    noExecutions: "该任务没有执行实例",
     notFound: "未找到任务",
   },
   logs: {

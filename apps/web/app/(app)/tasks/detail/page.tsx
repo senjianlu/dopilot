@@ -18,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertTitle } from "@/components/ui/alert";
@@ -57,6 +58,7 @@ function TaskDetail() {
   const [canceling, setCanceling] = React.useState(false);
   const [markingLost, setMarkingLost] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState("");
+  const [selectedExecutionId, setSelectedExecutionId] = React.useState("");
 
   const load = React.useCallback(async () => {
     if (!taskId) return;
@@ -71,6 +73,19 @@ function TaskDetail() {
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  React.useEffect(() => {
+    if (!task) {
+      setSelectedExecutionId("");
+      return;
+    }
+    setSelectedExecutionId((current) => {
+      if (current && task.executions.some((ex) => ex.id === current)) {
+        return current;
+      }
+      return task.executions[0]?.id ?? "";
+    });
+  }, [task]);
 
   const cancelable =
     task?.status === "queued" ||
@@ -256,8 +271,38 @@ function TaskDetail() {
           </Card>
 
           <Card>
-            <CardContent className="pt-6">
-              <LogViewer taskId={taskId} />
+            <CardContent className="flex flex-col gap-4 pt-6">
+              {task.executions.length > 1 && (
+                <Tabs
+                  value={selectedExecutionId}
+                  onValueChange={setSelectedExecutionId}
+                >
+                  <TabsList className="h-auto max-w-full flex-wrap justify-start">
+                    {task.executions.map((ex) => (
+                      <TabsTrigger
+                        key={ex.id}
+                        value={ex.id}
+                        data-testid={`execution-log-tab-${ex.id}`}
+                        className="max-w-60 truncate"
+                      >
+                        {ex.agent_id ?? ex.id}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                </Tabs>
+              )}
+              {selectedExecutionId ? (
+                <LogViewer taskId={taskId} executionId={selectedExecutionId} />
+              ) : (
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyTitle>{t("task.noExecutions")}</EmptyTitle>
+                    <EmptyDescription className="sr-only">
+                      {t("task.noExecutions")}
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              )}
             </CardContent>
           </Card>
         </>

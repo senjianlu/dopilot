@@ -85,6 +85,13 @@ describe("LogViewer", () => {
     );
   });
 
+  it("passes execution_id into the stream URL when given", async () => {
+    renderWithProviders(<LogViewer taskId="task-1" executionId="ex-2" />);
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    expect(MockEventSource.instances[0].url).toContain("execution_id=ex-2");
+  });
+
   it("fetches a short-lived stream token when web auth is on", async () => {
     getToken.mockReturnValue("bearer-tok");
     fetchStreamToken.mockResolvedValue({

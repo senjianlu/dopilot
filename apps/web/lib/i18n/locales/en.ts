@@ -204,6 +204,7 @@ const en = {
     remoteJobId: "Remote job ID",
     exitCode: "Exit code",
     errorCode: "Error code",
+    noExecutions: "No executions for this task",
     notFound: "Task not found",
   },
   logs: {

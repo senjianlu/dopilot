@@ -96,7 +96,7 @@ async def apply_log_event(
         # errors="replace" here; byte-fidelity lives on disk (written above) and
         # in the file-backed snapshot/download path, not in the live SSE stream.
         manager.publish(
-            event.task_id,
+            event.execution_id,
             {
                 "type": "log",
                 "start_offset": physical_start,
