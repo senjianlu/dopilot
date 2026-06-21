@@ -53,6 +53,7 @@ import {
   listSchedules,
   previewNextRun,
   triggerSchedule,
+  updateSchedule,
 } from "@/lib/api/schedules";
 import { listTemplates } from "@/lib/api/templates";
 import { listNodes } from "@/lib/api/nodes";
@@ -67,17 +68,12 @@ import type {
 import { nodeBadge } from "@/lib/nodeBadge";
 import { nodeKey, selectableNodes as selectableNodesOf } from "@/lib/nodeSelection";
 import { checkScrapyCommand } from "@/lib/scrapyCommand";
+import { formatDateTime } from "@/lib/format";
 import { useConfirm } from "@/hooks/use-confirm";
 
 // shadcn/Radix Select cannot bind an empty-string value, so "none" is the
 // sentinel for "no node-strategy override".
 type OverrideStrategy = "none" | NodeStrategy;
-
-function formatTime(iso: string | null): string {
-  if (!iso) return "-";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-}
 
 export default function SchedulesPage() {
   const { t } = useTranslation();
@@ -90,6 +86,7 @@ export default function SchedulesPage() {
   const [loading, setLoading] = React.useState(false);
   const [triggeringId, setTriggeringId] = React.useState("");
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [editingId, setEditingId] = React.useState("");
   const [creating, setCreating] = React.useState(false);
   const [createError, setCreateError] = React.useState("");
   const [estimatedNextRun, setEstimatedNextRun] = React.useState("");
@@ -134,7 +131,9 @@ export default function SchedulesPage() {
     async (type: TriggerType, seconds: number, cronExpr: string) => {
       if (type === "interval") {
         setEstimatedNextRun(
-          seconds > 0 ? new Date(Date.now() + seconds * 1000).toLocaleString() : "",
+          seconds > 0
+            ? formatDateTime(new Date(Date.now() + seconds * 1000).toISOString())
+            : "",
         );
         return;
       }
@@ -146,7 +145,7 @@ export default function SchedulesPage() {
         const res = await previewNextRun({ trigger_type: "cron", cron: cronExpr });
         setEstimatedNextRun(
           res.next_run_at
-            ? formatTime(res.next_run_at)
+            ? formatDateTime(res.next_run_at)
             : t("schedules.nextRunPending"),
         );
       } catch {
@@ -177,6 +176,7 @@ export default function SchedulesPage() {
   }, [load]);
 
   function openCreate() {
+    setEditingId("");
     setName("");
     setTemplateId(templates[0]?.id ?? "");
     setTriggerType("interval");
@@ -188,6 +188,30 @@ export default function SchedulesPage() {
     setCreateError("");
     setDialogOpen(true);
     void updateEstimate("interval", 60, "");
+  }
+
+  function openEdit(schedule: Schedule) {
+    const ov = schedule.overrides ?? {};
+    const ovCommand = typeof ov.command === "string" ? ov.command : "";
+    const ovStrategy = (ov.node_strategy as OverrideStrategy) ?? "none";
+    const ovNodeIds = Array.isArray(ov.node_ids)
+      ? (ov.node_ids as string[])
+      : [];
+    const seconds = schedule.interval_seconds ?? 60;
+    const cronExpr = schedule.cron ?? "";
+    setEditingId(schedule.id);
+    setName(schedule.name);
+    setTemplateId(schedule.execution_template_id);
+    setTriggerType(schedule.trigger_type);
+    setIntervalSeconds(seconds);
+    setCron(cronExpr);
+    setOverrideCommand(ovCommand);
+    // Absent strategy override falls back to the "none" sentinel.
+    setOverrideStrategy(ovStrategy);
+    setOverrideNodeIds(ovStrategy === "selected" ? ovNodeIds : []);
+    setCreateError("");
+    setDialogOpen(true);
+    void updateEstimate(schedule.trigger_type, seconds, cronExpr);
   }
 
   function toggleOverrideNode(key: string) {
@@ -212,22 +236,27 @@ export default function SchedulesPage() {
 
   const canSubmit = !overrideCommand || overrideCommandCheck.valid;
 
-  async function submitCreate() {
+  async function submitDialog() {
     if (overrideCommand && !overrideCommandCheck.valid) {
       setCreateError(t("schedules.invalidCommand"));
       return;
     }
     setCreating(true);
     setCreateError("");
+    const payload = {
+      name,
+      execution_template_id: templateId,
+      trigger_type: triggerType,
+      interval_seconds: triggerType === "interval" ? intervalSeconds : null,
+      cron: triggerType === "cron" ? cron : null,
+      overrides: buildOverrides(),
+    };
     try {
-      await createSchedule({
-        name,
-        execution_template_id: templateId,
-        trigger_type: triggerType,
-        interval_seconds: triggerType === "interval" ? intervalSeconds : null,
-        cron: triggerType === "cron" ? cron : null,
-        overrides: buildOverrides(),
-      });
+      if (editingId) {
+        await updateSchedule(editingId, payload);
+      } else {
+        await createSchedule(payload);
+      }
       setDialogOpen(false);
       await load();
     } catch {
@@ -310,7 +339,7 @@ export default function SchedulesPage() {
                   </TableCell>
                   <TableCell>{schedule.trigger_type}</TableCell>
                   <TableCell>{triggerTimeText(schedule)}</TableCell>
-                  <TableCell>{formatTime(schedule.next_run_at)}</TableCell>
+                  <TableCell>{formatDateTime(schedule.next_run_at)}</TableCell>
                   <TableCell className="text-right">
                     <Button
                       variant="ghost"
@@ -323,6 +352,14 @@ export default function SchedulesPage() {
                         <Spinner data-icon="inline-start" />
                       )}
                       {t("schedules.triggerNow")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      data-testid={`schedule-edit-${schedule.name}`}
+                      onClick={() => openEdit(schedule)}
+                    >
+                      {t("schedules.edit")}
                     </Button>
                     <Button
                       variant="ghost"
@@ -343,7 +380,9 @@ export default function SchedulesPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent data-testid="schedule-dialog" className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{t("schedules.createTitle")}</DialogTitle>
+            <DialogTitle>
+              {editingId ? t("schedules.editTitle") : t("schedules.createTitle")}
+            </DialogTitle>
           </DialogHeader>
           <FieldGroup>
             <Field>
@@ -524,10 +563,10 @@ export default function SchedulesPage() {
             <Button
               data-testid="schedule-submit"
               disabled={!canSubmit || creating}
-              onClick={submitCreate}
+              onClick={submitDialog}
             >
               {creating && <Spinner data-icon="inline-start" />}
-              {t("schedules.submit")}
+              {editingId ? t("schedules.save") : t("schedules.submit")}
             </Button>
           </DialogFooter>
         </DialogContent>

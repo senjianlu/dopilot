@@ -294,22 +294,42 @@ async def list_tasks(session: AsyncSession, limit: int = 200) -> list[Task]:
 ALLOWED_PAGE_SIZES = (5, 10, 20, 50, 100)
 
 
+def _task_build_artifact_id():
+    """SQL expression for the task's build-artifact id (from the snapshot).
+
+    The build artifact is frozen at task creation into
+    ``template_snapshot["build_artifact"]`` (see :func:`resolve.resolve_run`); its
+    ``id`` is the stable filter key. Indexing + ``.as_string()`` works on both the
+    SQLite test DB (``json_extract``) and PostgreSQL JSONB. NULL for legacy/direct
+    tasks that carry no snapshot.
+    """
+    return Task.template_snapshot["build_artifact"]["id"].as_string()
+
+
 async def list_tasks_page(
     session: AsyncSession,
     *,
     page: int,
     page_size: int,
     spider: str | None = None,
+    build_artifact_id: str | None = None,
 ) -> tuple[list[Task], int]:
     """Return one page of tasks (newest first) + the total matching count.
 
-    Optional ``spider`` filters on the indexed task-level ``spider`` column.
-    Caller validates ``page`` / ``page_size`` (see :func:`validate_page`).
+    The product filter is ``build_artifact_id`` (matched against the immutable
+    snapshot build artifact), which works for scrapy and python_wheel alike.
+    The legacy ``spider`` filter (indexed task-level column) is kept for
+    compatibility; both filters AND together when supplied. Caller validates
+    ``page`` / ``page_size``.
     """
     from sqlalchemy import func as _func
 
     base = select(Task)
     count_q = select(_func.count()).select_from(Task)
+    if build_artifact_id:
+        ba_expr = _task_build_artifact_id()
+        base = base.where(ba_expr == build_artifact_id)
+        count_q = count_q.where(ba_expr == build_artifact_id)
     if spider:
         base = base.where(Task.spider == spider)
         count_q = count_q.where(Task.spider == spider)
@@ -345,11 +365,108 @@ async def child_execution_counts(
 
 
 async def list_task_spiders(session: AsyncSession) -> list[str]:
-    """Distinct non-null spider values across all tasks, for the filter dropdown."""
+    """Distinct non-null spider values across all tasks (legacy filter helper)."""
     rows = await session.execute(
         select(Task.spider).where(Task.spider.is_not(None)).distinct()
     )
     return sorted({s for (s,) in rows.all() if s})
+
+
+def _build_artifact_label(
+    name: str | None,
+    version: str | None,
+    distribution: str | None,
+    project: str | None,
+    artifact_id: str,
+) -> str:
+    """Human-readable label for a build artifact (scrapy or python_wheel)."""
+    base = name or distribution or project or artifact_id
+    return f"{base} ({version})" if version else str(base)
+
+
+def build_artifact_option(
+    *,
+    id: str,
+    name: str | None,
+    artifact_type: str | None,
+    version: str | None,
+    distribution: str | None,
+    project: str | None,
+) -> dict[str, Any]:
+    """The public build-artifact descriptor (filter option / per-task column).
+
+    Carries id + name + artifact_type + version/distribution/project plus a
+    derived human-readable ``label``.
+    """
+    return {
+        "id": id,
+        "name": name,
+        "artifact_type": artifact_type,
+        "version": version,
+        "distribution": distribution,
+        "project": project,
+        "label": _build_artifact_label(name, version, distribution, project, id),
+    }
+
+
+def task_build_artifact(task: Task) -> dict[str, Any] | None:
+    """The immutable build-artifact descriptor of a task, or None if absent.
+
+    Reads ``template_snapshot["build_artifact"]`` (frozen at creation). Legacy /
+    direct tasks created without a snapshot return None — no crash, no column.
+    """
+    ba = (task.template_snapshot or {}).get("build_artifact") or {}
+    artifact_id = ba.get("id")
+    if not artifact_id:
+        return None
+    return build_artifact_option(
+        id=str(artifact_id),
+        name=ba.get("name"),
+        artifact_type=ba.get("artifact_type"),
+        version=ba.get("version"),
+        distribution=ba.get("distribution"),
+        project=ba.get("project"),
+    )
+
+
+async def list_task_build_artifacts(
+    session: AsyncSession,
+) -> list[dict[str, Any]]:
+    """Distinct build-artifact filter options derived from existing tasks.
+
+    Reads the immutable snapshot fields directly in SQL (DISTINCT at the DB, no
+    full-snapshot load), then dedupes by artifact id in Python and sorts by
+    label. Tasks without a snapshot artifact contribute no option.
+    """
+    ba = Task.template_snapshot["build_artifact"]
+    id_expr = ba["id"].as_string()
+    rows = await session.execute(
+        select(
+            id_expr,
+            ba["name"].as_string(),
+            ba["artifact_type"].as_string(),
+            ba["version"].as_string(),
+            ba["distribution"].as_string(),
+            ba["project"].as_string(),
+        )
+        .where(id_expr.is_not(None))
+        .distinct()
+    )
+    options: dict[str, dict[str, Any]] = {}
+    for artifact_id, name, artifact_type, version, distribution, project in rows.all():
+        if not artifact_id or artifact_id in options:
+            continue
+        options[artifact_id] = build_artifact_option(
+            id=str(artifact_id),
+            name=name,
+            artifact_type=artifact_type,
+            version=version,
+            distribution=distribution,
+            project=project,
+        )
+    return sorted(
+        options.values(), key=lambda o: ((o["label"] or "").lower(), o["id"])
+    )
 
 
 async def get_log_file(
@@ -463,6 +580,9 @@ def task_summary(task: Task, execution_count: int) -> dict[str, Any]:
         "artifact_type": task.artifact_type,
         "target": task.target,
         "spider": task.spider,
+        # The immutable build artifact (frozen snapshot) backs the list column +
+        # the build-artifact filter; None for legacy/direct tasks (snapshot-less).
+        "build_artifact": task_build_artifact(task),
         "status": task.status,
         "status_reason": task.status_reason,
         "node_strategy": task.node_strategy,

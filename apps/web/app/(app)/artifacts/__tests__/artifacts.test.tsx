@@ -39,7 +39,7 @@ const wheelArtifact: BuildArtifact = {
   name: "dopilot-demo",
   filename: "dopilot_demo-0.1.0-py3-none-any.whl",
   content_hash: "sha-whl",
-  size_bytes: 2048,
+  size_bytes: 3 * 1024 * 1024,
   project: null,
   version: "0.1.0",
   distribution: "dopilot-demo",
@@ -69,6 +69,20 @@ describe("BuildArtifactsPage", () => {
     expect(
       screen.getByTestId("artifact-type-dopilot-demo"),
     ).toHaveTextContent("python_wheel");
+  });
+
+  it("renders sizes adaptively in KB (under 1 MB) and MB (1 MB+)", async () => {
+    renderWithProviders(<BuildArtifactsPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("artifact-size-demo")).toBeInTheDocument(),
+    );
+    // 1024 bytes -> KB; 3 MiB -> MB.
+    expect(screen.getByTestId("artifact-size-demo")).toHaveTextContent(
+      "1.00 KB",
+    );
+    expect(
+      screen.getByTestId("artifact-size-dopilot-demo"),
+    ).toHaveTextContent("3.00 MB");
   });
 
   it("uploads a selected egg file", async () => {

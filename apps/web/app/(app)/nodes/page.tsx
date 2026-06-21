@@ -25,6 +25,7 @@ import {
 } from "@/components/features/status-badge";
 import { deleteNode, listNodes, offlineNode, onlineNode } from "@/lib/api/nodes";
 import type { NodeInfo } from "@/lib/api/types";
+import { formatDateTime } from "@/lib/format";
 import { isOperable, nodeBadge } from "@/lib/nodeBadge";
 import { useConfirm } from "@/hooks/use-confirm";
 
@@ -177,7 +178,7 @@ export default function NodesPage() {
                     </span>
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {node.last_seen_at ?? "-"}
+                    {formatDateTime(node.last_seen_at)}
                   </TableCell>
                   <TableCell className="text-right">
                     {canOffline(node) && (

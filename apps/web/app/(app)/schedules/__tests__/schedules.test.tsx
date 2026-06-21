@@ -14,12 +14,15 @@ const listSchedules = vi.fn();
 const deleteSchedule = vi.fn();
 const triggerSchedule = vi.fn();
 const previewNextRun = vi.fn();
+const createSchedule = vi.fn();
+const updateSchedule = vi.fn();
 vi.mock("@/lib/api/schedules", () => ({
   listSchedules: () => listSchedules(),
   deleteSchedule: (id: string) => deleteSchedule(id),
   triggerSchedule: (id: string) => triggerSchedule(id),
   previewNextRun: (p: unknown) => previewNextRun(p),
-  createSchedule: vi.fn(),
+  createSchedule: (p: unknown) => createSchedule(p),
+  updateSchedule: (id: string, p: unknown) => updateSchedule(id, p),
 }));
 const listTemplates = vi.fn();
 vi.mock("@/lib/api/templates", () => ({ listTemplates: () => listTemplates() }));
@@ -63,6 +66,8 @@ beforeEach(() => {
   deleteSchedule.mockReset().mockResolvedValue(undefined);
   triggerSchedule.mockReset().mockResolvedValue({ task_id: "task-7", status: "queued" });
   previewNextRun.mockReset().mockResolvedValue({ next_run_at: null });
+  createSchedule.mockReset().mockResolvedValue(schedule);
+  updateSchedule.mockReset().mockResolvedValue(schedule);
   listTemplates.mockReset().mockResolvedValue([template]);
   listNodes.mockReset().mockResolvedValue([]);
 });
@@ -92,6 +97,36 @@ describe("SchedulesPage", () => {
     await user.click(screen.getByTestId("schedule-trigger-demo-schedule"));
     await waitFor(() => expect(triggerSchedule).toHaveBeenCalledWith("sch-1"));
     expect(push).toHaveBeenCalledWith("/tasks/detail?id=task-7");
+  });
+
+  it("edits a schedule: pre-fills the dialog and calls updateSchedule", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("schedule-edit-demo-schedule"),
+      ).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId("schedule-edit-demo-schedule"));
+    await waitFor(() =>
+      expect(screen.getByTestId("schedule-dialog")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("schedule-name-input")).toHaveValue(
+      "demo-schedule",
+    );
+    expect(screen.getByTestId("schedule-interval")).toHaveValue(60);
+    await user.click(screen.getByTestId("schedule-submit"));
+    await waitFor(() =>
+      expect(updateSchedule).toHaveBeenCalledWith("sch-1", {
+        name: "demo-schedule",
+        execution_template_id: "tpl-1",
+        trigger_type: "interval",
+        interval_seconds: 60,
+        cron: null,
+        overrides: undefined,
+      }),
+    );
+    expect(createSchedule).not.toHaveBeenCalled();
   });
 
   it("deletes a schedule only after confirmation", async () => {

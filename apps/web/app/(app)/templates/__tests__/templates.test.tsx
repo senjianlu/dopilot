@@ -12,11 +12,13 @@ vi.mock("next/navigation", () => ({
 
 const listTemplates = vi.fn();
 const createTemplate = vi.fn();
+const updateTemplate = vi.fn();
 const runTemplate = vi.fn();
 const deleteTemplate = vi.fn();
 vi.mock("@/lib/api/templates", () => ({
   listTemplates: () => listTemplates(),
   createTemplate: (p: unknown) => createTemplate(p),
+  updateTemplate: (id: string, p: unknown) => updateTemplate(id, p),
   runTemplate: (id: string) => runTemplate(id),
   deleteTemplate: (id: string) => deleteTemplate(id),
 }));
@@ -78,6 +80,7 @@ beforeEach(() => {
   push.mockReset();
   listTemplates.mockReset().mockResolvedValue([template]);
   createTemplate.mockReset().mockResolvedValue(template);
+  updateTemplate.mockReset().mockResolvedValue(template);
   runTemplate.mockReset().mockResolvedValue({ task_id: "task-9", status: "queued" });
   deleteTemplate.mockReset().mockResolvedValue(undefined);
   listBuildArtifacts.mockReset().mockResolvedValue([artifact]);
@@ -125,6 +128,38 @@ describe("TemplatesPage", () => {
     await user.click(screen.getByTestId("template-run-demo-template"));
     await waitFor(() => expect(runTemplate).toHaveBeenCalledWith("tpl-1"));
     expect(push).toHaveBeenCalledWith("/tasks/detail?id=task-9");
+  });
+
+  it("edits a template: pre-fills the dialog and calls updateTemplate", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TemplatesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("template-edit-demo-template"),
+      ).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId("template-edit-demo-template"));
+    await waitFor(() =>
+      expect(screen.getByTestId("template-dialog")).toBeInTheDocument(),
+    );
+    // Dialog is pre-filled from the row.
+    expect(screen.getByTestId("template-name-input")).toHaveValue(
+      "demo-template",
+    );
+    expect(screen.getByTestId("template-command-input")).toHaveValue(
+      "scrapy crawl phase1",
+    );
+    await user.click(screen.getByTestId("template-submit"));
+    await waitFor(() =>
+      expect(updateTemplate).toHaveBeenCalledWith("tpl-1", {
+        name: "demo-template",
+        build_artifact_id: "art-1",
+        command: "scrapy crawl phase1",
+        node_strategy: "all",
+        node_ids: [],
+      }),
+    );
+    expect(createTemplate).not.toHaveBeenCalled();
   });
 
   it("deletes a template only after confirmation", async () => {

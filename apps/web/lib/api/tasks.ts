@@ -8,7 +8,8 @@ import type {
 } from "./types";
 
 // Phase 1.7.1: backend-paginated list. Returns the full response (rows + page /
-// page_size / total + known spider values) so the page can render controls.
+// page_size / total + distinct build-artifact filter options) so the page can
+// render controls. The list filter is by build artifact, not spider.
 export async function listTasks(
   params: ListTasksParams = {},
 ): Promise<TasksResponse> {
@@ -16,8 +17,8 @@ export async function listTasks(
     page: params.page ?? 1,
     page_size: params.pageSize ?? 20,
   };
-  if (params.spider) {
-    query.spider = params.spider;
+  if (params.buildArtifactId) {
+    query.build_artifact_id = params.buildArtifactId;
   }
   const { data } = await client.get<TasksResponse>("/tasks", {
     params: query,

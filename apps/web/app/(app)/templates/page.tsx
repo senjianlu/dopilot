@@ -55,6 +55,7 @@ import {
   deleteTemplate,
   listTemplates,
   runTemplate,
+  updateTemplate,
 } from "@/lib/api/templates";
 import type {
   BuildArtifact,
@@ -82,6 +83,7 @@ export default function TemplatesPage() {
   const [loading, setLoading] = React.useState(false);
   const [runningId, setRunningId] = React.useState("");
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [editingId, setEditingId] = React.useState("");
   const [creating, setCreating] = React.useState(false);
   const [createError, setCreateError] = React.useState("");
 
@@ -170,6 +172,7 @@ export default function TemplatesPage() {
 
   function openCreate() {
     const first = runnableArtifacts[0];
+    setEditingId("");
     setName("");
     setBuildArtifactId(first?.id ?? "");
     prevArtifactId.current = first?.id ?? "";
@@ -180,13 +183,28 @@ export default function TemplatesPage() {
     setDialogOpen(true);
   }
 
+  function openEdit(template: ExecutionTemplate) {
+    setEditingId(template.id);
+    setName(template.name);
+    setBuildArtifactId(template.build_artifact_id ?? "");
+    // Set the ref so the artifact-change effect does NOT clobber the stored
+    // command with the artifact default on open.
+    prevArtifactId.current = template.build_artifact_id ?? "";
+    setCommand(template.command ?? "");
+    setNodeStrategy(template.node_strategy);
+    // Preserve existing selected node ids (only meaningful for `selected`).
+    setNodeIds(template.node_strategy === "selected" ? template.node_ids : []);
+    setCreateError("");
+    setDialogOpen(true);
+  }
+
   function toggleNode(key: string) {
     setNodeIds((ids) =>
       ids.includes(key) ? ids.filter((id) => id !== key) : [...ids, key],
     );
   }
 
-  async function submitCreate() {
+  async function submitDialog() {
     const art = selectedArtifact;
     if (!art) {
       setCreateError(t("templates.createError"));
@@ -198,14 +216,19 @@ export default function TemplatesPage() {
     }
     setCreating(true);
     setCreateError("");
+    const payload = {
+      name,
+      build_artifact_id: art.id,
+      command: command.trim(),
+      node_strategy: nodeStrategy,
+      node_ids: isSelectedStrategy ? nodeIds : [],
+    };
     try {
-      await createTemplate({
-        name,
-        build_artifact_id: art.id,
-        command: command.trim(),
-        node_strategy: nodeStrategy,
-        node_ids: isSelectedStrategy ? nodeIds : [],
-      });
+      if (editingId) {
+        await updateTemplate(editingId, payload);
+      } else {
+        await createTemplate(payload);
+      }
       setDialogOpen(false);
       await load();
     } catch {
@@ -308,6 +331,14 @@ export default function TemplatesPage() {
                     <Button
                       variant="ghost"
                       size="sm"
+                      data-testid={`template-edit-${tpl.name}`}
+                      onClick={() => openEdit(tpl)}
+                    >
+                      {t("templates.edit")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       className="text-destructive"
                       onClick={() => onDelete(tpl)}
                     >
@@ -324,7 +355,9 @@ export default function TemplatesPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent data-testid="template-dialog" className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{t("templates.createTitle")}</DialogTitle>
+            <DialogTitle>
+              {editingId ? t("templates.editTitle") : t("templates.createTitle")}
+            </DialogTitle>
           </DialogHeader>
           <FieldGroup>
             <Field>
@@ -476,10 +509,10 @@ export default function TemplatesPage() {
             <Button
               data-testid="template-submit"
               disabled={!canSubmit || creating}
-              onClick={submitCreate}
+              onClick={submitDialog}
             >
               {creating && <Spinner data-icon="inline-start" />}
-              {t("templates.submit")}
+              {editingId ? t("templates.save") : t("templates.submit")}
             </Button>
           </DialogFooter>
         </DialogContent>

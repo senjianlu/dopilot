@@ -17,6 +17,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { ToneBadge } from "@/components/features/status-badge";
 import { terminalCleanup } from "@/lib/api/maintenance";
 import type { TerminalCleanupResponse } from "@/lib/api/types";
+import { formatDateTime } from "@/lib/format";
 import { useConfirm } from "@/hooks/use-confirm";
 
 export default function MaintenancePage() {
@@ -134,7 +135,7 @@ export default function MaintenancePage() {
                 <dt className="text-muted-foreground">
                   {t("maintenance.summaryCutoff")}
                 </dt>
-                <dd>{summary.cutoff}</dd>
+                <dd>{formatDateTime(summary.cutoff)}</dd>
                 <dt className="text-muted-foreground">
                   {t("maintenance.summaryTasks")}
                 </dt>

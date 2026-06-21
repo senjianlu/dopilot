@@ -140,12 +140,29 @@ export type TaskSource =
   | "schedule_timer"
   | "manual";
 
+// A build artifact descriptor: a task-list column source + a distinct filter
+// option. Derived from the immutable Task snapshot, so it works for any artifact
+// type (scrapy, python_wheel). `label` is a human-readable name+version.
+export interface BuildArtifactOption {
+  id: string;
+  name?: string | null;
+  artifact_type?: string | null;
+  version?: string | null;
+  distribution?: string | null;
+  project?: string | null;
+  label?: string | null;
+}
+
 // Row shape for the tasks list.
 export interface TaskSummary {
   id: string;
   artifact_type: string;
   target: string;
+  // Legacy derived scrapy spider; the list filter is by build artifact now.
   spider?: string | null;
+  // The build artifact this run executed (immutable snapshot); null for a
+  // legacy/direct task created without a snapshot.
+  build_artifact?: BuildArtifactOption | null;
   status: TaskStatus;
   status_reason?: string | null;
   node_strategy: NodeStrategy;
@@ -160,11 +177,12 @@ export interface TaskSummary {
 
 export interface TasksResponse {
   tasks: TaskSummary[];
-  // Phase 1.7.1: server-side pagination metadata + known spider values.
+  // Phase 1.7.1: server-side pagination metadata + distinct build-artifact
+  // filter options referenced by existing tasks.
   page: number;
   page_size: number;
   total: number;
-  spiders: string[];
+  build_artifacts: BuildArtifactOption[];
 }
 
 // Allowed backend page sizes. The UI picks the closest from table height but
@@ -175,7 +193,7 @@ export type TaskPageSize = (typeof TASK_PAGE_SIZES)[number];
 export interface ListTasksParams {
   page?: number;
   pageSize?: TaskPageSize;
-  spider?: string | null;
+  buildArtifactId?: string | null;
 }
 
 // A single atomic execution against an agent/node.
