@@ -5,7 +5,8 @@ reference/
 .venv-ref/
 .git/
 node_modules/
-apps/web/dist/
+apps/web/out/
+apps/web/.next/
 docs/
 .vscode/
 **/__pycache__/

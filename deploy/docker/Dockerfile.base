@@ -3,7 +3,7 @@
 # Build this file before the application image when local dependency inputs
 # change. It publishes two targets:
 #   - py-runtime: Python runtime dependencies shared by server/agent/migrate
-#   - web-deps: Node/pnpm workspace dependencies used by the Vue build
+#   - web-deps: Node/pnpm workspace dependencies used by the Next.js web build
 #
 # Keep project source out of this file where possible. The application image
 # installs dopilot's own wheels separately, so normal app-code edits do not

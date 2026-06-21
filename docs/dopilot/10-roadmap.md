@@ -47,8 +47,8 @@
 |------|------|------|------|
 | 搭建 dopilot 骨架(apps/packages) | 🆕 | 新建 `apps/server`、`apps/agent`、`apps/web`、`packages/protocol` 骨架（structure-first，权威布局见 `05` §1），不对 scrapydweb 改名/git mv | `../phases/phase-0/00-brief.md`、`09-package-rename.md` |
 | 单管理员 token 认证 | 🟡 | HTTP Basic → token 登录（单用户，无需 RBAC） | `06-frontend-rewrite.md` §5、`architecture/06-auth-and-utils.md` |
-| 前端骨架 M0 | 🆕 | Vite+Vue3+EP+TS + 登录/布局/菜单 + axios + SSE 客户端；后端 FastAPI `/api/v1` 骨架 | `06-frontend-rewrite.md` §2 |
-| i18n 框架 | 🆕 | SPA 用 vue-i18n，默认中文；后端 `/api/v1` 仅返回结构化 message code，由前端做文案映射 | `04-gap-i18n.md` §7、`06-frontend-rewrite.md` §7 |
+| 前端骨架 M0 | 🆕 | 阶段 0 起 SPA + 登录/布局/菜单 + axios + SSE 客户端；后端 FastAPI `/api/v1` 骨架。**阶段 2.1 起技术栈为 Next.js（静态导出）+ shadcn/ui + Recharts + TS**（替换原 Vite+Vue3+EP） | `06-frontend-rewrite.md` §2、`../phases/phase-2.1/00-brief.md` |
+| i18n 框架 | 🆕 | SPA 默认中文（阶段 2.1 起用 **react-i18next**，原 vue-i18n）；后端 `/api/v1` 仅返回结构化 message code，由前端做文案映射 | `04-gap-i18n.md` §7、`06-frontend-rewrite.md` §7 |
 | server/agent Docker 化 | 🆕 | 统一应用镜像 + PostgreSQL 服务/连接配置；server/agent/migrate 通过启动命令选择角色；reference 的 `vars.py` 启动清目录只作行为坑说明 | `08-docker-deployment.md` |
 | 镜像构建发布 + CI | 🆕 | `deploy/docker/Dockerfile` + `.dockerignore`（排除 `reference/`）+ GitHub Actions 推送 `rabbir/dopilot:latest`（决策 7、monorepo 决策 8） | `08-docker-deployment.md` §7 |
 | 测试基线 | 🆕 | dopilot 自有测试套件(`apps/server/tests`、`apps/agent/tests`、`apps/web`)；以 scrapydweb/tests 的行为预期作对照(oracle)校准移植正确性 | `07-testing-baseline.md` |
@@ -151,8 +151,8 @@ node_strategy ──► (阶段1 起对所有 Executor 生效;健康过滤来源
 |---|---------|------|------|
 | 1 | worker agent 与 server 的通信协议 | `01-gap` §8、`refactor/00` | **阶段1 交付**：server 主动 HTTP pull（agent 暴露 tail/status/cleanup API，offset 权威在 server PG），server 轮询 `/health`。**阶段1.5 破坏性翻案为 Redis Streams**：server XADD command（事务性 outbox + dispatcher，at-least-once，`attempt_id` 幂等）+ agent consumer group 主动消费 + 主动 XADD 状态/日志 + 主动 POST heartbeat（`last_seen_at` 判健康），删 HTTP run/status/tail 主路径。详见 `refactor/00-redis-streams-agent-communication.md`、`phases/phase-1.5/00-brief.md` |
 | 2 | Docker 长连接的"定时"语义（启新容器 vs 发指令） | `02-gap` §2.3 | 待定（阶段3 前定） |
-| 3 | JS 文案 i18n 策略 | `04-gap` §4 | 已定：Vue SPA 用 vue-i18n，后端返回 message_key/code |
-| 4 | Web 部署 | `06-frontend` §9 | 已定：不内置 nginx；反代用户可选；Web 以独立 Vue/Vite 容器运行 |
+| 3 | JS 文案 i18n 策略 | `04-gap` §4 | 已定：SPA 用 react-i18next（阶段 2.1 起，原 vue-i18n），后端返回 message_key/code |
+| 4 | Web 部署 | `06-frontend` §9 | 已定：不内置 nginx；反代用户可选；前端为 Next.js 静态导出产物，由 dopilot-server 托管（无独立 Web 容器/Node 生产运行时） |
 | 5 | token 形式 | `06-frontend` §9 | 已定：服务端签发 opaque token，无 refresh token |
 | 6 | 容器持久化卷边界（哪些目录随卷、哪些可清） | `08-docker` | 已定：PostgreSQL 数据卷 + `/server-data/logs` + `/agent-data` 持久化；构建缓存/临时目录可清 |
 

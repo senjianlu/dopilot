@@ -1,7 +1,8 @@
 """Application factory + ``run()`` entrypoint.
 
-``create_app`` mounts ``/api/v1``, serves the bundled web UI when present,
-enables CORS for the Vite dev origins,
+``create_app`` mounts ``/api/v1``, serves the bundled Next static-export web UI
+when present (one HTML file per route; no SPA always-index fallback),
+enables CORS for the Next dev origin,
 registers the global :class:`ApiError` -> error-envelope handler, attaches the
 in-memory SSE :class:`SubscriptionManager`, and installs a lifespan that builds
 the async engine/session factory plus the phase-1.5 Redis runtime (command
@@ -41,9 +42,12 @@ from .redis.dispatcher import CommandDispatcher
 from .redis.reconcile import RedisReconcileLoop
 from .scheduler.runner import ScheduleRunner, build_schedule_runner
 
+# Dev-only browser origins. Production is same-origin (the server hosts the
+# exported static web assets), so CORS only matters when a developer runs the
+# Next dev server (default :3000) against a separately running server.
 CORS_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
 DEFAULT_WEB_DIST = "/app/web"
 
@@ -193,19 +197,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(api_v1_router)
     web_dist = _web_dist_path()
     if web_dist is not None:
+        not_found_page = web_dist / "404.html"
+
+        def _resolve_web_file(path: str) -> Path | None:
+            """Map a request path to an exported Next static file, or None.
+
+            Next ``output: export`` with ``trailingSlash: true`` emits one HTML
+            file per route at ``<route>/index.html`` (plus hashed assets under
+            ``_next/``). Resolution order: a direct file first (assets, ``*.html``,
+            ``index.txt``), then the ``<route>/index.html`` trailing-slash form,
+            then a flat ``<route>.html`` for robustness. There is NO SPA
+            always-``index.html`` fallback (that would mask real 404s).
+            """
+            asset = _file_under(web_dist, path)
+            if asset is not None:
+                return asset
+            trimmed = path.strip("/")
+            if trimmed:
+                for candidate in (f"{trimmed}/index.html", f"{trimmed}.html"):
+                    resolved = _file_under(web_dist, candidate)
+                    if resolved is not None:
+                        return resolved
+            return None
 
         @app.get("/", include_in_schema=False)
         async def _serve_web_index() -> FileResponse:
             return FileResponse(web_dist / "index.html")
 
         @app.get("/{path:path}", include_in_schema=False)
-        async def _serve_web_asset_or_spa(path: str) -> FileResponse:
+        async def _serve_web_asset_or_route(path: str) -> FileResponse:
+            # /api/* is API-only and must never resolve to a web asset.
             if path == "api" or path.startswith("api/"):
                 raise HTTPException(status_code=404)
-            asset = _file_under(web_dist, path)
-            if asset is not None:
-                return FileResponse(asset)
-            return FileResponse(web_dist / "index.html")
+            resolved = _resolve_web_file(path)
+            if resolved is not None:
+                return FileResponse(resolved)
+            # Unknown non-API route -> exported 404 page (not an SPA always-200).
+            if not_found_page.is_file():
+                return FileResponse(not_found_page, status_code=404)
+            raise HTTPException(status_code=404)
 
     return app
 

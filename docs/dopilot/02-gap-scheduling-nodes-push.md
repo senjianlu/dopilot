@@ -9,6 +9,8 @@
 
 > **【scrapydweb 参考边界】** scrapydweb 仅作**功能层/行为参考**与**测试 oracle**；其代码写法、目录结构、模块划分、命名、依赖、配置形态**一律不得作为 dopilot 的设计依据**。dopilot 为 greenfield、按 `apps/`+`packages/` 自有领域 structure-first 设计（权威布局见 `05-dev-setup-and-known-issues.md` §1），**不对 scrapydweb 做改名/git mv**。本文所有 scrapydweb `file:line` 均为**行为参考引用**而非 dopilot 的待改文件；前端为 SPA greenfield（`apps/web`，直连 `/api/v1`），**无 Jinja 新旧共存式 strangler**；dopilot 自带 `migrations/`（**裸 Alembic**，SQLAlchemy + Alembic，非 Flask-Migrate——FastAPI 无 Flask app），模型演进走迁移，**不继承** scrapydweb「无 Alembic、手工 ALTER、删库重建」的形态；**PostgreSQL 为唯一库**（替换 scrapydweb 多 SQLite），APScheduler jobstore 也落 PG。详见 `00-requirements.md` 决策表。
 
+> **⚠️【历史文档 —— 阶段 2.1 已迁移前端技术栈】** 本文部分内容按**阶段 2.1 之前**的原始前端设计（**Vue 3 + Element Plus + Vite + vue-i18n + Pinia**）撰写，仅作历史/需求参考保留，**不再代表当前实现**。当前前端技术栈为 **Next.js（静态导出 `output: export` + `trailingSlash`）+ shadcn/ui（slate 主题、明暗模式）+ Recharts + react-i18next + TypeScript**，纯静态产物由 dopilot-server 托管（无 `next start`/Node 生产运行时/独立 Web 容器），API/SSE 契约不变；任务详情路由为 `/tasks/detail?id=<id>`，组件源码在 `apps/web/components`、页面在 `apps/web/app`。权威说明见 `docs/dopilot/06-frontend-rewrite.md` 顶部对照表与 `docs/phases/phase-2.1/01-claude-implementation-report.md`。下文涉及前端框架、目录路径、开发服务器、部署与静态资源策略的旧指引，一律以阶段 2.1 为准。
+
 ---
 
 ## 0. 一页速览（TL;DR）
@@ -280,7 +282,7 @@ execute_task(): candidates = json.loads(task.selected_nodes)   (execute_task.py:
  ├─ B-2: 原生支持 cron + interval + date trigger
  │       · apps/server/.../scheduler/ + services/ 按提交 trigger 类型组装作业参数
  │       · apps/server/.../models/ 设计 Task 含 interval 字段(weeks/days/hours/minutes/seconds)+run_date，cron 字段可空
- │       · apps/web/src/pages 调度页提供 trigger 类型选择 + 字段切换
+ │       · apps/web 调度页提供 trigger 类型选择 + 字段切换（历史：apps/web/src/pages；阶段 2.1 起 Next.js 静态导出 + shadcn/ui，页面在 apps/web/app、组件在 apps/web/components）
  │       · 编辑回填(repositories/services + /api/v1)按 trigger 类型读取
  ├─ B-3: Task 加 node_strategy(默认 all)；scheduler 触发回调按策略归约(random→random.choice)
  │       · nodes 模型自设计起以独立 nodes 表 + 稳定 agent_id 为一等公民，selected_nodes 存稳定 ID
@@ -320,9 +322,9 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 │   │   │   ├── runners/                   # base.py scrapyd.py script.py docker.py
 │   │   │   ├── logs/  workspace/  config/  main.py   # logs: tail 本机 scrapyd job.log,agent 主动 XADD 增量到 dopilot:server:logs(无 WS、server 消费后落盘);state/executions/{attempt_id}.json 两阶段 CAS(reserved/started)持久化 execution_id↔scrapyd job_id↔log_path 映射(重启恢复/幂等)
 │   │   ├── tests/  pyproject.toml
-│   └── web/                              # Vue3 + Element Plus + Vite + TS SPA(greenfield,直连 /api/v1)
-│       ├── src/{api,pages,components,layouts,stores,router,i18n}/  public/
-│       ├── package.json  vite.config.ts
+│   └── web/                              # SPA(greenfield,直连 /api/v1)【历史:Vue3+Element Plus+Vite;阶段 2.1 起 Next.js 静态导出(output: export+trailingSlash)+shadcn/ui+Recharts+react-i18next,页面在 app/、组件在 components/】
+│       ├── app/  components/  public/    # 【历史:src/{api,pages,components,layouts,stores,router,i18n}/】
+│       ├── package.json  next.config.*   # 【历史:vite.config.ts】
 ├── packages/
 │   ├── protocol/                         # server↔agent 共享协议 schema(protocol/python/;前端也消费可并列 protocol/typescript/)
 │   └── client/                           # 可选:server→agent 客户端 SDK
@@ -337,7 +339,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 |---|---|---|
 | `apps/server/dopilot_server/scheduler/` + `services/` | B-2/B-3 | 按提交的 trigger 类型组装 cron/interval/date 作业参数并写入 `node_strategy`；trigger 不被硬编码；创建/编辑总装配落库后向调度器登记作业；即时运行按策略决定下发集合。行为参考：`schedule.py:291` 表单组包、`schedule.py:189/300` 的 `trigger='cron'` 硬编码陷阱、`schedule.py:416` 落库事务、`schedule.py:362-373` 即时下发、`add_update_task`(447) `**task_data` 组包语义 |
 | `apps/server/dopilot_server/models/` + `migrations/` | B-2/B-3/A | 用 dopilot ORM + 迁移设计 Task/TaskResult/TaskJobResult：含 `trigger`、`timezone`、interval 字段(`weeks/days/hours/minutes/seconds`)、`run_date`、`node_strategy`(默认 `all`)、`task_type`；cron 与 scrapy 专有字段(`project/version/spider/jobid`)在非 scrapy 场景可空；`selected_nodes` 存稳定节点标识。模型演进全部走迁移。行为参考：`models.py:94`(trigger)、`models.py:117`(timezone)、`models.py:105-112`(cron 列)、`models.py:98-101`(scrapy 专有列)、`models.py:103`(selected_nodes) |
-| `apps/web/src/pages` 调度表单页 + 节点选择组件 | B-2/B-3 | greenfield SPA(Element Plus)：trigger 类型选择(cron\|interval\|date)与对应字段块、interval/date 输入、`node_strategy` 控件；经 `src/api` 调 `/api/v1` 提交，编辑回填读 `/api/v1`。行为参考(需覆盖的功能点对照)：scrapydweb `schedule.html`/`include_multinodes_checkboxes.html` 的字段集合 checkCurrent/checkAll/`checked_amount` 等 |
+| `apps/web` 调度表单页 + 节点选择组件 | B-2/B-3 | greenfield SPA：trigger 类型选择(cron\|interval\|date)与对应字段块、interval/date 输入、`node_strategy` 控件；调 `/api/v1` 提交，编辑回填读 `/api/v1`。（历史：`apps/web/src/pages` + Element Plus + `src/api`；阶段 2.1 起 Next.js 静态导出 + shadcn/ui，页面在 `apps/web/app`、组件在 `apps/web/components`，API 客户端随之迁移。）行为参考(需覆盖的功能点对照)：scrapydweb `schedule.html`/`include_multinodes_checkboxes.html` 的字段集合 checkCurrent/checkAll/`checked_amount` 等 |
 | `apps/server/dopilot_server/services/` + `api/v1/` (任务管理/状态) | B-2/B-3/B-4 | 任务列表/dump 按 trigger 类型读取(Cron/Interval/Date 各自字段)，状态推导依赖 `next_run_time` 对三类 trigger 通用；展示 `node_strategy`；即时推送入口。行为参考：`tasks.py:380-414`(dump)、`tasks.py:166-188`(状态推导通用)、`tasks.py:353-362`(`fire_task` 即时触发思路) |
 | `apps/server/dopilot_server/executors/{base,scrapyd,script,docker}.py` | B-2/B-3/B-4/A | 调度回调解析 `selected_nodes` 后按 `node_strategy` 归约(random→`random.choice`)，按 `task_type` 经 `EXECUTOR_REGISTRY` 分派 `BaseExecutor` 实现，统一 `(status_code, dict)` 契约。**【superseded-by `docs/refactor/00-redis-streams-agent-communication.md`】缝① 保留、下发/取状态实现翻转**：`run_on_node` 由「server `POST /run` agent」改为「事务内写 `command_outbox` → `XADD` run command」；`get_status` 由「轮询 agent status」改为「消费 `agent-events` 的 `attempt.*` 事件」；不再「server↔agent 走 HTTP、无消息队列/回调」。行为参考：`execute_task.py:150/168`(回调与节点解析)、`execute_task.py:75-104`(下发)、`execute_task.py:44-54`(`nodes_to_retry` 重试一次) |
 | `apps/server/dopilot_server/nodes/` | B-3 | 建立 `nodes` 表，节点以稳定 `agent_id` 为一等公民；选择/下发按稳定 ID 解析，不存在按 1-based 序号索引并行列表的取值方式。行为参考(要规避的坑)：`baseview.py:189-197`(node-1 索引四并行列表)、`baseview.py:257-262`(`get_selected_nodes`)、`check_app_config.py:388`(`sorted(set())` 序号漂移) |

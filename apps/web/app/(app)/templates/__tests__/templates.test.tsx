@@ -1,0 +1,147 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { renderWithProviders } from "@/lib/test/render";
+import type { BuildArtifact, ExecutionTemplate, NodeInfo } from "@/lib/api/types";
+
+const push = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push, replace: vi.fn() }),
+  usePathname: () => "/templates",
+}));
+
+const listTemplates = vi.fn();
+const createTemplate = vi.fn();
+const runTemplate = vi.fn();
+const deleteTemplate = vi.fn();
+vi.mock("@/lib/api/templates", () => ({
+  listTemplates: () => listTemplates(),
+  createTemplate: (p: unknown) => createTemplate(p),
+  runTemplate: (id: string) => runTemplate(id),
+  deleteTemplate: (id: string) => deleteTemplate(id),
+}));
+const listBuildArtifacts = vi.fn();
+vi.mock("@/lib/api/artifacts", () => ({
+  listBuildArtifacts: () => listBuildArtifacts(),
+}));
+const listNodes = vi.fn();
+vi.mock("@/lib/api/nodes", () => ({ listNodes: () => listNodes() }));
+
+import TemplatesPage from "@/app/(app)/templates/page";
+
+const template: ExecutionTemplate = {
+  id: "tpl-1",
+  name: "demo-template",
+  description: null,
+  build_artifact_id: "art-1",
+  artifact_type: "scrapy",
+  project: "demo",
+  version: "v1",
+  command: "scrapy crawl phase1",
+  node_strategy: "all",
+  node_ids: [],
+  created_at: null,
+  updated_at: null,
+};
+
+const artifact: BuildArtifact = {
+  id: "art-1",
+  artifact_type: "scrapy",
+  package_format: "egg",
+  name: "demo",
+  filename: "demo.egg",
+  content_hash: "h",
+  size_bytes: 1,
+  project: "demo",
+  version: "v1",
+  spiders: ["phase1", "phase2"],
+  fetch_path: null,
+  runnable: true,
+  created_at: null,
+  updated_at: null,
+};
+
+const node: NodeInfo = {
+  id: "node-1",
+  agent_id: "agent-1",
+  endpoint: "http://a1:6800",
+  status: "healthy",
+  capabilities: { scrapy: true },
+  health: {},
+  last_seen_at: null,
+  scheduling_enabled: true,
+  scheduling_disabled_at: null,
+  deleted_at: null,
+};
+
+beforeEach(() => {
+  push.mockReset();
+  listTemplates.mockReset().mockResolvedValue([template]);
+  createTemplate.mockReset().mockResolvedValue(template);
+  runTemplate.mockReset().mockResolvedValue({ task_id: "task-9", status: "queued" });
+  deleteTemplate.mockReset().mockResolvedValue(undefined);
+  listBuildArtifacts.mockReset().mockResolvedValue([artifact]);
+  listNodes.mockReset().mockResolvedValue([node]);
+});
+
+afterEach(() => vi.clearAllMocks());
+
+describe("TemplatesPage", () => {
+  it("renders templates and their command", async () => {
+    renderWithProviders(<TemplatesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("template-name-demo-template"),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByTestId("template-command-demo-template"),
+    ).toHaveTextContent("scrapy crawl phase1");
+  });
+
+  it("defaults the command from the artifact's first spider on open", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TemplatesPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("template-create")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId("template-create"));
+    await waitFor(() =>
+      expect(screen.getByTestId("template-dialog")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("template-command-input")).toHaveValue(
+      "scrapy crawl phase1",
+    );
+  });
+
+  it("runs a template and navigates to the created task detail route", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TemplatesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("template-run-demo-template"),
+      ).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId("template-run-demo-template"));
+    await waitFor(() => expect(runTemplate).toHaveBeenCalledWith("tpl-1"));
+    expect(push).toHaveBeenCalledWith("/tasks/detail?id=task-9");
+  });
+
+  it("deletes a template only after confirmation", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TemplatesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("template-name-demo-template"),
+      ).toBeInTheDocument(),
+    );
+    // Cancel first: no delete.
+    await user.click(screen.getByText("Delete"));
+    await user.click(screen.getByTestId("confirm-cancel"));
+    expect(deleteTemplate).not.toHaveBeenCalled();
+    // Confirm: deletes.
+    await user.click(screen.getByText("Delete"));
+    await user.click(screen.getByTestId("confirm-accept"));
+    await waitFor(() => expect(deleteTemplate).toHaveBeenCalledWith("tpl-1"));
+  });
+});
