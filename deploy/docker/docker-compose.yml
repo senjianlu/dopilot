@@ -1,21 +1,54 @@
-# dopilot local stack: db + unified dopilot image running server/agent roles.
+# dopilot default deployment stack: pulls the CI-built unified dopilot image
+# (server / agent / migrate roles selected by the container command).
 #
-# This compose file lives in deploy/docker, so build contexts point at the repo
-# ROOT via context: ../.. (Dockerfile expects the repo root as its context).
+# Quick deploy — no local build required:
+#   cd deploy/docker
+#   docker compose pull
+#   docker compose up -d
+#
+# The image defaults to ${DOPILOT_IMAGE:-rabbir/dopilot:latest} (Docker Hub
+# namespace rabbir; unrelated to the git origin senjianlu). To build the image
+# from local source instead of pulling, layer the build override:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
 # The server role serves the bundled Web SPA from the same container. Single
 # server replica only (hard constraint: in-process scheduler + in-memory
 # pull/SSE tables cannot be replicated).
 #
-# Image namespace is rabbir (Docker Hub); unrelated to the git origin senjianlu.
-# server, agent, and migrate all use the same image; command selects the role.
+# Default configs are BAKED INTO the image at /app/configs/server.toml and
+# /app/configs/agent.toml (see deploy/docker/Dockerfile), so the default path
+# needs no host config mounts. To customize, mount your own TOML over those
+# paths in a compose override.
+#
+# The stack runs PostgreSQL, Redis, a one-shot migration, three Scrapy agents,
+# and one server.
 
-x-dopilot-build: &dopilot-build
-  context: ../..
-  dockerfile: deploy/docker/Dockerfile
-  args:
-    DOPILOT_PY_BASE_IMAGE: ${DOPILOT_PY_BASE_IMAGE:-rabbir/dopilot-py-base:local}
-    DOPILOT_WEB_BASE_IMAGE: ${DOPILOT_WEB_BASE_IMAGE:-rabbir/dopilot-web-base:local}
+# Shared agent definition. The three agents differ only by AGENT_ID + data
+# volume; the agent config loader lets AGENT_ID / AGENT_WORKDIR / DOPILOT_REDIS_URL
+# env vars override the baked TOML. Each advertises endpoint=None, so its node
+# endpoint becomes the distinct `agent://{agent_id}` => three distinct nodes.
+x-agent: &agent
+  image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
+  command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
+  init: true
+  depends_on:
+    redis:
+      condition: service_healthy
+  # /health is unauthenticated and reports the scrapyd subprocess status under
+  # detail.scrapyd.running. We only gate on HTTP 200 here (service_healthy);
+  # smoke separately asserts detail.scrapyd.running == true. Uses python3 (the
+  # image has no curl) and a short timeout so a hung agent fails fast.
+  healthcheck:
+    test:
+      - "CMD"
+      - "python3"
+      - "-c"
+      - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:6800/health', timeout=3).status==200 else 1)"
+    interval: 5s
+    timeout: 5s
+    retries: 20
+    start_period: 30s
+  restart: unless-stopped
 
 services:
   db:
@@ -63,12 +96,10 @@ services:
     restart: unless-stopped
 
   # One-shot migration step: brings an empty database up to head before the
-  # server starts. Reuses the server image (same build + tag, built once) and
-  # overrides its entrypoint. Keeps migrations an explicit, observable step;
-  # the server process never runs create_all().
+  # server starts. Reuses the unified image and overrides its entrypoint. Keeps
+  # migrations an explicit, observable step; the server never runs create_all().
   migrate:
-    build: *dopilot-build
-    image: rabbir/dopilot:latest
+    image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
     command: ["alembic", "upgrade", "head"]
     environment:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
@@ -77,48 +108,44 @@ services:
         condition: service_healthy
     restart: "no"
 
-  agent:
-    build: *dopilot-build
-    image: rabbir/dopilot:latest
-    command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
-    init: true
+  scrapy-agent-1:
+    <<: *agent
     environment:
       DOPILOT_CONFIG: /app/configs/agent.toml
       AGENT_ID: scrapy-agent-1
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
-    depends_on:
-      redis:
-        condition: service_healthy
     volumes:
-      - dopilot-agent-data:/agent-data
-      - ../../configs/agent.example.toml:/app/configs/agent.toml:ro
+      - dopilot-agent1-data:/agent-data
     ports:
-      # ONLY the agent HTTP API is published. The internal scrapyd port (6801)
-      # is NEVER exposed to the host in the committed compose. For local
-      # debugging only, you may temporarily uncomment the line below — do NOT
-      # commit it (scrapyd has no auth and must stay container-internal):
-      #   - "6801:6801"
+      # ONLY scrapy-agent-1 publishes its HTTP API (6800) for smoke/debug. The
+      # internal scrapyd port (6801) is NEVER published to the host (scrapyd has
+      # no auth and must stay container-internal). scrapy-agent-2/3 keep all
+      # ports container-internal.
       - "6800:6800"
-    # /health is unauthenticated and reports the scrapyd subprocess status under
-    # detail.scrapyd.running. We only gate on HTTP 200 here (service_healthy);
-    # the smoke separately asserts detail.scrapyd.running == true. Uses python3
-    # (the image has no curl) and a short timeout so a hung agent fails fast.
-    healthcheck:
-      test:
-        - "CMD"
-        - "python3"
-        - "-c"
-        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:6800/health', timeout=3).status==200 else 1)"
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 30s
-    restart: unless-stopped
+
+  scrapy-agent-2:
+    <<: *agent
+    environment:
+      DOPILOT_CONFIG: /app/configs/agent.toml
+      AGENT_ID: scrapy-agent-2
+      AGENT_WORKDIR: /agent-data
+      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+    volumes:
+      - dopilot-agent2-data:/agent-data
+
+  scrapy-agent-3:
+    <<: *agent
+    environment:
+      DOPILOT_CONFIG: /app/configs/agent.toml
+      AGENT_ID: scrapy-agent-3
+      AGENT_WORKDIR: /agent-data
+      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+    volumes:
+      - dopilot-agent3-data:/agent-data
 
   server:
-    build: *dopilot-build
-    image: rabbir/dopilot:latest
+    image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
     command: ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
     init: true
     environment:
@@ -127,8 +154,6 @@ services:
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
     volumes:
       - dopilot-server-data:/server-data
-      # compose-network config: db/agent reached by service name (not localhost)
-      - ../../configs/server.docker.toml:/app/configs/server.toml:ro
     ports:
       - "5000:5000"
     # /api/v1/health is always HTTP 200 (it reports DB reachability in the body,
@@ -152,7 +177,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      agent:
+      scrapy-agent-1:
+        condition: service_healthy
+      scrapy-agent-2:
+        condition: service_healthy
+      scrapy-agent-3:
         condition: service_healthy
     restart: unless-stopped
 
@@ -160,4 +189,6 @@ volumes:
   dopilot-db:
   dopilot-redis:
   dopilot-server-data:
-  dopilot-agent-data:
+  dopilot-agent1-data:
+  dopilot-agent2-data:
+  dopilot-agent3-data:

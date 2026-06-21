@@ -1,0 +1,41 @@
+# Local source-build override for docker-compose.yml.
+#
+# The base file PULLS the prebuilt rabbir/dopilot image. Layer this override to
+# BUILD the unified image from local source instead (contributors / smoke
+# tests):
+#
+#   cd deploy/docker
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# All image-bearing services (migrate + the three agents + server) build the
+# same unified image from the repo root (context: ../..). The base file's
+# `image:` tag is reused as the built tag, so compose builds once and the
+# services share the result.
+#
+# Build args default to the PUBLIC CI base images (rabbir/dopilot-py-base:latest,
+# rabbir/dopilot-web-base:latest), so no local base-image build is required.
+# Override DOPILOT_PY_BASE_IMAGE / DOPILOT_WEB_BASE_IMAGE in the environment to
+# point at other (e.g. locally built or hash-pinned) base images.
+
+x-dopilot-build: &dopilot-build
+  context: ../..
+  dockerfile: deploy/docker/Dockerfile
+  args:
+    DOPILOT_PY_BASE_IMAGE: ${DOPILOT_PY_BASE_IMAGE:-rabbir/dopilot-py-base:latest}
+    DOPILOT_WEB_BASE_IMAGE: ${DOPILOT_WEB_BASE_IMAGE:-rabbir/dopilot-web-base:latest}
+
+services:
+  migrate:
+    build: *dopilot-build
+
+  scrapy-agent-1:
+    build: *dopilot-build
+
+  scrapy-agent-2:
+    build: *dopilot-build
+
+  scrapy-agent-3:
+    build: *dopilot-build
+
+  server:
+    build: *dopilot-build

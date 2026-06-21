@@ -44,7 +44,7 @@ fail behind approval. This is appropriate for:
 
 - `.venv/bin/pytest`, `.venv/bin/ruff`, `python -m pytest`;
 - `corepack pnpm --filter web test` / `build` and other package scripts;
-- `docker compose` / `make compose-smoke` when the brief requires compose smoke;
+- `docker compose` / `scripts/smoke-phase1.sh` when the brief requires compose smoke;
 - browser automation or screenshot checks when frontend behavior is in scope.
 
 Prefer scoped allowlists for those command families, but do not make the

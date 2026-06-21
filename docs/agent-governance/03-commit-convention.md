@@ -58,7 +58,7 @@ dopilot is a monorepo; the scope names the area touched:
 | `ci`       | CI workflows                                                   |
 | `configs`  | `configs/`                                                     |
 | `docs`     | docs tree (as a *scope* paired with a non-`docs` type)         |
-| `repo`     | root tooling / meta (Makefile, pyproject, pnpm workspace)      |
+| `repo`     | root tooling / meta (pyproject, pnpm workspace, scripts)       |
 
 Omit the scope when a change is genuinely cross-cutting (e.g. a repo-wide
 scaffold). Use **one** scope; a change spanning many areas usually wants to be

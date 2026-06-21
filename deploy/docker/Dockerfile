@@ -13,8 +13,8 @@
 # upstream scrapydweb code; `.dockerignore` keeps a defensive `reference/`
 # exclusion even though no local snapshot exists in the tree anymore.
 
-ARG DOPILOT_PY_BASE_IMAGE=rabbir/dopilot-py-base:local
-ARG DOPILOT_WEB_BASE_IMAGE=rabbir/dopilot-web-base:local
+ARG DOPILOT_PY_BASE_IMAGE=rabbir/dopilot-py-base:latest
+ARG DOPILOT_WEB_BASE_IMAGE=rabbir/dopilot-web-base:latest
 
 # ---- Stage: build web -----------------------------------------------------
 FROM ${DOPILOT_WEB_BASE_IMAGE} AS web-build
@@ -105,6 +105,14 @@ PY
 # Alembic assets so the same image can run `alembic upgrade head`.
 COPY apps/server/alembic.ini ./alembic.ini
 COPY apps/server/migrations ./migrations
+
+# Default configs baked into the image so the prebuilt image runs with no host
+# config mounts. server reads /app/configs/server.toml; agent reads
+# /app/configs/agent.toml (compose env vars override per-agent fields like
+# AGENT_ID). Mount your own TOML over these paths to customize.
+RUN mkdir -p /app/configs
+COPY configs/server.docker.toml ./configs/server.toml
+COPY configs/agent.example.toml ./configs/agent.toml
 
 # Built Next.js static export. dopilot_server.app serves this directory (one
 # HTML file per route + _next assets + 404.html) when index.html is present,

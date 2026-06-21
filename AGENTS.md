@@ -94,7 +94,7 @@ cd deploy/docker && docker compose config
 For phase-1 Scrapy end-to-end behavior:
 
 ```bash
-make compose-smoke
+scripts/smoke-phase1.sh
 ```
 
 ## User Involvement Boundary

@@ -27,12 +27,20 @@ Prerequisites: Python **3.12**, Node **22+** with Corepack (`corepack pnpm …`)
 and Docker (for PostgreSQL and Redis).
 
 ```bash
-make install            # Python packages (protocol, then server/agent)
+# Python packages (protocol first; server/agent depend on it)
+python3.12 -m venv .venv
 source .venv/bin/activate
+pip install -U pip wheel
+pip install -e ./packages/protocol
+pip install -e "./apps/server[dev]"
+pip install -e "./apps/agent[dev]"
+
 scripts/dev-db.sh up    # PostgreSQL
 docker run -d --rm --name dopilot-redis-dev -p 6379:6379 \
   redis:7 redis-server --appendonly yes
-make migrate            # apply migrations (server owns the schema)
+
+# apply migrations (server owns the schema)
+(cd apps/server && DOPILOT_CONFIG=../../configs/server.example.toml alembic upgrade head)
 ```
 
 See [`README.md`](README.md) (Local development) for running the server, agent,
@@ -51,10 +59,11 @@ corepack pnpm --filter web build    # web static export build
 cd deploy/docker && docker compose config
 ```
 
-For Scrapy end-to-end behavior:
+For Scrapy end-to-end behavior (builds the image from local source via the
+compose build override; no `make` required):
 
 ```bash
-make compose-smoke
+scripts/smoke-phase1.sh
 ```
 
 Do not mark work complete if the tests that cover it did not run — record the
