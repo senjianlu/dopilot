@@ -69,8 +69,8 @@ export interface NodesResponse {
 // node_strategy decides which healthy agents a task targets.
 export type NodeStrategy = "all" | "random" | "selected";
 
-// Phase 1.8 only the scrapy artifact type is runnable.
-export type ArtifactType = "scrapy";
+// Runnable artifact types: scrapy (phase 1.8) + python_wheel (phase 2b).
+export type ArtifactType = "scrapy" | "python_wheel";
 
 export type TaskStatus =
   | "queued"
@@ -102,6 +102,8 @@ export interface BuildArtifact {
   project: string | null;
   version: string | null;
   spiders: string[];
+  // Phase 2b: the wheel distribution name (python_wheel artifacts only).
+  distribution?: string | null;
   fetch_path: string | null;
   runnable: boolean;
   created_at: string | null;
@@ -116,6 +118,9 @@ export interface UploadEggResponse {
   artifact: BuildArtifact;
   spiders: string[];
 }
+
+// The wheel upload response mirrors the egg upload shape (spiders is empty).
+export type UploadWheelResponse = UploadEggResponse;
 
 // Result of creating + dispatching a task (template run / schedule trigger).
 export interface TaskRunResponse {
@@ -221,7 +226,9 @@ export interface ExecutionTemplate {
   artifact_type: string;
   project: string | null;
   version: string | null;
-  // Phase 1.8.1: command-first. The authoritative `scrapy crawl ...` command.
+  // Command-first input. For scrapy this is a `scrapy crawl ...` command; for
+  // python_wheel (phase 2b) it is a free-form shell command (sent to the agent
+  // as `shell_command`). `artifact_type` selects the interpretation.
   command: string | null;
   node_strategy: NodeStrategy;
   node_ids: string[];

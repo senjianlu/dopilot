@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..artifacts.scrapy_store import ScrapyArtifactManifest, ScrapyArtifactStore
+from ..artifacts.wheel_store import WheelArtifactManifest, WheelArtifactStore
 from ..errors import ApiError
 from ..models.execution import BuildArtifact
 from . import states
@@ -32,12 +33,25 @@ def scrapy_fetch_path(sha256: str) -> str:
     return f"/api/v1/artifacts/scrapy/{sha256}/egg"
 
 
+def wheel_fetch_path(sha256: str) -> str:
+    """The server wheel-download path an agent uses to fetch a Python wheel."""
+    return f"/api/v1/artifacts/python_wheel/{sha256}/wheel"
+
+
 def _scrapy_metadata(manifest: ScrapyArtifactManifest) -> dict[str, Any]:
     return {
         "project": manifest.project,
         "version": manifest.version,
         "spiders": list(manifest.spiders),
         "fetch_path": scrapy_fetch_path(manifest.sha256),
+    }
+
+
+def _wheel_metadata(manifest: WheelArtifactManifest) -> dict[str, Any]:
+    return {
+        "distribution": manifest.distribution,
+        "version": manifest.version,
+        "fetch_path": wheel_fetch_path(manifest.sha256),
     }
 
 
@@ -97,6 +111,56 @@ async def reconcile_scrapy_store(
         )
         if existing is None:
             await upsert_scrapy(session, manifest)
+            changed = True
+    if changed:
+        await session.commit()
+
+
+async def upsert_wheel(
+    session: AsyncSession, manifest: WheelArtifactManifest
+) -> BuildArtifact:
+    """Create or return the ``python_wheel``/``wheel`` artifact for ``manifest``.
+
+    Deduped on ``("python_wheel", sha256)`` (phase 2b). An existing row's
+    display metadata is refreshed from the manifest. The caller commits.
+    """
+    existing = await get_by_type_hash(
+        session, states.ARTIFACT_PYTHON_WHEEL, manifest.sha256
+    )
+    metadata = _wheel_metadata(manifest)
+    if existing is not None:
+        existing.name = manifest.distribution or manifest.filename
+        existing.filename = manifest.filename
+        existing.size_bytes = manifest.size_bytes
+        existing.artifact_metadata = metadata
+        return existing
+    artifact = BuildArtifact(
+        id=new_id(),
+        artifact_type=states.ARTIFACT_PYTHON_WHEEL,
+        package_format=states.ARTIFACT_PACKAGE_FORMAT[
+            states.ARTIFACT_PYTHON_WHEEL
+        ],
+        name=manifest.distribution or manifest.filename,
+        filename=manifest.filename,
+        content_hash=manifest.sha256,
+        size_bytes=manifest.size_bytes,
+        artifact_metadata=metadata,
+    )
+    session.add(artifact)
+    return artifact
+
+
+async def reconcile_wheel_store(
+    session: AsyncSession, store: WheelArtifactStore
+) -> None:
+    """Backfill ``build_artifacts`` from on-disk wheel manifests (idempotent)."""
+    changed = False
+    for manifest in store.list():
+        existing = await get_by_type_hash(
+            session, states.ARTIFACT_PYTHON_WHEEL, manifest.sha256
+        )
+        if existing is None:
+            await upsert_wheel(session, manifest)
             changed = True
     if changed:
         await session.commit()
@@ -163,6 +227,7 @@ def artifact_snapshot(artifact: BuildArtifact) -> dict[str, Any]:
         "size_bytes": artifact.size_bytes,
         "project": meta.get("project"),
         "version": meta.get("version"),
+        "distribution": meta.get("distribution"),
         "spiders": list(meta.get("spiders") or []),
         "fetch_path": meta.get("fetch_path"),
     }
@@ -180,6 +245,7 @@ def build_artifact_view(artifact: BuildArtifact) -> dict[str, Any]:
         "size_bytes": artifact.size_bytes,
         "project": meta.get("project"),
         "version": meta.get("version"),
+        "distribution": meta.get("distribution"),
         "spiders": list(meta.get("spiders") or []),
         "fetch_path": meta.get("fetch_path"),
         "runnable": artifact.artifact_type in states.RUNNABLE_ARTIFACT_TYPES,

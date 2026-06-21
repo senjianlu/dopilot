@@ -49,9 +49,9 @@ class AttemptState(BaseModel):
     task_id: str
     execution_id: str
     scrapyd_job_id: str = ""
-    project: str
+    project: str = ""
     version: str | None = None
-    spider: str
+    spider: str = ""
     log_path: str = ""
     phase: str = "started"
     result: str | None = None
@@ -61,6 +61,15 @@ class AttemptState(BaseModel):
     created_at: str = Field(default_factory=_utcnow_iso)
     updated_at: str = Field(default_factory=_utcnow_iso)
     canceled: bool = False
+
+    # --- phase 2b: additive runner/process fields (default keeps Scrapy state
+    # files loading unchanged; ``runner_type`` defaults to ``scrapy``). -------
+    runner_type: str = "scrapy"
+    pid: int | None = None
+    pgid: int | None = None
+    workspace_path: str = ""
+    install_path: str = ""
+    shell_command: str = ""
 
 
 class StateStore:
@@ -96,16 +105,20 @@ class StateStore:
         *,
         task_id: str,
         execution_id: str,
-        project: str,
-        spider: str,
+        project: str = "",
+        spider: str = "",
         version: str | None = None,
+        runner_type: str = "scrapy",
+        shell_command: str = "",
     ) -> AttemptState | None:
         """Atomically reserve an execution (``O_CREAT|O_EXCL``) before spawning.
 
         Returns the reserved state, or ``None`` if a state file already exists
         (a duplicate command / lost race / cross-restart re-delivery). This is
         the cross-restart "don't start the same execution twice" guard; the caller
-        promotes it to ``started`` once scrapyd has the job.
+        promotes it to ``started`` once the work is spawned. ``runner_type`` /
+        ``shell_command`` carry the phase-2b Python-wheel context (defaults keep
+        Scrapy callers unchanged).
         """
         self._dir.mkdir(parents=True, exist_ok=True)
         final = self.path_for(execution_id)
@@ -116,6 +129,8 @@ class StateStore:
             spider=spider,
             version=version,
             phase="reserved",
+            runner_type=runner_type,
+            shell_command=shell_command,
         )
         payload = json.dumps(state.model_dump(), ensure_ascii=False)
         try:
@@ -137,6 +152,34 @@ class StateStore:
             return None
         state.phase = "started"
         state.scrapyd_job_id = scrapyd_job_id
+        state.log_path = log_path
+        return self.write(state)
+
+    def promote_started_wheel(
+        self,
+        execution_id: str,
+        *,
+        pid: int,
+        pgid: int,
+        workspace_path: str,
+        install_path: str,
+        log_path: str,
+    ) -> AttemptState | None:
+        """Promote a reserved Python-wheel execution to ``started`` (phase 2b).
+
+        Records the child ``pid`` / process-group ``pgid`` (for SIGTERM/SIGKILL
+        cancellation), the per-execution ``workspace_path``, the wheel
+        ``install_path`` (its ``site`` dir), and the merged ``log_path`` so the
+        existing :class:`LogPublisher` tails the single ``job.log`` stream.
+        """
+        state = self.read(execution_id)
+        if state is None:
+            return None
+        state.phase = "started"
+        state.pid = pid
+        state.pgid = pgid
+        state.workspace_path = workspace_path
+        state.install_path = install_path
         state.log_path = log_path
         return self.write(state)
 

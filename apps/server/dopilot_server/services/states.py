@@ -47,16 +47,17 @@ TASK_TERMINAL = frozenset(
 )
 
 # ---- build artifact type (core-domain discriminator; phase 1.8) ----
-# Replaces the misleading ``task_type``. Only ``scrapy`` is runnable in 1.8;
-# ``python_wheel`` / ``docker_image`` are reserved type values (not executable).
+# Replaces the misleading ``task_type``. Phase 2b makes ``python_wheel`` runnable
+# (shell-command runner over the agent); ``docker_image`` is still a reserved
+# type value (not executable yet).
 ARTIFACT_SCRAPY = "scrapy"
 ARTIFACT_PYTHON_WHEEL = "python_wheel"
 ARTIFACT_DOCKER_IMAGE = "docker_image"
 ARTIFACT_TYPES = frozenset(
     {ARTIFACT_SCRAPY, ARTIFACT_PYTHON_WHEEL, ARTIFACT_DOCKER_IMAGE}
 )
-# Only these may actually run in phase 1.8.
-RUNNABLE_ARTIFACT_TYPES = frozenset({ARTIFACT_SCRAPY})
+# These may actually run: scrapy (phase 1.8) + python_wheel (phase 2b).
+RUNNABLE_ARTIFACT_TYPES = frozenset({ARTIFACT_SCRAPY, ARTIFACT_PYTHON_WHEEL})
 # Default package_format per artifact type.
 ARTIFACT_PACKAGE_FORMAT = {
     ARTIFACT_SCRAPY: "egg",
@@ -64,9 +65,13 @@ ARTIFACT_PACKAGE_FORMAT = {
     ARTIFACT_DOCKER_IMAGE: "image",
 }
 # Resolved artifact type -> the node capability a dispatch target must advertise.
+# Phase 2b: ``python_wheel`` maps to the ``script`` capability (the runner task
+# type ``python_wheel`` and the node capability ``script`` are deliberately
+# distinct names — capability is what a node advertises, task_type is the wire
+# runner discriminator).
 ARTIFACT_CAPABILITY = {
     ARTIFACT_SCRAPY: "scrapy",
-    ARTIFACT_PYTHON_WHEEL: "python_wheel",
+    ARTIFACT_PYTHON_WHEEL: "script",
     ARTIFACT_DOCKER_IMAGE: "docker_runtime",
 }
 

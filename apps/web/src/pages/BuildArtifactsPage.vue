@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { listBuildArtifacts, uploadEgg } from "@/api/artifacts";
+import { listBuildArtifacts, uploadEgg, uploadWheel } from "@/api/artifacts";
 import type { BuildArtifact } from "@/api/types";
 
 const { t } = useI18n();
 const artifacts = ref<BuildArtifact[]>([]);
 const loading = ref(false);
 const uploading = ref(false);
+const uploadingWheel = ref(false);
 const uploadRef = ref();
+const uploadWheelRef = ref();
 
 // Details dialog state.
 const detailsVisible = ref(false);
@@ -31,6 +33,17 @@ async function onUpload(options: { file: File }): Promise<void> {
     await load();
   } finally {
     uploading.value = false;
+  }
+}
+
+async function onUploadWheel(options: { file: File }): Promise<void> {
+  uploadingWheel.value = true;
+  try {
+    await uploadWheel({ file: options.file });
+    uploadWheelRef.value?.clearFiles?.();
+    await load();
+  } finally {
+    uploadingWheel.value = false;
   }
 }
 
@@ -69,6 +82,22 @@ onMounted(load);
           >
             <el-button type="primary" data-testid="artifact-upload-button" :loading="uploading">
               {{ t("artifacts.upload") }}
+            </el-button>
+          </el-upload>
+          <el-upload
+            ref="uploadWheelRef"
+            data-testid="artifact-upload-wheel"
+            :http-request="onUploadWheel"
+            :show-file-list="false"
+            :disabled="uploadingWheel"
+            accept=".whl"
+          >
+            <el-button
+              type="primary"
+              data-testid="artifact-upload-wheel-button"
+              :loading="uploadingWheel"
+            >
+              {{ t("artifacts.uploadWheel") }}
             </el-button>
           </el-upload>
           <el-button @click="load">{{ t("artifacts.refresh") }}</el-button>
@@ -150,7 +179,13 @@ onMounted(load);
         <el-descriptions-item :label="t('artifacts.filename')">
           {{ selected.filename ?? "-" }}
         </el-descriptions-item>
-        <el-descriptions-item :label="t('artifacts.project')">
+        <el-descriptions-item
+          v-if="selected.artifact_type === 'python_wheel'"
+          :label="t('artifacts.distribution')"
+        >
+          {{ selected.distribution ?? "-" }}
+        </el-descriptions-item>
+        <el-descriptions-item v-else :label="t('artifacts.project')">
           {{ selected.project ?? "-" }}
         </el-descriptions-item>
         <el-descriptions-item :label="t('artifacts.version')">
@@ -165,9 +200,16 @@ onMounted(load);
       </el-descriptions>
 
       <!-- Spiders shown as read-only tags inside a bounded, textarea-like area.
-           The tags are NOT editable (no close handles, no input). -->
-      <div class="spiders-label">{{ t("artifacts.spiders") }}</div>
-      <div class="spiders-box" data-testid="artifact-details-spiders">
+           The tags are NOT editable (no close handles, no input). Python wheels
+           have no spiders, so the section is scrapy-only. -->
+      <div v-if="selected?.artifact_type !== 'python_wheel'" class="spiders-label">
+        {{ t("artifacts.spiders") }}
+      </div>
+      <div
+        v-if="selected?.artifact_type !== 'python_wheel'"
+        class="spiders-box"
+        data-testid="artifact-details-spiders"
+      >
         <template v-if="selected && selected.spiders.length">
           <el-tag
             v-for="s in selected.spiders"

@@ -263,7 +263,13 @@ class EventPublisher:
                 lost_reason=lost_reason,
             )
             return
-        # started: resolve live status, never finalize on unknown.
+        # started Python-wheel attempt: never poll Scrapy status — the terminal
+        # comes from the in-process background wait task (or boot orphan
+        # recovery). Re-emit ``running`` so a re-delivered run stays idempotent.
+        if state.runner_type == "python_wheel":
+            await self.emit_running(task_id, execution_id, remote_job_id=None)
+            return
+        # started Scrapy attempt: resolve live status, never finalize on unknown.
         resp = await self._runner.status(execution_id, task_id)
         terminal = _STATUS_TO_TERMINAL.get(resp.status)
         if terminal is not None:

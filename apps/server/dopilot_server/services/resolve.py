@@ -24,6 +24,7 @@ from dopilot_protocol import (
 from ..errors import ApiError
 from ..models.execution import BuildArtifact
 from . import artifacts as artifact_svc
+from . import states
 
 # Override keys a schedule may set (build_artifact_id excluded). Phase 1.8.1:
 # command-first — a ``command`` override fully replaces the template command;
@@ -40,6 +41,32 @@ def validate_command(command: str | None):
         return parse_scrapy_command(command)
     except ScrapyCommandError as exc:
         raise ApiError(400, exc.code, exc.message_key, exc.detail) from exc
+
+
+def validate_wheel_command(command: str | None) -> str:
+    """Validate a Python-wheel shell command: only requires non-empty (phase 2b).
+
+    A wheel ``command`` is a free-form shell command (serialized to the agent as
+    ``shell_command``); it deliberately does NOT go through the Scrapy parser.
+    Returns the stripped command. Raises a 400 if blank.
+    """
+    stripped = str(command or "").strip()
+    if not stripped:
+        raise ApiError(
+            400,
+            "template.invalid_params",
+            "errors.invalidParams",
+            {"missing": ["command"]},
+        )
+    return stripped
+
+
+def validate_command_by_type(command: str | None, artifact_type: str) -> None:
+    """Type-aware command grammar check (scrapy parser vs wheel non-empty)."""
+    if artifact_type == states.ARTIFACT_SCRAPY:
+        validate_command(command)
+    else:
+        validate_wheel_command(command)
 
 
 def ensure_spider_in_artifact(spider: str, spiders: Any) -> None:
@@ -67,11 +94,17 @@ def validate_command_for_artifact(command: str | None, spiders: Any) -> None:
     ensure_spider_in_artifact(parsed.spider, spiders)
 
 
-def sanitize_overrides(data: dict[str, Any] | None) -> dict[str, Any]:
+def sanitize_overrides(
+    data: dict[str, Any] | None, *, artifact_type: str = "scrapy"
+) -> dict[str, Any]:
     """Keep only allowed override keys; reject any build-artifact override.
 
     A ``command`` override is validated here too so an invalid override is
-    rejected at create/update time, not only at firing time.
+    rejected at create/update time, not only at firing time. Validation is
+    TYPE-AWARE (phase 2b): a ``scrapy`` command override is parsed by the Scrapy
+    grammar; a ``python_wheel`` command override only needs to be non-empty (it
+    is a free-form shell command). ``artifact_type`` defaults to ``scrapy`` so
+    legacy callers keep the original behavior.
     """
     data = data or {}
     if "build_artifact_id" in data:
@@ -93,7 +126,7 @@ def sanitize_overrides(data: dict[str, Any] | None) -> dict[str, Any]:
             # template command, so it is neither validated nor persisted here.
             if not command:
                 continue
-            validate_command(command)
+            validate_command_by_type(command, artifact_type)
             out[key] = command
         else:
             out[key] = str(data[key])
@@ -136,20 +169,6 @@ def resolve_run(
         else list(defaults.get("node_ids") or [])
     )
 
-    spider: str | None = None
-    if artifact_type == "scrapy":
-        # Validate + parse the authoritative command. The spider is DERIVED for
-        # Task.spider/target convenience; the command stays the execution model.
-        try:
-            parsed = parse_scrapy_command(command)
-        except ScrapyCommandError as exc:
-            raise ApiError(400, exc.code, exc.message_key, exc.detail) from exc
-        # The command spider must belong to the bound artifact. This covers
-        # schedule command overrides at run/trigger resolution, before dispatch.
-        ensure_spider_in_artifact(parsed.spider, snap.get("spiders"))
-        spider = parsed.spider
-
-    target = name or f"{project}:{spider}"
     artifact_descriptor = {
         "sha256": build_artifact.content_hash,
         "hash": build_artifact.content_hash,
@@ -159,26 +178,74 @@ def resolve_run(
         "size_bytes": build_artifact.size_bytes,
         "fetch_path": snap.get("fetch_path"),
     }
-    params: dict[str, Any] = {
-        "command": command,
-        "project": project,
-        "version": version,
-        "spider": spider,
-        "artifact": artifact_descriptor,
-    }
-    snapshot: dict[str, Any] = {
-        "build_artifact": snap,
-        "execution_template_id": execution_template_id,
-        "name": name,
-        "artifact_type": artifact_type,
-        "project": project,
-        "version": version,
-        "command": command,
-        "spider": spider,
-        "node_strategy": node_strategy,
-        "node_ids": list(node_ids or []),
-        "overrides": dict(overrides),
-    }
+
+    spider: str | None = None
+    if artifact_type == states.ARTIFACT_PYTHON_WHEEL:
+        # Python wheel (phase 2b): the command is a free-form shell command,
+        # serialized to the agent payload as ``shell_command``. No Scrapy parse,
+        # no spider. ``env`` / ``working_dir`` are reserved for the agent runner
+        # (packet 2b-2); the server currently emits an empty ``env`` and a null
+        # ``working_dir`` (per-execution workspace) — agent install/exec is NOT
+        # done here.
+        shell_command = validate_wheel_command(command)
+        artifact_descriptor["distribution"] = snap.get("distribution")
+        target = name or build_artifact.name or "python_wheel"
+        params = {
+            "command": shell_command,
+            "shell_command": shell_command,
+            "artifact": artifact_descriptor,
+            "env": {},
+            "working_dir": None,
+            "version": version,
+        }
+        snapshot = {
+            "build_artifact": snap,
+            "execution_template_id": execution_template_id,
+            "name": name,
+            "artifact_type": artifact_type,
+            "version": version,
+            "command": shell_command,
+            "shell_command": shell_command,
+            "env": {},
+            "working_dir": None,
+            "node_strategy": node_strategy,
+            "node_ids": list(node_ids or []),
+            "overrides": dict(overrides),
+        }
+    else:
+        # Scrapy: validate + parse the authoritative command. The spider is
+        # DERIVED for Task.spider/target convenience; the command stays the
+        # execution model.
+        try:
+            parsed = parse_scrapy_command(command)
+        except ScrapyCommandError as exc:
+            raise ApiError(400, exc.code, exc.message_key, exc.detail) from exc
+        # The command spider must belong to the bound artifact. This covers
+        # schedule command overrides at run/trigger resolution, before dispatch.
+        ensure_spider_in_artifact(parsed.spider, snap.get("spiders"))
+        spider = parsed.spider
+        target = name or f"{project}:{spider}"
+        params = {
+            "command": command,
+            "project": project,
+            "version": version,
+            "spider": spider,
+            "artifact": artifact_descriptor,
+        }
+        snapshot = {
+            "build_artifact": snap,
+            "execution_template_id": execution_template_id,
+            "name": name,
+            "artifact_type": artifact_type,
+            "project": project,
+            "version": version,
+            "command": command,
+            "spider": spider,
+            "node_strategy": node_strategy,
+            "node_ids": list(node_ids or []),
+            "overrides": dict(overrides),
+        }
+
     request = ExecutionRunRequest(
         artifact_type=artifact_type,
         target=target,

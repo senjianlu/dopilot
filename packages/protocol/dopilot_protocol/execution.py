@@ -53,6 +53,28 @@ class ScrapyRunPayload(BaseModel):
     task_type: str = "scrapy"
 
 
+class PythonWheelRunPayload(BaseModel):
+    """The Redis ``run`` command payload for a Python-wheel task (phase 2b).
+
+    Shell-command contract: the payload carries a free-form ``shell_command``
+    (the user input lives in ``ExecutionTemplate.command`` and is serialized
+    here as ``shell_command``) plus the build-artifact ``artifact`` context the
+    agent needs to fetch + install the wheel. ``env`` is an optional operator
+    override map (the server currently emits ``{}``); ``working_dir`` is an
+    OPTIONAL relative path under the per-execution workspace (absolute paths /
+    ``..`` escapes are rejected by the agent runner in packet 2b-2).
+
+    ``task_type`` is the stable wire discriminator the agent runner branches on;
+    it is deliberately distinct from the node-selection capability (``script``).
+    """
+
+    shell_command: str
+    artifact: dict[str, Any] = Field(default_factory=dict)
+    env: dict[str, str] = Field(default_factory=dict)
+    working_dir: str | None = None
+    task_type: str = "python_wheel"
+
+
 class ExecutionRunResponse(BaseModel):
     """Response acknowledging a dispatched run. ``task_id`` is the parent task."""
 

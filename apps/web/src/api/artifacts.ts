@@ -3,12 +3,17 @@ import type {
   ArtifactsResponse,
   BuildArtifact,
   UploadEggResponse,
+  UploadWheelResponse,
 } from "./types";
 
 export interface UploadEggInput {
   file: File;
   project?: string;
   version?: string;
+}
+
+export interface UploadWheelInput {
+  file: File;
 }
 
 export async function listBuildArtifacts(): Promise<BuildArtifact[]> {
@@ -29,6 +34,18 @@ export async function uploadEgg(
   }
   const { data } = await client.post<UploadEggResponse>(
     "/artifacts/scrapy/egg",
+    form,
+  );
+  return data;
+}
+
+export async function uploadWheel(
+  input: UploadWheelInput,
+): Promise<UploadWheelResponse> {
+  const form = new FormData();
+  form.append("file", input.file);
+  const { data } = await client.post<UploadWheelResponse>(
+    "/artifacts/python_wheel/wheel",
     form,
   );
   return data;

@@ -40,6 +40,23 @@ const sampleArtifacts: BuildArtifact[] = [
     created_at: "2026-06-19T00:00:00Z",
     updated_at: "2026-06-19T00:00:00Z",
   },
+  {
+    id: "art-wheel",
+    artifact_type: "python_wheel",
+    package_format: "wheel",
+    name: "dopilot-demo",
+    filename: "dopilot_demo-0.1.0-py3-none-any.whl",
+    content_hash: "sha-whl",
+    size_bytes: 2048,
+    project: null,
+    version: "0.1.0",
+    distribution: "dopilot-demo",
+    spiders: [],
+    fetch_path: "/api/v1/artifacts/python_wheel/sha-whl/wheel",
+    runnable: true,
+    created_at: "2026-06-19T00:00:00Z",
+    updated_at: "2026-06-19T00:00:00Z",
+  },
 ];
 
 function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
@@ -282,6 +299,59 @@ describe("TemplatesPage", () => {
     await flushPromises();
     expect(vm.isSelectedStrategy).toBe(true);
     expect(vm.selectableNodes.map((n) => n.id)).toEqual(["node-1"]);
+  });
+
+  it("treats a python_wheel command as a free-form shell command", async () => {
+    const wrapper = mount(TemplatesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      openCreate: () => void;
+      submitCreate: () => Promise<void>;
+      form: { name: string; buildArtifactId: string; command: string };
+      isWheel: boolean;
+      canSubmit: boolean;
+      commandError: string;
+    };
+    vm.openCreate();
+    await flushPromises();
+    vm.form.buildArtifactId = "art-wheel";
+    await flushPromises();
+    // wheel selected -> default command is a module run, isWheel true.
+    expect(vm.isWheel).toBe(true);
+    expect(vm.form.command).toBe("python -m main");
+
+    // a command the scrapy parser would reject (shell metachar) is allowed.
+    vm.form.name = "wheel-t";
+    vm.form.command = "python -m main | tee out.log";
+    await flushPromises();
+    expect(vm.commandError).toBe("");
+    expect(vm.canSubmit).toBe(true);
+    await vm.submitCreate();
+    expect(createTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        build_artifact_id: "art-wheel",
+        command: "python -m main | tee out.log",
+      }),
+    );
+  });
+
+  it("blocks submit on an empty python_wheel command", async () => {
+    const wrapper = mount(TemplatesPage, {
+      global: { plugins: [makeI18n()], stubs: makeStubs() },
+    });
+    await flushPromises();
+    const vm = wrapper.vm as unknown as {
+      openCreate: () => void;
+      form: { buildArtifactId: string; command: string };
+      canSubmit: boolean;
+    };
+    vm.openCreate();
+    vm.form.buildArtifactId = "art-wheel";
+    vm.form.command = "   ";
+    await flushPromises();
+    expect(vm.canSubmit).toBe(false);
   });
 
   it("runs a template and navigates to the created task", async () => {

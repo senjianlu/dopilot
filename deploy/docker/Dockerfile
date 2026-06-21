@@ -80,6 +80,26 @@ manifest = {
 )
 PY
 
+# Built-in demo wheel artifact (phase 2b). Like the scrapy_clock egg above, this
+# seeds /server-data so a clean-volume stack lists a runnable `python_wheel`
+# artifact without a host upload. It reuses the server's own WheelArtifactStore,
+# so the on-disk wheel bytes + manifest are byte-identical to an admin upload
+# (same sha256 dedupe key the agent later fetches/installs).
+COPY tests/fixtures/python_wheel_demo/dopilot_demo-0.1.0-py3-none-any.whl \
+    /app/examples/python_wheel_demo/dopilot_demo-0.1.0-py3-none-any.whl
+RUN python - <<'PY'
+from pathlib import Path
+
+from dopilot_server.artifacts.wheel_store import WheelArtifactStore
+
+wheel = Path(
+    "/app/examples/python_wheel_demo/dopilot_demo-0.1.0-py3-none-any.whl"
+)
+WheelArtifactStore("/server-data/artifacts").save(
+    filename=wheel.name, content=wheel.read_bytes()
+)
+PY
+
 # Alembic assets so the same image can run `alembic upgrade head`.
 COPY apps/server/alembic.ini ./alembic.ini
 COPY apps/server/migrations ./migrations

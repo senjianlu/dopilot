@@ -77,6 +77,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 command_block_ms=s.redis.command_block_ms,
                 status=runtime.redis_status,
                 artifact_cache=runtime.artifact_cache,
+                wheel_runner=runtime.wheel_runner,
+                wheel_cache=runtime.wheel_cache,
             )
             log_publisher = LogPublisher(
                 redis=redis_client,

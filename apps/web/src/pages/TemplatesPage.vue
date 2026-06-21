@@ -108,22 +108,39 @@ const selectedArtifact = computed(() =>
 );
 const availableSpiders = computed(() => selectedArtifact.value?.spiders ?? []);
 
+// Phase 2b: a python_wheel template uses a free-form shell command (no scrapy
+// parser, no spider). The command field relabels + validates accordingly.
+const isWheel = computed(
+  () => selectedArtifact.value?.artifact_type === "python_wheel",
+);
+
 // Read-only project/version resolved from the selected artifact.
 const resolvedProject = computed(() => selectedArtifact.value?.project ?? "-");
 const resolvedVersion = computed(() => selectedArtifact.value?.version ?? "-");
 
 // Phase 1.8.1: command-first. UX validation of the command (backend remains
 // authoritative). `commandError` blocks submit and shows an inline reason.
-const commandCheck = computed(() => checkScrapyCommand(form.command));
-const commandError = computed(() =>
-  form.command && !commandCheck.value.valid
-    ? t(`commandErrors.${commandCheck.value.reason}`, t("commandErrors.invalid"))
-    : "",
+// Phase 2b: for a python_wheel the only client-side rule is non-empty — the
+// scrapy parser must NOT run against a shell command.
+const commandCheck = computed(() =>
+  isWheel.value
+    ? { valid: form.command.trim().length > 0, reason: "empty" as const }
+    : checkScrapyCommand(form.command),
 );
+const commandError = computed(() => {
+  if (!form.command || commandCheck.value.valid) return "";
+  if (isWheel.value) return t("commandErrors.empty");
+  return t(
+    `commandErrors.${commandCheck.value.reason}`,
+    t("commandErrors.invalid"),
+  );
+});
 
-// Default the command from the artifact's first spider when it changes and the
-// user has not typed a custom command yet.
+// Default the command from the artifact when it changes and the user has not
+// typed a custom command yet: scrapy -> first spider; python_wheel -> a module
+// run hint (no console scripts under `pip install --target`).
 function defaultCommand(art: BuildArtifact | undefined): string {
+  if (art?.artifact_type === "python_wheel") return "python -m main";
   const spider = art?.spiders?.[0];
   return spider ? `scrapy crawl ${spider}` : "";
 }
@@ -327,11 +344,17 @@ onMounted(load);
             disabled
           />
         </el-form-item>
-        <el-form-item :label="t('templates.command')">
+        <el-form-item
+          :label="isWheel ? t('templates.shellCommand') : t('templates.command')"
+        >
           <el-input
             v-model="form.command"
             data-testid="template-command-input"
-            :placeholder="t('templates.commandPlaceholder')"
+            :placeholder="
+              isWheel
+                ? t('templates.shellCommandPlaceholder')
+                : t('templates.commandPlaceholder')
+            "
           />
           <div
             v-if="commandError"
@@ -339,6 +362,13 @@ onMounted(load);
             data-testid="template-command-error"
           >
             {{ commandError }}
+          </div>
+          <div
+            v-else-if="isWheel"
+            class="command-hint"
+            data-testid="template-command-hint"
+          >
+            {{ t("templates.shellCommandHint") }}
           </div>
           <div v-else-if="availableSpiders.length" class="command-hint">
             {{ t("templates.commandSpiders", { spiders: availableSpiders.join(", ") }) }}
