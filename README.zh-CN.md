@@ -13,6 +13,10 @@
   <a href="README.md">English</a> · <b>简体中文</b>
 </p>
 
+<p align="center">
+  <img src="screenshot.png" alt="dopilot 控制台截图" width="960" />
+</p>
+
 ---
 
 ## dopilot 是什么
