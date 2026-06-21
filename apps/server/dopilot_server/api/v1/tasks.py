@@ -86,12 +86,15 @@ _SSE_MAX_LIFETIME_SECONDS = 1800.0  # 30 min connection cap
 async def list_tasks(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20),
+    build_artifact_id: str | None = Query(default=None),
     spider: str | None = Query(default=None),
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> TasksResponse:
-    """Backend-paginated tasks list with an optional spider filter.
+    """Backend-paginated tasks list with an optional build-artifact filter.
 
+    The product filter is ``build_artifact_id`` (works for scrapy +
+    python_wheel); the legacy ``spider`` query param is kept for compatibility.
     ``page_size`` must be one of :data:`svc.ALLOWED_PAGE_SIZES`; child execution
     counts for the page are fetched in ONE aggregate query (no per-row N+1).
     """
@@ -102,22 +105,25 @@ async def list_tasks(
             "errors.invalidPageSize",
             {"page_size": page_size, "allowed": list(svc.ALLOWED_PAGE_SIZES)},
         )
-    spider_filter = spider or None
     tasks, total = await svc.list_tasks_page(
-        session, page=page, page_size=page_size, spider=spider_filter
+        session,
+        page=page,
+        page_size=page_size,
+        build_artifact_id=build_artifact_id or None,
+        spider=spider or None,
     )
     counts = await svc.child_execution_counts(session, [t.id for t in tasks])
     summaries = [
         TaskSummary(**svc.task_summary(task, counts.get(task.id, 0)))
         for task in tasks
     ]
-    spiders = await svc.list_task_spiders(session)
+    build_artifacts = await svc.list_task_build_artifacts(session)
     return TasksResponse(
         tasks=summaries,
         page=page,
         page_size=page_size,
         total=total,
-        spiders=spiders,
+        build_artifacts=build_artifacts,
     )
 
 

@@ -34,8 +34,10 @@ import {
 } from "@/components/ui/pagination";
 import { ToneBadge, type Tone } from "@/components/features/status-badge";
 import { listTasks } from "@/lib/api/tasks";
+import { formatDateTime } from "@/lib/format";
 import {
   TASK_PAGE_SIZES,
+  type BuildArtifactOption,
   type TaskPageSize,
   type TaskStatus,
   type TaskSummary,
@@ -52,8 +54,15 @@ const STATUS_TONE: Record<TaskStatus, Tone> = {
   no_target: "amber",
 };
 
-// "All spiders" sentinel (Radix Select forbids an empty-string value).
-const SPIDER_ALL = "__all__";
+// "All build artifacts" sentinel (Radix Select forbids an empty-string value).
+// The list filters by build artifact: the value is a build_artifact_id sent to
+// the backend, and the options come from the tasks' distinct build artifacts.
+const BUILD_ALL = "__all__";
+
+// A build artifact's display text in the row/dropdown (label, then name, id).
+function buildArtifactText(art: BuildArtifactOption): string {
+  return art.label || art.name || art.id;
+}
 
 function pickPageSizeFromHeight(): TaskPageSize {
   const rowPx = 48;
@@ -77,23 +86,24 @@ export default function TasksPage() {
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState<TaskPageSize>(20);
   const [total, setTotal] = React.useState(0);
-  const [spiders, setSpiders] = React.useState<string[]>([]);
-  const [spider, setSpider] = React.useState(SPIDER_ALL);
+  const [builds, setBuilds] = React.useState<BuildArtifactOption[]>([]);
+  const [buildFilter, setBuildFilter] = React.useState(BUILD_ALL);
 
   const load = React.useCallback(
-    async (nextPage: number, size: TaskPageSize, spiderFilter: string) => {
+    async (nextPage: number, size: TaskPageSize, buildFilterValue: string) => {
       setLoading(true);
       try {
         const res = await listTasks({
           page: nextPage,
           pageSize: size,
-          spider: spiderFilter === SPIDER_ALL ? null : spiderFilter,
+          buildArtifactId:
+            buildFilterValue === BUILD_ALL ? null : buildFilterValue,
         });
         setTasks(res.tasks);
         setTotal(res.total);
         setPage(res.page);
         setPageSize(res.page_size as TaskPageSize);
-        setSpiders(res.spiders);
+        setBuilds(res.build_artifacts);
       } finally {
         setLoading(false);
       }
@@ -104,20 +114,20 @@ export default function TasksPage() {
   React.useEffect(() => {
     const size = pickPageSizeFromHeight();
     setPageSize(size);
-    void load(1, size, SPIDER_ALL);
+    void load(1, size, BUILD_ALL);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  function onSpiderChange(value: string) {
-    setSpider(value);
+  function onBuildChange(value: string) {
+    setBuildFilter(value);
     void load(1, pageSize, value);
   }
 
   function onSizeChange(value: string) {
     const size = Number(value) as TaskPageSize;
-    void load(1, size, spider);
+    void load(1, size, buildFilter);
   }
 
   return (
@@ -126,27 +136,27 @@ export default function TasksPage() {
         <CardTitle>{t("tasks.title")}</CardTitle>
         <CardAction>
           <div className="flex items-center gap-2">
-            <Select value={spider} onValueChange={onSpiderChange}>
+            <Select value={buildFilter} onValueChange={onBuildChange}>
               <SelectTrigger
                 className="min-w-40"
-                data-testid="tasks-spider-filter"
+                data-testid="tasks-build-filter"
               >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
-                  <SelectItem value={SPIDER_ALL}>
-                    {t("tasks.spiderAll")}
+                  <SelectItem value={BUILD_ALL}>
+                    {t("tasks.buildArtifactAll")}
                   </SelectItem>
-                  {spiders.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {s}
+                  {builds.map((art) => (
+                    <SelectItem key={art.id} value={art.id}>
+                      {buildArtifactText(art)}
                     </SelectItem>
                   ))}
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <Button onClick={() => load(page, pageSize, spider)}>
+            <Button onClick={() => load(page, pageSize, buildFilter)}>
               {t("tasks.refresh")}
             </Button>
           </div>
@@ -158,7 +168,7 @@ export default function TasksPage() {
             <TableRow>
               <TableHead>{t("tasks.status")}</TableHead>
               <TableHead>{t("tasks.target")}</TableHead>
-              <TableHead>{t("tasks.spider")}</TableHead>
+              <TableHead>{t("tasks.buildArtifact")}</TableHead>
               <TableHead>{t("tasks.artifactType")}</TableHead>
               <TableHead>{t("tasks.strategy")}</TableHead>
               <TableHead>{t("tasks.executions")}</TableHead>
@@ -187,13 +197,17 @@ export default function TasksPage() {
                     </ToneBadge>
                   </TableCell>
                   <TableCell>{task.target}</TableCell>
-                  <TableCell>{task.spider ?? "-"}</TableCell>
+                  <TableCell data-testid={`task-build-artifact-${task.id}`}>
+                    {task.build_artifact
+                      ? buildArtifactText(task.build_artifact)
+                      : "-"}
+                  </TableCell>
                   <TableCell>{task.artifact_type}</TableCell>
                   <TableCell>{task.node_strategy}</TableCell>
                   <TableCell>{task.execution_count}</TableCell>
-                  <TableCell>{task.created_at ?? "-"}</TableCell>
-                  <TableCell>{task.started_at ?? "-"}</TableCell>
-                  <TableCell>{task.finished_at ?? "-"}</TableCell>
+                  <TableCell>{formatDateTime(task.created_at)}</TableCell>
+                  <TableCell>{formatDateTime(task.started_at)}</TableCell>
+                  <TableCell>{formatDateTime(task.finished_at)}</TableCell>
                   <TableCell>
                     <Link
                       href={`/tasks/detail?id=${task.id}`}
@@ -235,7 +249,7 @@ export default function TasksPage() {
                   size="sm"
                   data-testid="tasks-prev"
                   disabled={page <= 1 || loading}
-                  onClick={() => load(page - 1, pageSize, spider)}
+                  onClick={() => load(page - 1, pageSize, buildFilter)}
                 >
                   ‹
                 </Button>
@@ -251,7 +265,7 @@ export default function TasksPage() {
                   size="sm"
                   data-testid="tasks-next"
                   disabled={page >= totalPages || loading}
-                  onClick={() => load(page + 1, pageSize, spider)}
+                  onClick={() => load(page + 1, pageSize, buildFilter)}
                 >
                   ›
                 </Button>

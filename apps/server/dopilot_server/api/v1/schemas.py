@@ -162,13 +162,35 @@ class TaskView(BaseModel):
     executions: list[ExecutionView] = Field(default_factory=list)
 
 
+class BuildArtifactOption(BaseModel):
+    """A build-artifact descriptor: per-task list column + distinct filter option.
+
+    Derived from the immutable ``template_snapshot["build_artifact"]`` frozen at
+    task creation, so it is stable against later artifact/template edits and works
+    for any artifact type (scrapy, python_wheel). ``label`` is a human-readable
+    name+version. ``name``/``version``/etc. may be null for sparse snapshots.
+    """
+
+    id: str
+    name: str | None = None
+    artifact_type: str | None = None
+    version: str | None = None
+    distribution: str | None = None
+    project: str | None = None
+    label: str | None = None
+
+
 class TaskSummary(BaseModel):
     """Compact row for the tasks list."""
 
     id: str
     artifact_type: str
     target: str
+    # Legacy derived scrapy spider; kept for back-compat, no longer the filter.
     spider: str | None = None
+    # The build artifact this run executed (immutable snapshot). None for a
+    # legacy/direct task created without a snapshot.
+    build_artifact: BuildArtifactOption | None = None
     status: str
     status_reason: str | None = None
     node_strategy: str
@@ -184,15 +206,16 @@ class TaskSummary(BaseModel):
 class TasksResponse(BaseModel):
     """Server-side paginated tasks list (phase 1.8).
 
-    ``spiders`` is the distinct set of known spider values across all tasks, so
-    the web can offer a spider filter without a second round-trip.
+    ``build_artifacts`` is the distinct set of build artifacts referenced by
+    existing tasks, so the web can offer a build-artifact filter without a second
+    round-trip.
     """
 
     tasks: list[TaskSummary]
     page: int = 1
     page_size: int = 20
     total: int = 0
-    spiders: list[str] = Field(default_factory=list)
+    build_artifacts: list[BuildArtifactOption] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

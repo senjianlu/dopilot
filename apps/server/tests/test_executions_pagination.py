@@ -14,12 +14,13 @@ from dopilot_server.services import states
 
 
 async def _run_artifact(exec_client, seeder, spider: str):
-    """Run a seeded artifact via a command-first execution template.
+    """Run a seeded scrapy artifact via a command-first execution template.
 
     The artifact must advertise ``spider`` so server-side spider-membership
     validation accepts ``scrapy crawl <spider>``. Each spider gets a distinct
     content hash so the seeder does not dedupe distinct spiders onto one
-    artifact.
+    artifact. Returns ``(artifact, run_response)`` — the run frozen the artifact
+    into the task's immutable snapshot.
     """
     artifact = await seeder.build_artifact(
         spiders=(spider,),
@@ -35,7 +36,67 @@ async def _run_artifact(exec_client, seeder, spider: str):
         },
     )
     assert tpl.status_code == 200, tpl.text
-    return await exec_client.post(f"/api/v1/templates/{tpl.json()['id']}/run")
+    run = await exec_client.post(f"/api/v1/templates/{tpl.json()['id']}/run")
+    return artifact, run
+
+
+async def _run_wheel(exec_client, seeder):
+    """Run a seeded python_wheel artifact via a command-first template.
+
+    Returns ``(artifact, run_response)``. The non-scrapy artifact path exercises
+    the build-artifact filter for a task with no spider.
+    """
+    artifact = await seeder.build_artifact(
+        artifact_type="python_wheel",
+        package_format="wheel",
+        project="wheelpkg",
+        sha256="d" * 64,
+    )
+    tpl = await exec_client.post(
+        "/api/v1/templates",
+        json={
+            "name": "wheel-t",
+            "build_artifact_id": artifact.id,
+            "command": "python -m main",
+            "node_strategy": "all",
+        },
+    )
+    assert tpl.status_code == 200, tpl.text
+    run = await exec_client.post(f"/api/v1/templates/{tpl.json()['id']}/run")
+    return artifact, run
+
+
+async def _seed_artifact_tasks(session, specs):
+    """Create tasks carrying an immutable build-artifact snapshot.
+
+    ``specs`` are ``(artifact_id, name, artifact_type)`` triples; reusing an id
+    models several runs of the same build artifact (one distinct filter option).
+    """
+    created = []
+    for artifact_id, name, artifact_type in specs:
+        is_scrapy = artifact_type == "scrapy"
+        snapshot = {
+            "build_artifact": {
+                "id": artifact_id,
+                "name": name,
+                "artifact_type": artifact_type,
+                "version": "v1" if is_scrapy else "1.0.0",
+                "project": name if is_scrapy else None,
+                "distribution": None if is_scrapy else name,
+            }
+        }
+        req = ExecutionRunRequest(
+            artifact_type=artifact_type,
+            target=name,
+            node_strategy="all",
+            params={},
+        )
+        task = svc.create_task(
+            session, req, svc.TaskOrigin(template_snapshot=snapshot)
+        )
+        created.append(task)
+    await session.commit()
+    return created
 
 
 async def _seed_tasks(session, settings, specs):
@@ -105,6 +166,66 @@ async def test_list_task_spiders_distinct(db_session, exec_settings):
     assert await svc.list_task_spiders(db_session) == ["a", "b"]
 
 
+async def test_list_task_build_artifacts_distinct(db_session, exec_settings):
+    await _seed_artifact_tasks(
+        db_session,
+        [
+            ("art-1", "demo", "scrapy"),
+            ("art-2", "wheelpkg", "python_wheel"),
+            ("art-1", "demo", "scrapy"),  # second run of art-1 -> one option
+        ],
+    )
+    options = await svc.list_task_build_artifacts(db_session)
+    by_id = {o["id"]: o for o in options}
+    assert set(by_id) == {"art-1", "art-2"}
+    assert by_id["art-2"]["artifact_type"] == "python_wheel"
+    # each option carries a human-readable label (name + version here).
+    assert by_id["art-1"]["label"] == "demo (v1)"
+
+
+async def test_list_tasks_page_build_artifact_filter(db_session, exec_settings):
+    await _seed_artifact_tasks(
+        db_session,
+        [
+            ("art-1", "demo", "scrapy"),
+            ("art-2", "wheelpkg", "python_wheel"),
+            ("art-1", "demo", "scrapy"),
+        ],
+    )
+    rows, total = await svc.list_tasks_page(
+        db_session, page=1, page_size=20, build_artifact_id="art-1"
+    )
+    assert total == 2
+    assert all(
+        (t.template_snapshot or {}).get("build_artifact", {}).get("id") == "art-1"
+        for t in rows
+    )
+    # the python_wheel artifact filters independently.
+    rows2, total2 = await svc.list_tasks_page(
+        db_session, page=1, page_size=20, build_artifact_id="art-2"
+    )
+    assert total2 == 1
+    assert rows2[0].template_snapshot["build_artifact"]["artifact_type"] == (
+        "python_wheel"
+    )
+
+
+async def test_legacy_task_without_snapshot_yields_no_option(
+    db_session, exec_settings
+):
+    # A direct task created without a snapshot must not crash options/filtering.
+    await _seed_tasks(db_session, exec_settings, [("legacy", 0)])
+    assert await svc.list_task_build_artifacts(db_session) == []
+    rows, total = await svc.list_tasks_page(
+        db_session, page=1, page_size=20, build_artifact_id="whatever"
+    )
+    assert total == 0 and rows == []
+    # task_summary tolerates a snapshot-less task (no build artifact descriptor).
+    (task,) = await _seed_tasks(db_session, exec_settings, [("legacy2", 0)])
+    summary = svc.task_summary(task, 0)
+    assert summary["build_artifact"] is None
+
+
 # ---- HTTP surface ----------------------------------------------------------
 
 
@@ -120,13 +241,47 @@ async def test_get_tasks_returns_pagination_envelope(exec_client, seeder):
     r = await exec_client.get("/api/v1/tasks?page=1&page_size=20")
     assert r.status_code == 200
     body = r.json()
-    assert set(body) >= {"tasks", "page", "page_size", "total", "spiders"}
+    assert set(body) >= {"tasks", "page", "page_size", "total", "build_artifacts"}
     assert body["page"] == 1
     assert body["page_size"] == 20
     assert body["total"] >= 1
 
 
-async def test_get_tasks_spider_filter(exec_client, seeder):
+async def test_get_tasks_build_artifact_options_and_filter(exec_client, seeder):
+    # A scrapy node + a script node so both runs dispatch onto a real target.
+    await seeder.healthy_node(agent_id="scrapy-1", scrapy=True)
+    await seeder.healthy_node(
+        agent_id="script-1",
+        endpoint="http://agent2:6800",
+        scrapy=False,
+        script=True,
+    )
+    scrapy_art, _ = await _run_artifact(exec_client, seeder, "alpha")
+    wheel_art, _ = await _run_wheel(exec_client, seeder)
+
+    r = await exec_client.get("/api/v1/tasks?page=1&page_size=20")
+    body = r.json()
+    options = {o["id"]: o for o in body["build_artifacts"]}
+    assert {scrapy_art.id, wheel_art.id} <= set(options)
+    assert options[wheel_art.id]["artifact_type"] == "python_wheel"
+    # every row exposes its build artifact (the list column source, not spider).
+    for row in body["tasks"]:
+        assert row["build_artifact"] is not None
+        assert row["build_artifact"]["id"] in options
+
+    # filter by the python_wheel artifact id -> only the wheel task.
+    r2 = await exec_client.get(
+        f"/api/v1/tasks?page=1&page_size=20&build_artifact_id={wheel_art.id}"
+    )
+    body2 = r2.json()
+    assert body2["total"] == 1
+    row = body2["tasks"][0]
+    assert row["build_artifact"]["id"] == wheel_art.id
+    assert row["build_artifact"]["artifact_type"] == "python_wheel"
+
+
+async def test_get_tasks_legacy_spider_filter_still_works(exec_client, seeder):
+    # The legacy ``spider`` query param is kept for compatibility.
     await seeder.healthy_node()
     await _run_artifact(exec_client, seeder, "alpha")
     await _run_artifact(exec_client, seeder, "beta")
@@ -134,8 +289,8 @@ async def test_get_tasks_spider_filter(exec_client, seeder):
     body = r.json()
     assert body["total"] == 1
     assert all(row["spider"] == "alpha" for row in body["tasks"])
-    # known spider values surfaced for the filter dropdown
-    assert set(body["spiders"]) == {"alpha", "beta"}
+    # the dropdown now offers distinct build artifacts (one per spider's egg).
+    assert len(body["build_artifacts"]) == 2
 
 
 async def test_get_tasks_invalid_page_400(exec_client):

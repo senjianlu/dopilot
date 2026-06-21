@@ -29,15 +29,11 @@ import {
 import { ToneBadge } from "@/components/features/status-badge";
 import { listBuildArtifacts, uploadEgg, uploadWheel } from "@/lib/api/artifacts";
 import type { BuildArtifact } from "@/lib/api/types";
+import { formatBytes } from "@/lib/format";
 
 function shortHash(hash: string | null): string {
   if (!hash) return "-";
   return `${hash.slice(0, 12)}…`;
-}
-
-function formatMB(sizeBytes: number): string {
-  const mb = (sizeBytes || 0) / (1024 * 1024);
-  return `${mb.toFixed(2)} MB`;
 }
 
 export default function BuildArtifactsPage() {
@@ -184,7 +180,7 @@ export default function BuildArtifactsPage() {
                   <TableCell>{a.filename ?? "-"}</TableCell>
                   <TableCell>{shortHash(a.content_hash)}</TableCell>
                   <TableCell data-testid={`artifact-size-${a.name}`}>
-                    {formatMB(a.size_bytes)}
+                    {formatBytes(a.size_bytes)}
                   </TableCell>
                   <TableCell>
                     <ToneBadge tone={a.runnable ? "green" : "gray"}>
@@ -252,7 +248,7 @@ export default function BuildArtifactsPage() {
               <dt className="text-muted-foreground">{t("artifacts.hash")}</dt>
               <dd className="break-all">{selected.content_hash ?? "-"}</dd>
               <dt className="text-muted-foreground">{t("artifacts.size")}</dt>
-              <dd>{formatMB(selected.size_bytes)}</dd>
+              <dd>{formatBytes(selected.size_bytes)}</dd>
             </dl>
           )}
 

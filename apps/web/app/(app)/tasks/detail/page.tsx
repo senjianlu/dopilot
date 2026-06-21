@@ -31,6 +31,7 @@ import { ToneBadge, type Tone } from "@/components/features/status-badge";
 import { LogViewer } from "@/components/features/log-viewer";
 import { cancelTask, getTask } from "@/lib/api/tasks";
 import { markTaskLost } from "@/lib/api/maintenance";
+import { formatDateTime } from "@/lib/format";
 import type { TaskStatus, TaskView } from "@/lib/api/types";
 import { useConfirm } from "@/hooks/use-confirm";
 
@@ -183,11 +184,11 @@ function TaskDetail() {
                 <dt className="text-muted-foreground">{t("task.strategy")}</dt>
                 <dd>{task.node_strategy}</dd>
                 <dt className="text-muted-foreground">{t("task.createdAt")}</dt>
-                <dd>{task.created_at ?? "-"}</dd>
+                <dd>{formatDateTime(task.created_at)}</dd>
                 <dt className="text-muted-foreground">{t("task.startedAt")}</dt>
-                <dd>{task.started_at ?? "-"}</dd>
+                <dd>{formatDateTime(task.started_at)}</dd>
                 <dt className="text-muted-foreground">{t("task.finishedAt")}</dt>
-                <dd>{task.finished_at ?? "-"}</dd>
+                <dd>{formatDateTime(task.finished_at)}</dd>
               </dl>
             </CardContent>
           </Card>
