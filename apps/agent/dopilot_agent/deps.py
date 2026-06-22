@@ -97,13 +97,13 @@ def build_runtime(settings: Settings) -> AgentRuntime:
         artifact_cache = ScrapyArtifactCache(
             root_dir=Path(workdir) / "artifacts",
             server_url=settings.agent.server_url,
-            server_shared_token=settings.agent.server_shared_token,
+            agent_token=settings.agent.agent_token,
             scrapyd=client,
         )
         wheel_cache = PythonWheelCache(
             root_dir=Path(workdir) / "artifacts",
             server_url=settings.agent.server_url,
-            server_shared_token=settings.agent.server_shared_token,
+            agent_token=settings.agent.agent_token,
         )
     # The Python-wheel runner needs no server URL (it spawns local shell
     # commands); the cache that fetches the wheel does.

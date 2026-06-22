@@ -57,14 +57,14 @@ class PythonWheelCache:
         *,
         root_dir: str | os.PathLike[str],
         server_url: str,
-        server_shared_token: str = "",
+        agent_token: str = "",
         python_executable: str | None = None,
         wait_timeout_seconds: float = 120.0,
         install_timeout_seconds: float = 300.0,
     ) -> None:
         self._dir = Path(root_dir) / "python_wheel"
         self._server_url = server_url.rstrip("/") + "/"
-        self._token = server_shared_token
+        self._token = agent_token
         self._python = python_executable or sys.executable
         self._wait_timeout = wait_timeout_seconds
         self._install_timeout = install_timeout_seconds

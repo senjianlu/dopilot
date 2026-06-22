@@ -1,0 +1,68 @@
+# dopilot AGENT-ONLY join stack (phase 2.2.4): one (or more) worker agents that
+# join a server deployed separately with deploy/docker/docker-compose.server.yml.
+#
+# This file runs NO db / redis / migrate / server services — agents connect to
+# the remote server's Redis (commands/events/logs) and reach the server's HTTP
+# port for heartbeats.
+#
+# Required env (no dev fallbacks — the agent must be told how to join):
+#   DOPILOT_AGENT_TOKEN   The single server<->agent machine token. It MUST equal
+#                         the server's token. Retrieve it on the server host with:
+#                           docker exec <server> dopilot-server agent-token print
+#                         A non-empty value must be >= 16 characters.
+#   REDIS_PASSWORD        Redis AUTH password of the server's Redis (used to build
+#                         the Redis URL below), OR set DOPILOT_REDIS_URL directly.
+#
+# Optional env:
+#   DOPILOT_REDIS_URL     Full Redis URL to the server's Redis. When set it wins
+#                         over the REDIS_PASSWORD/REDIS_HOST builder below, e.g.
+#                           redis://:<password>@<server-host>:6379/0
+#   REDIS_HOST            Hostname/IP of the server's Redis (default
+#                         host.docker.internal). Used only when DOPILOT_REDIS_URL
+#                         is not set.
+#   AGENT_ID             Stable agent id (default scrapy-agent-remote-1). Each
+#                         agent in a fleet needs a DISTINCT id.
+#
+# Deploy:
+#   cd deploy/docker
+#   DOPILOT_AGENT_TOKEN=<token-from-server> REDIS_PASSWORD=<server-redis-pass> \
+#     REDIS_HOST=<server-host> docker compose -f docker-compose.agent.yml up -d
+#
+# Agents NEVER receive DOPILOT_ADMIN_API_TOKEN (admin-only) and this file sets no
+# DOPILOT_CONFIG (the role default /app/configs/agent.toml is baked in).
+#
+# Token auth is NOT transport encryption. The link from this agent to the
+# server's Redis and HTTP port crosses hosts — put them on a private network /
+# VPN or terminate TLS at a reverse proxy for encrypted transport.
+
+services:
+  scrapy-agent-remote-1:
+    image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
+    command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
+    init: true
+    environment:
+      AGENT_ID: ${AGENT_ID:-scrapy-agent-remote-1}
+      AGENT_WORKDIR: /agent-data
+      # Connect to the REMOTE server's Redis. DOPILOT_REDIS_URL wins; otherwise it
+      # is built from REDIS_PASSWORD (required) + REDIS_HOST (default
+      # host.docker.internal).
+      DOPILOT_REDIS_URL: ${DOPILOT_REDIS_URL:-redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD or DOPILOT_REDIS_URL}@${REDIS_HOST:-host.docker.internal}:6379/0}
+      # The single server<->agent machine token. REQUIRED — no dev fallback. Must
+      # match the server's token; agents never get DOPILOT_ADMIN_API_TOKEN.
+      DOPILOT_AGENT_TOKEN: ${DOPILOT_AGENT_TOKEN:?set DOPILOT_AGENT_TOKEN to the server's machine token (docker exec <server> dopilot-server agent-token print)}
+    volumes:
+      - dopilot-agent-remote1-data:/agent-data
+    healthcheck:
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:6800/health', timeout=3).status==200 else 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  dopilot-agent-remote1-data:

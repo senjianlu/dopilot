@@ -3,30 +3,26 @@
 # Copy to configs/agent.toml and edit, or rely on environment overrides in
 # Docker deployments.
 #
-# Single-secret machine tokens (phase 2.2.2): the two shared-token fields below
-# are intentionally EMPTY so the loader defaults them to DOPILOT_ADMIN_API_TOKEN
-# (the same static admin API token the server uses). For split tokens, set
-# DOPILOT_AGENT_SHARED_TOKEN (server -> agent) / DOPILOT_SERVER_SHARED_TOKEN
-# (agent -> server), or fill the fields here; they MUST then match the server's
-# [agent_auth].shared_token / [agents].server_shared_token respectively.
+# Single server<->agent token (phase 2.2.3): [agent].agent_token below is the ONE
+# machine secret. It authenticates BOTH directions (server -> agent egg deploy,
+# agent -> server heartbeat) and MUST match the server's [agents].agent_token.
+# Set it via DOPILOT_AGENT_TOKEN or the field; a non-empty value must be >= 16
+# chars; empty keeps machine auth OFF. The agent is NEVER given the admin API
+# token — DOPILOT_ADMIN_API_TOKEN and the old split envs/fields have no effect.
+#
+# Token auth is NOT transport encryption: keep server/agent/Redis on a private
+# network or VPN (or terminate TLS at a proxy) for encrypted cross-host traffic.
 
 [agent]
 agent_id = "scrapy-agent-1"
 host = "0.0.0.0"
 port = 6800
 workdir = "/agent-data"
-# Phase 1.5: where the agent POSTs heartbeats, and the agent -> server token.
-# Empty => defaults to DOPILOT_ADMIN_API_TOKEN; an explicit value (or
-# DOPILOT_SERVER_SHARED_TOKEN) must match the server's [agents].server_shared_token.
+# Phase 1.5: where the agent POSTs heartbeats. Phase 2.2.3: agent_token is the
+# single server<->agent machine token (see the header). Empty => machine auth OFF.
 server_url = "http://server:5000"
 heartbeat_interval_seconds = 10
-server_shared_token = ""
-
-[auth]
-# server -> agent token (egg deploy). Empty => defaults to DOPILOT_ADMIN_API_TOKEN;
-# an explicit value (or DOPILOT_AGENT_SHARED_TOKEN) must match the server's
-# [agent_auth].shared_token.
-shared_token = ""
+agent_token = ""
 
 # Phase 2b: the unified agent image ships python + pip, so it can run
 # python_wheel ("script") tasks via `pip install --no-deps --target` + PYTHONPATH.

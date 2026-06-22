@@ -1,9 +1,11 @@
-"""Shared-token bearer auth dependency for protected agent endpoints.
+"""Single-token bearer auth dependency for protected agent endpoints.
 
-When the agent's ``[auth].shared_token`` is empty, auth is OFF and every
+When the agent's ``[agent].agent_token`` is empty, machine auth is OFF and every
 request is allowed (the server simply doesn't send a token). When it is
 non-empty, the incoming ``Authorization: Bearer <token>`` header must match
-exactly, otherwise a 401 envelope is raised.
+exactly, otherwise a 401 envelope is raised. This is the same single
+server<->agent token the agent presents on heartbeat / artifact fetches
+(phase 2.2.3).
 """
 
 from __future__ import annotations
@@ -21,8 +23,8 @@ def require_agent_token(
     authorization: str | None = Header(default=None),
     settings: Settings = Depends(get_settings),
 ) -> None:
-    """Enforce the server->agent shared token when configured."""
-    token = settings.auth.shared_token
+    """Enforce the server<->agent token when configured."""
+    token = settings.agent.agent_token
     if not token:
         # Auth OFF: allow.
         return

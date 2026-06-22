@@ -94,7 +94,7 @@
 | agent command consumer + 状态文件 CAS | 🆕 | consumer group 消费 commands、接现有 `ScrapyRunner`；`attempt_id` 执行幂等 + 两阶段状态文件 CAS（`reserved`→`started`）；启动先处理 pending entries | `refactor/00` |
 | agent event/log publisher + event outbox | 🆕 | status publisher XADD agent-events（event outbox at-least-once）；log publisher tail 本机日志 XADD logs（base64 字节，offset/size_bytes/eof） | `refactor/00` |
 | server event/log consumer + reconcile loop | 🆕 | event consumer 更新 attempt（去重、terminal 不回退）；log consumer 按 offset 串行落盘（gap→`partial` 黏性 + marker）；reconcile loop（heartbeat_timeout/event_stall→`lost` 软 terminal、`stalled` 告警） | `refactor/00`、`03-gap` §4 |
-| heartbeat API + node selection 改 heartbeat | 🆕 | agent 主动 POST `/api/v1/agents/{agent_id}/heartbeat`；server upsert `nodes.last_seen_at`，`healthy=now-last_seen_at<=heartbeat_timeout_seconds`；agent `/health` 降为容器本地 healthcheck；独立 `server_shared_token` | `02-gap` §3、`refactor/00` |
+| heartbeat API + node selection 改 heartbeat | 🆕 | agent 主动 POST `/api/v1/agents/{agent_id}/heartbeat`；server upsert `nodes.last_seen_at`，`healthy=now-last_seen_at<=heartbeat_timeout_seconds`；agent `/health` 降为容器本地 healthcheck；阶段 2.2.3 收敛为单一 `agent_token` 机器认证 | `02-gap` §3、`refactor/00` |
 | 数据模型迁移（Alembic 0003+） | 🆕 | `command_outbox` 表、`execution_log_files.log_integrity`+gap 字段、`execution_attempts.reconciled_from`/`lost_reason`、event dedupe/audit 表、`nodes.last_seen_at` 语义翻转 | `refactor/00` §代码改动范围 |
 | 删除旧 HTTP 主路径 + 测试 | 🆕 | 删/隔离 server→agent run/status/tail 与 `AgentTailLogSource` 主路径（标 legacy）；新增 ack/pending/幂等/offset gap/heartbeat/取消/lost reason 测试矩阵 | `refactor/00` §测试要求、`07-testing-baseline.md` |
 

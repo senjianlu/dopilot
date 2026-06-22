@@ -15,12 +15,15 @@ from typing import Any
 
 from .settings import (
     AgentSettings,
-    AuthSettings,
     Capabilities,
     RedisSettings,
     ScrapydSettings,
     Settings,
 )
+
+# Minimum length for a non-empty server<->agent ``agent_token`` (phase 2.2.3),
+# matching the server-side check.
+_AGENT_TOKEN_MIN_LEN = 16
 
 # Role-specific baked default config path. ``main()`` passes this as
 # ``default_path`` so the unified image runs agent mode without an explicit
@@ -54,16 +57,15 @@ def load_settings(
     passes the baked agent default so the image runs without an explicit
     ``DOPILOT_CONFIG``). Environment overrides applied after parsing:
     ``AGENT_ID`` -> ``[agent].agent_id``, ``AGENT_WORKDIR`` -> ``[agent].workdir``,
-    ``DOPILOT_REDIS_URL`` -> ``[redis].url``, ``DOPILOT_AGENT_SHARED_TOKEN`` ->
-    ``[auth].shared_token`` (server->agent), ``DOPILOT_SERVER_SHARED_TOKEN`` ->
-    ``[agent].server_shared_token`` (agent->server).
+    ``DOPILOT_REDIS_URL`` -> ``[redis].url``, ``DOPILOT_AGENT_TOKEN`` ->
+    ``[agent].agent_token`` (the single server<->agent machine token).
 
-    Single-secret fallback (phase 2.2.2): when a machine token is still empty
-    after overrides, it defaults to ``DOPILOT_ADMIN_API_TOKEN`` (loader-only on
-    the agent — there is no agent settings field for the admin API token). An
-    explicit split-token value (TOML or env) always wins over the fallback. The
-    server is the config authority; the old ``DOPILOT_ADMIN_API_SECRET`` is
-    ignored here and has no effect.
+    Phase 2.2.3 collapsed the split machine tokens into one. The old envs
+    ``DOPILOT_AGENT_SHARED_TOKEN`` / ``DOPILOT_SERVER_SHARED_TOKEN`` and the
+    admin-token fallback (``DOPILOT_ADMIN_API_TOKEN``) no longer fill any agent
+    machine token and have no effect: agents are never given or derive from the
+    admin API token. A non-empty ``agent_token`` shorter than 16 characters
+    raises :class:`ConfigError`; empty/missing keeps machine auth OFF.
     """
     raw_path = (
         path if path is not None else os.environ.get("DOPILOT_CONFIG")
@@ -76,7 +78,6 @@ def load_settings(
     data = _read_toml(Path(raw_path))
 
     agent_section: dict[str, Any] = dict(data.get("agent") or {})
-    auth_section: dict[str, Any] = dict(data.get("auth") or {})
     cap_section: dict[str, Any] = dict(data.get("capabilities") or {})
     scrapyd_section: dict[str, Any] = dict(data.get("scrapyd") or {})
     redis_section: dict[str, Any] = dict(data.get("redis") or {})
@@ -91,28 +92,26 @@ def load_settings(
     if env_redis_url:
         redis_section["url"] = env_redis_url
 
-    # Machine-token env overrides (env wins over TOML), then single-secret
-    # fallback to DOPILOT_ADMIN_API_TOKEN for whichever stays empty.
-    env_agent_shared = os.environ.get("DOPILOT_AGENT_SHARED_TOKEN")
-    if env_agent_shared is not None:
-        auth_section["shared_token"] = env_agent_shared
-    env_server_shared = os.environ.get("DOPILOT_SERVER_SHARED_TOKEN")
-    if env_server_shared is not None:
-        agent_section["server_shared_token"] = env_server_shared
-
-    admin_api_token = (os.environ.get("DOPILOT_ADMIN_API_TOKEN") or "").strip()
-    if admin_api_token:
-        if not str(auth_section.get("shared_token") or "").strip():
-            auth_section["shared_token"] = admin_api_token
-        if not str(agent_section.get("server_shared_token") or "").strip():
-            agent_section["server_shared_token"] = admin_api_token
+    # Single server<->agent machine token (phase 2.2.3): env wins over TOML.
+    # The old split envs and the admin-token fallback were removed and have no
+    # effect — agents never receive or derive from the admin API token.
+    env_agent_token = os.environ.get("DOPILOT_AGENT_TOKEN")
+    if env_agent_token is not None:
+        agent_section["agent_token"] = env_agent_token
 
     if not agent_section.get("agent_id"):
         raise ConfigError("missing required setting: [agent].agent_id")
 
+    token = str(agent_section.get("agent_token") or "").strip()
+    if token and len(token) < _AGENT_TOKEN_MIN_LEN:
+        raise ConfigError(
+            "agent.agent_token is too short: a non-empty server<->agent token "
+            f"must be at least {_AGENT_TOKEN_MIN_LEN} characters "
+            "(set DOPILOT_AGENT_TOKEN or [agent].agent_token, or leave it empty)."
+        )
+
     return Settings(
         agent=AgentSettings(**agent_section),
-        auth=AuthSettings(**auth_section),
         capabilities=Capabilities(**cap_section),
         scrapyd=ScrapydSettings(**scrapyd_section),
         redis=RedisSettings(**redis_section),

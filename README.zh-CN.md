@@ -95,6 +95,7 @@ cd deploy/docker
 cat > .env <<'EOF'
 DOPILOT_ADMIN_PASSWORD=replace-with-admin-login-password
 DOPILOT_ADMIN_API_TOKEN=replace-with-long-random-token
+DOPILOT_AGENT_TOKEN=replace-with-long-random-agent-token
 REDIS_PASSWORD=replace-with-redis-password
 EOF
 docker compose pull
@@ -128,10 +129,39 @@ curl -H "Authorization: Bearer $ACCESS_TOKEN" \
   http://localhost:5000/api/v1/auth/me
 ```
 
-`DOPILOT_ADMIN_API_TOKEN` 是外部提供的静态 admin API token（非空时须 >= 16 字符）。
-未设置 `DOPILOT_AGENT_SHARED_TOKEN` 与 `DOPILOT_SERVER_SHARED_TOKEN` 时，它也作为
-server-agent 机器 token 的默认单一来源。登录/stream 的签名密钥（`token_secret`）是
-另一个仅 TOML 配置、已烤进镜像的值。
+`DOPILOT_ADMIN_API_TOKEN` 是外部提供的静态 admin API token（非空时须 >= 16 字符），
+**仅管理员、仅 server 端**：从不下发给 agent，也不作为机器 token 的来源。
+`DOPILOT_AGENT_TOKEN` 是唯一的 server-agent 机器 token（非空时须 >= 16 字符）：它同时
+认证两个方向（server→agent 部署 egg、agent→server heartbeat），因此 server 与每个
+agent 必须设置**相同的值**；留空则关闭机器认证。登录/stream 的签名密钥
+（`token_secret`）是另一个仅 TOML 配置、已烤进镜像的值。
+
+Token 认证不是传输加密。跨主机要加密时，请把 server、agent、Redis 放在私有网络/VPN
+内，或在反向代理处终止 TLS。
+
+### 拆分部署（server-only / agent-only）
+
+若 server 与 agent 分主机运行，用拆分 compose 文件而非一体栈：
+
+```bash
+cd deploy/docker
+# server-only 栈（db + redis + migrate + server，无 agent）。可省略 DOPILOT_AGENT_TOKEN
+# —— server 首次启动会在数据卷生成并持久化机器令牌（/server-data/secrets/agent-token）。
+docker compose -f docker-compose.server.yml up -d
+
+# 读取（生成或配置的）机器令牌，发给 agent：
+docker exec docker-server-1 dopilot-server agent-token print          # DOPILOT_AGENT_TOKEN=<token> + 提示
+docker exec docker-server-1 dopilot-server agent-token print --quiet  # 仅打印裸令牌
+
+# 在每个 agent 主机：用该令牌（必填、无开发回退）+ server 的 Redis 接入。
+# agent 绝不接收 DOPILOT_ADMIN_API_TOKEN。
+DOPILOT_AGENT_TOKEN=<token-from-server> REDIS_PASSWORD=<server-redis-pass> \
+  REDIS_HOST=<server-host> \
+  docker compose -f docker-compose.agent.yml up -d
+```
+
+一体栈 `docker-compose.yml` 仍用显式共享 `DOPILOT_AGENT_TOKEN`（server 与 agent 同时启动，
+生成的令牌无法传给 agent）。Token 认证仍不是传输加密——见上文说明。
 
 如需用本地源码构建镜像（而非拉取），叠加 build 覆盖文件（smoke 脚本即用此方式）：
 
@@ -184,9 +214,9 @@ NEXT_PUBLIC_API_BASE=http://localhost:5000/api/v1 corepack pnpm --filter web dev
 `DOPILOT_CONFIG` 用于让本地开发进程读取 `configs/` 下的 TOML 配置；
 `DOPILOT_DATABASE_URL` 与 `DOPILOT_REDIS_URL` 可覆盖数据库与 Redis 地址。Web
 管理员认证是 **fail-closed**：除非显式设置 `DOPILOT_AUTH_DISABLED=true`，否则
-`admin_username`、`admin_password`、`token_secret` 必须全部配置。Agent 机器 token
-可通过 `DOPILOT_AGENT_SHARED_TOKEN` 与 `DOPILOT_SERVER_SHARED_TOKEN` 拆分；留空时
-双方回退到有效的 admin API token。
+`admin_username`、`admin_password`、`token_secret` 必须全部配置。server-agent 机器
+认证使用唯一的 `DOPILOT_AGENT_TOKEN`（server 与每个 agent 设相同值）；留空则关闭机器
+认证。admin API token 绝不充当机器 token。
 
 Web 应用是 **Next.js 静态导出**产物（shadcn/ui + react-i18next），由
 `dopilot-server` 在同一容器内托管——没有独立的 Web 容器，也没有 Node 生产运行时。

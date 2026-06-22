@@ -3,30 +3,40 @@
 # Copy to configs/server.toml and edit, or rely on DOPILOT_* environment
 # overrides in Docker deployments.
 # WARNING: every "change-me" value below is a placeholder and is NOT production-safe.
-# Replace admin_password / token_secret / shared_token before any real deployment.
+# Replace admin_password / token_secret / agent_token before any real deployment.
 #
 # Env overrides (phase 2.2): most scalars/secrets below can be overridden by a
 # DOPILOT_* environment variable (env wins over TOML), so real deployments inject
 # secrets without mounting a TOML — e.g. DOPILOT_ADMIN_PASSWORD,
-# DOPILOT_ADMIN_API_TOKEN, DOPILOT_DATABASE_URL, DOPILOT_REDIS_URL,
-# DOPILOT_SERVER_PORT, DOPILOT_SCHEDULER_ENABLED, DOPILOT_AUTH_DISABLED.
+# DOPILOT_ADMIN_API_TOKEN, DOPILOT_AGENT_TOKEN, DOPILOT_DATABASE_URL,
+# DOPILOT_REDIS_URL, DOPILOT_SERVER_PORT, DOPILOT_SCHEDULER_ENABLED,
+# DOPILOT_AUTH_DISABLED.
 # EXCEPTION: token_secret is TOML-only (phase 2.2.2) — it has NO env override.
 #
-# token_secret vs admin_api_token (phase 2.2.2):
-#   - token_secret  = internal HMAC signing key for login access tokens + SSE
-#                     stream tokens. TOML-only, never sent to clients.
+# Two separate tokens (phase 2.2.3) — admin auth and machine auth never mix:
 #   - admin_api_token = externally supplied STATIC admin API token. Clients may
 #                     present it directly as `Authorization: Bearer <token>` to
 #                     authenticate as admin (no login). Set via TOML or
 #                     DOPILOT_ADMIN_API_TOKEN. A non-empty value must be >= 16
-#                     characters. It is ALSO the fallback source for empty
-#                     machine tokens (below).
+#                     characters. It is ADMIN-ONLY: it is NEVER a source for the
+#                     server<->agent machine token.
+#   - [agents].agent_token = the single server<->agent machine token (below). It
+#                     authenticates BOTH directions (server -> agent egg deploy,
+#                     agent -> server heartbeat). No fallback from admin_api_token.
+#   - token_secret  = internal HMAC signing key for login access tokens + SSE
+#                     stream tokens. TOML-only, never sent to clients.
 #
-# Single-secret machine tokens (phase 2.2.2): leave [agent_auth].shared_token and
-# [agents].server_shared_token empty to default them to auth.admin_api_token
-# (DOPILOT_ADMIN_API_TOKEN); set DOPILOT_AGENT_SHARED_TOKEN /
-# DOPILOT_SERVER_SHARED_TOKEN for split tokens. With no admin_api_token and no
-# split tokens, machine auth falls back to OFF (config-present-or-off).
+# Machine auth (phase 2.2.3) is config-present-or-off: it is ON iff
+# [agents].agent_token is non-empty (a non-empty value must be >= 16 chars; set
+# via DOPILOT_AGENT_TOKEN or the field). Leave it empty to disable machine auth.
+# The old split tokens (DOPILOT_AGENT_SHARED_TOKEN / DOPILOT_SERVER_SHARED_TOKEN,
+# [agent_auth].shared_token, [agents].server_shared_token) were removed and have
+# NO effect.
+#
+# NOTE: token auth is NOT transport encryption. For encrypted cross-host traffic
+# put the server, agents, and Redis on a private network / VPN, or terminate TLS
+# at a reverse proxy. The token only proves identity over whatever transport you
+# provide.
 #
 # Web admin auth is FAIL-CLOSED: the server refuses to start unless
 # admin_username + admin_password + token_secret are all non-empty. To run
@@ -37,6 +47,10 @@
 host = "0.0.0.0"
 port = 5000
 public_url = "http://localhost:5000"
+# Server-owned data root (phase 2.2.4). Anchors the auto-generated server<->agent
+# token at <data_dir>/secrets/agent-token (see [agents].agent_token below).
+# Distinct from logs/artifacts roots. Override with DOPILOT_SERVER_DATA_DIR.
+data_dir = "/server-data"
 
 [database]
 url = "postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot"
@@ -47,17 +61,13 @@ admin_password = "change-me"
 # Internal signing key (TOML-only, no env override). This example value is
 # public; replace with your own long random value before any real deployment.
 token_secret = "shLv5qNwC3aViZQYr08x3yfaY6yGZACB6ujydXiVaGnb7OdOflc91xVLyXBoeRDL"
-# Static admin API token: usable directly as `Authorization: Bearer <token>` and
-# the default source for the machine tokens below. Leave empty to disable both;
-# a non-empty value must be >= 16 chars. Override with DOPILOT_ADMIN_API_TOKEN.
+# Static admin API token: usable directly as `Authorization: Bearer <token>`.
+# Admin-only (phase 2.2.3) — it is NOT a source for [agents].agent_token. Leave
+# empty to disable it; a non-empty value must be >= 16 chars. Override with
+# DOPILOT_ADMIN_API_TOKEN.
 admin_api_token = "change-me-admin-api-token"
 access_token_ttl_minutes = 720
 stream_token_ttl_seconds = 60
-
-[agent_auth]
-# server -> agent token (egg deploy over HTTP /addversion.json). Distinct from
-# [agents].server_shared_token below (agent -> server).
-shared_token = "change-me-agent-token"
 
 # Redis Streams transport (phase 1.5). Redis is a message bus, not a database.
 [redis]
@@ -74,11 +84,17 @@ require_aof = true
 heartbeat_timeout_seconds = 30
 stalled_attempt_seconds = 300
 lost_after_stalled_seconds = 900
-# agent -> server token (heartbeat). MUST match the agent's
-# [agent].server_shared_token. Leave empty to default to auth.admin_api_token
-# (single-secret posture), or to disable inbound agent auth when no admin token
-# is set either.
-server_shared_token = "change-me-agent-server-token"
+# The single server<->agent machine token (phase 2.2.3). It MUST match the
+# agent's [agent].agent_token and authenticates BOTH directions (server -> agent
+# egg deploy, agent -> server heartbeat). A non-empty value must be >= 16 chars;
+# set via DOPILOT_AGENT_TOKEN or this field.
+#
+# Phase 2.2.4: leave this EMPTY (and unset DOPILOT_AGENT_TOKEN) to let the server
+# auto-generate + persist a strong token under [server].data_dir on first start
+# (/server-data/secrets/agent-token), reused on restart. Retrieve it with
+# `dopilot-server agent-token print` and set it on every agent. Generation is
+# server-only; `load_settings()` never creates this file (it is a runtime step).
+agent_token = "change-me-agent-token"
 
 [nodes]
 agents = ["localhost:6800"]

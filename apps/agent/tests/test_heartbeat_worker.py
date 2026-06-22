@@ -23,7 +23,7 @@ def _settings(workdir: Path) -> Settings:
             agent_id="agent-test-1",
             workdir=str(workdir),
             server_url="http://server:5000/",
-            server_shared_token="agent-server-tok",
+            agent_token="agent-machine-token",
             advertise_endpoint="agent:6800",
             heartbeat_interval_seconds=1,
         ),
@@ -95,7 +95,7 @@ async def test_send_once_posts_with_token(workdir: Path) -> None:
 
     assert ok is True
     assert captured["url"] == "http://server:5000/api/v1/agents/agent-test-1/heartbeat"
-    assert captured["auth"] == "Bearer agent-server-tok"
+    assert captured["auth"] == "Bearer agent-machine-token"
     assert '"agent_id":"agent-test-1"' in captured["body"]
 
 
@@ -118,7 +118,7 @@ async def test_send_once_no_token_omits_auth_header(workdir: Path) -> None:
         return httpx.Response(200, json={"ok": True, "server_time": "t"})
 
     settings = _settings(workdir)
-    settings.agent.server_shared_token = ""
+    settings.agent.agent_token = ""
     store = _store_with_attempts(workdir, 0)
     worker = HeartbeatWorker(settings=settings, store=store, version="0.1.0")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:

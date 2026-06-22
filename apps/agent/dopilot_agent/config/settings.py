@@ -1,8 +1,8 @@
 """Agent settings models (Pydantic v2).
 
 These mirror the agent-side TOML config. The agent never connects to a
-database; it only knows about itself (id/host/port/workdir), its shared-token
-auth, and which capabilities it advertises.
+database; it only knows about itself (id/host/port/workdir), its single
+server<->agent token, and which capabilities it advertises.
 """
 
 from __future__ import annotations
@@ -14,9 +14,13 @@ class AgentSettings(BaseModel):
     """Identity and HTTP bind settings for this agent.
 
     Phase 1.5 adds the agent -> server contact details: ``server_url`` (where the
-    agent POSTs heartbeats), ``heartbeat_interval_seconds``, and
-    ``server_shared_token`` (the agent -> server token, distinct from the
-    server -> agent :class:`AuthSettings.shared_token`).
+    agent POSTs heartbeats) and ``heartbeat_interval_seconds``.
+
+    Phase 2.2.3 collapses the old split machine tokens (``server_shared_token``
+    agent -> server + ``[auth].shared_token`` server -> agent) into a single
+    ``agent_token`` shared by both directions: the agent presents it on
+    heartbeat / artifact fetches, and requires it on the inbound egg-deploy path.
+    Machine auth is ON iff ``agent_token`` is non-empty.
     """
 
     agent_id: str
@@ -25,24 +29,16 @@ class AgentSettings(BaseModel):
     workdir: str = "/agent-data"
     server_url: str = ""
     heartbeat_interval_seconds: int = 10
-    server_shared_token: str = ""
+    agent_token: str = ""
     # The server-reachable base endpoint this agent advertises in its heartbeat
     # (e.g. "agent:6800" in compose). Used by the surviving egg-deploy HTTP path;
     # empty => not advertised (the server keeps any previously-known endpoint).
     advertise_endpoint: str = ""
 
-
-class AuthSettings(BaseModel):
-    """Server->agent shared-token auth (used by the surviving egg-deploy path).
-
-    Auth is enabled iff ``shared_token`` is non-empty.
-    """
-
-    shared_token: str = ""
-
     @property
-    def enabled(self) -> bool:
-        return bool(self.shared_token)
+    def machine_auth_enabled(self) -> bool:
+        """server<->agent machine auth is ON iff ``agent_token`` is set."""
+        return bool(self.agent_token)
 
 
 class RedisSettings(BaseModel):
@@ -93,7 +89,6 @@ class Settings(BaseModel):
     """Top-level agent settings."""
 
     agent: AgentSettings
-    auth: AuthSettings = Field(default_factory=AuthSettings)
     capabilities: Capabilities = Field(default_factory=Capabilities)
     scrapyd: ScrapydSettings = Field(default_factory=ScrapydSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)

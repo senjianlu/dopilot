@@ -131,7 +131,7 @@ admin_username = "admin"
 admin_password = "change-me"
 # 登录 access token / SSE stream token 的内部 HMAC 签名密钥；仅 TOML 配置，无 env 覆盖。
 token_secret = "shLv5qNwC3aViZQYr08x3yfaY6yGZACB6ujydXiVaGnb7OdOflc91xVLyXBoeRDL"
-# 静态 admin API token；可直接作 Bearer 调用 admin API，也是机器 token 默认回退源。
+# 静态 admin API token；可直接作 Bearer 调用 admin API。仅管理员、仅 server 端，不充当机器 token。
 admin_api_token = "change-me-admin-api-token"
 access_token_ttl_minutes = 720
 ```
@@ -155,22 +155,23 @@ GET /api/v1/executions/{id}/logs/stream?token=...
 
 Agent 不使用管理员账号密码。破坏性重构后 agent 是**主动方**：经 Redis Streams consumer group **主动消费** server 投递的命令（run/stop/cleanup_logs），**主动 XADD** 状态事件与日志事件，并**主动 POST heartbeat** 到 server（需配置 `server_url`）。详见 `refactor/00-redis-streams-agent-communication.md`。
 
-鉴权按方向拆分为两条独立通道，**不复用** 旧 server→agent token：
+机器鉴权（阶段 2.2.3）用**单一** `agent_token` 同时认证 server↔agent 两个方向：
 
-- **agent → server（heartbeat API）**：agent 携带 `server_shared_token` 调 `POST /api/v1/agents/{agent_id}/heartbeat`。
+- **agent → server（heartbeat API）**：agent 携带 `agent_token` 调 `POST /api/v1/agents/{agent_id}/heartbeat`。
+- **server → agent（部署 egg 的 HTTP 路径）**：server 携带同一个 `agent_token`。
 - **agent ↔ Redis**：Redis 启用 AUTH/ACL，agent/server 各自以 Redis 凭据连接消息总线。
 
 ```toml
 [agent]
 server_url = "http://server:5000"
 heartbeat_interval_seconds = 10
-server_shared_token = "change-me-agent-server-token"
+agent_token = "change-me-agent-token"   # 与 server [agents].agent_token 同值
 
 [redis]
 url = "redis://redis:6379/0"
 ```
 
-`server_shared_token` 只用于校验 agent→server 的 heartbeat 请求；agent 仍**不直连 PostgreSQL**（经 Redis 与 server 通信）。默认 Docker 单密钥姿态下，空的机器 token 会从 `DOPILOT_ADMIN_API_TOKEN` 回退，因此 agent 环境会持有可直用的静态 admin API token；如果部署方不接受这个边界，应显式设置 `DOPILOT_AGENT_SHARED_TOKEN` / `DOPILOT_SERVER_SHARED_TOKEN` 拆分机器令牌。**第一版完全不用 WebSocket**：日志正文由 server 端 log consumer 消费 agent→Redis 日志事件后写入，offset 权威仍在 server（PG `last_pulled_offset`）。agent→server 机器认证为 config-present-or-off（`server_shared_token` 配置存在则启用，缺失则关闭）；Web 管理员认证则是 fail-closed（默认要求凭据，仅 `DOPILOT_AUTH_DISABLED=true` 时匿名）。
+`agent_token` 是唯一机器令牌，必须与 server `[agents].agent_token` **同值**；agent 仍**不直连 PostgreSQL**（经 Redis 与 server 通信）。`admin_api_token`（`DOPILOT_ADMIN_API_TOKEN`）**仅管理员、仅 server 端**，绝不下发给 agent、也不充当机器令牌；旧的拆分令牌（`DOPILOT_AGENT_SHARED_TOKEN` / `DOPILOT_SERVER_SHARED_TOKEN`）已删除、无效果。**第一版完全不用 WebSocket**：日志正文由 server 端 log consumer 消费 agent→Redis 日志事件后写入，offset 权威仍在 server（PG `last_pulled_offset`）。机器认证在配置层仍是 config-present-or-off（`agent_token` 非空才启用，非空须 >=16 字符），但阶段 2.2.4 的 server 运行时/CLI 会在未配置时生成并持久化唯一机器令牌（`<server.data_dir>/secrets/agent-token`），因此 server-only 部署最终会以生成令牌开启机器认证；Web 管理员认证则是 fail-closed（默认要求凭据，仅 `DOPILOT_AUTH_DISABLED=true` 时匿名）。Token 认证不是传输加密，跨主机加密仍需 TLS/VPN/私有网络。
 
 ## 6. 实时日志（agent → Redis 推送 + server 消费落盘 + SSE）
 

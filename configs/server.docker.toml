@@ -10,9 +10,9 @@
 # Env overrides (phase 2.2): most scalars/secrets can be overridden by a DOPILOT_*
 # env var (env wins over TOML). The compose stack already injects
 # DOPILOT_DATABASE_URL / DOPILOT_REDIS_URL this way; real deployments should
-# override DOPILOT_ADMIN_PASSWORD / DOPILOT_ADMIN_API_TOKEN rather than editing
-# this file. Web admin auth is fail-closed (the three [auth] creds must be
-# non-empty); DOPILOT_AUTH_DISABLED=true is the dev-only escape hatch.
+# override DOPILOT_ADMIN_PASSWORD / DOPILOT_ADMIN_API_TOKEN / DOPILOT_AGENT_TOKEN
+# rather than editing this file. Web admin auth is fail-closed (the three [auth]
+# creds must be non-empty); DOPILOT_AUTH_DISABLED=true is the dev-only escape hatch.
 # EXCEPTION: token_secret is TOML-only (phase 2.2.2) — it has no env override.
 #
 # The token_secret baked below is a generated long value, NOT a user-specific
@@ -20,16 +20,23 @@
 # it. High-security deployments should override it by mounting their own TOML
 # over /app/configs/server.toml (token_secret has no env override).
 #
-# Single-secret machine tokens (phase 2.2.2): the [agent_auth].shared_token and
-# [agents].server_shared_token fields below are intentionally EMPTY so the loader
-# defaults them to auth.admin_api_token (DOPILOT_ADMIN_API_TOKEN). Set
-# DOPILOT_AGENT_SHARED_TOKEN / DOPILOT_SERVER_SHARED_TOKEN (or fill these fields)
-# to use split tokens instead.
+# Single server<->agent token (phase 2.2.3): [agents].agent_token is intentionally
+# EMPTY so the compose stack injects it via DOPILOT_AGENT_TOKEN (the agents get
+# the SAME value). It is the only machine secret and authenticates both
+# directions; admin_api_token is admin-only and never fills it. The old split
+# tokens / envs were removed and have no effect.
+#
+# Token auth is NOT transport encryption: keep server/agents/Redis on a private
+# network or VPN (or terminate TLS at a proxy) for encrypted cross-host traffic.
 
 [server]
 host = "0.0.0.0"
 port = 5000
 public_url = "http://localhost:5000"
+# Server data root (phase 2.2.4); anchors the auto-generated server<->agent token
+# at /server-data/secrets/agent-token. Matches the mounted dopilot-server-data
+# volume. Override with DOPILOT_SERVER_DATA_DIR.
+data_dir = "/server-data"
 
 [database]
 url = "postgresql+psycopg://dopilot:dopilot@db:5432/dopilot"
@@ -42,16 +49,11 @@ admin_password = "change-me"
 # secret. Override via a mounted TOML for high-security deployments.
 token_secret = "shLv5qNwC3aViZQYr08x3yfaY6yGZACB6ujydXiVaGnb7OdOflc91xVLyXBoeRDL"
 # Static admin API token. Empty here so the compose stack injects it via
-# DOPILOT_ADMIN_API_TOKEN (also the machine-token fallback source). A non-empty
-# value must be >= 16 chars.
+# DOPILOT_ADMIN_API_TOKEN. Admin-only (phase 2.2.3): it never fills the
+# server<->agent token. A non-empty value must be >= 16 chars.
 admin_api_token = ""
 access_token_ttl_minutes = 720
 stream_token_ttl_seconds = 60
-
-[agent_auth]
-# server -> agent token; must match [auth].shared_token in the agent config.
-# Empty => defaults to auth.admin_api_token (single-secret posture).
-shared_token = ""
 
 # Redis reached by its compose SERVICE NAME (redis), with AUTH password.
 [redis]
@@ -67,9 +69,13 @@ require_aof = true
 heartbeat_timeout_seconds = 30
 stalled_attempt_seconds = 300
 lost_after_stalled_seconds = 900
-# agent -> server token; must match [agent].server_shared_token in agent config.
-# Empty => defaults to auth.admin_api_token (single-secret posture).
-server_shared_token = ""
+# The single server<->agent token (phase 2.2.3). Empty here so the compose stack
+# injects it via DOPILOT_AGENT_TOKEN; it must match the agents' [agent].agent_token
+# (the SAME value) and authenticates both directions. Phase 2.2.4: in the
+# server-only stack (docker-compose.server.yml) DOPILOT_AGENT_TOKEN may be omitted
+# too — the server then generates + persists one under [server].data_dir; read it
+# with `dopilot-server agent-token print`.
+agent_token = ""
 
 [nodes]
 # Phase 1.5+ liveness comes from agent heartbeats, not a configured endpoint

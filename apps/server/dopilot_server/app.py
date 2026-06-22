@@ -17,7 +17,9 @@ Entrypoints:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -28,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from .agent_token import ensure_runtime_agent_token
 from .api.v1.router import router as api_v1_router
 from .clients.agent import DEFAULT_TIMEOUT, AgentClient
 from .config.loader import DEFAULT_CONFIG_PATH, get_settings, load_settings
@@ -84,10 +87,19 @@ def _file_under(root: Path, path: str) -> Path | None:
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build and return the FastAPI app.
 
-    ``settings`` may be injected (tests); otherwise the lifespan loads them via
-    the cached ``get_settings`` dependency. The lifespan builds the async
-    session factory and the Redis runtime (dispatcher + consumers + reconcile),
-    and wires the session factory into the ``get_session`` dependency override.
+    ``settings`` may be injected (tests + the ``run()`` runtime); otherwise the
+    lifespan loads them via the cached ``get_settings`` dependency. The lifespan
+    builds the async session factory and the Redis runtime (dispatcher +
+    consumers + reconcile), and wires the session factory into the
+    ``get_session`` dependency override.
+
+    When ``settings`` is injected, it is ALSO wired into the ``get_settings``
+    dependency (phase 2.2.4). Without this, FastAPI dependencies that call
+    ``Depends(get_settings)`` (e.g. heartbeat auth) would read the cached loader
+    settings — which lacks the runtime-generated agent token — while
+    ``AgentClient`` uses the mutated object, leaving heartbeat auth off while
+    egg-deploy auth is on. Tests set their own ``get_settings`` override after
+    ``create_app`` (it wins over this one).
     """
 
     @asynccontextmanager
@@ -129,7 +141,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Surviving server->agent HTTP path: egg deploy only.
             egg_http = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)
             app.state.agent_client = AgentClient(
-                egg_http, active.agent_auth.shared_token
+                egg_http, active.agents.agent_token
             )
 
             redis_client = build_redis(active.redis.url)
@@ -178,6 +190,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await dispose_engines()
 
     app = FastAPI(title="dopilot-server", lifespan=lifespan)
+    if settings is not None:
+        app.dependency_overrides[get_settings] = lambda: settings
     # In-memory SSE fan-out lives on app.state so endpoints can reach it with or
     # without the lifespan having run (ASGITransport tests do not run lifespan).
     app.state.subscriptions = SubscriptionManager()
@@ -240,8 +254,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-def run() -> None:
-    """Console entrypoint: load config, parse bind/port, run uvicorn workers=1."""
+logger = logging.getLogger("dopilot_server")
+
+
+def _agent_token_cli(argv: list[str]) -> int:
+    """``dopilot-server agent-token print [--quiet]`` (phase 2.2.4).
+
+    Loads settings with the SAME default config path as :func:`run`, then reads
+    or generates the persisted server<->agent token. It does NOT require the DB,
+    Redis, the ASGI app, or uvicorn, so it is safe to invoke via
+    ``docker exec <server> dopilot-server agent-token print`` to retrieve the
+    token an operator needs to join an agent.
+    """
+    parser = argparse.ArgumentParser(prog="dopilot-server agent-token")
+    sub = parser.add_subparsers(dest="action", required=True)
+    print_parser = sub.add_parser(
+        "print", help="print the active server<->agent token"
+    )
+    print_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="print only the bare token (no env-var prefix or hints)",
+    )
+    args = parser.parse_args(argv)
+
+    settings = load_settings(default_path=DEFAULT_CONFIG_PATH)
+    result = ensure_runtime_agent_token(settings)
+
+    if args.quiet:
+        print(result.token)
+        return 0
+
+    print(f"DOPILOT_AGENT_TOKEN={result.token}")
+    if result.source == "configured":
+        print("# source: configured ([agents].agent_token / DOPILOT_AGENT_TOKEN)")
+    elif result.source == "disk":
+        print(f"# source: persisted generated token ({result.path})")
+    else:
+        print(f"# source: newly generated and persisted ({result.path})")
+    print(
+        "# Set this DOPILOT_AGENT_TOKEN on every agent so it can join this "
+        "server. Token auth is NOT transport encryption."
+    )
+    return 0
+
+
+def _serve() -> None:
+    """Resolve the runtime token, then run uvicorn workers=1."""
     import uvicorn
 
     parser = argparse.ArgumentParser(prog="dopilot-server")
@@ -252,12 +311,44 @@ def run() -> None:
     # load_settings reads DOPILOT_CONFIG itself when no path is passed, then
     # falls back to the baked server default so the image needs no DOPILOT_CONFIG.
     settings = load_settings(default_path=DEFAULT_CONFIG_PATH)
+
+    # Phase 2.2.4: resolve the single server<->agent token at the runtime
+    # boundary (load_settings stays pure). A configured token wins; otherwise a
+    # token is read-or-generated under server.data_dir and applied to
+    # settings.agents.agent_token BEFORE create_app, so both the outbound
+    # AgentClient (lifespan) and inbound heartbeat auth (Depends(get_settings),
+    # wired by create_app) see the same value.
+    token_result = ensure_runtime_agent_token(settings)
+    if token_result.is_generated_path:
+        # Log a concise join hint once, only for the persisted generated-token
+        # path. Never log the admin API token.
+        logger.warning(
+            "server<->agent machine auth ON using the persisted generated token "
+            "(%s, source=%s). Retrieve it with `dopilot-server agent-token "
+            "print` and set DOPILOT_AGENT_TOKEN on every agent.",
+            token_result.path,
+            token_result.source,
+        )
+
     host = args.bind or settings.server.host
     port = args.port or settings.server.port
 
     # workers=1 is a hard single-instance constraint (in-process scheduler +
     # pull/SSE state are not shared across processes).
     uvicorn.run(create_app(settings), host=host, port=port, workers=1)
+
+
+def run() -> None:
+    """Console entrypoint.
+
+    ``dopilot-server -b <host> -p <port>`` runs the server (the normal command).
+    ``dopilot-server agent-token print [--quiet]`` is the operator subcommand to
+    read/generate the persisted server<->agent token without booting the app.
+    """
+    argv = sys.argv[1:]
+    if argv and argv[0] == "agent-token":
+        raise SystemExit(_agent_token_cli(argv[1:]))
+    _serve()
 
 
 if __name__ == "__main__":
