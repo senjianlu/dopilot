@@ -163,8 +163,8 @@ cd deploy/docker
 docker compose -f docker-compose.server.yml up -d
 
 # Read the (generated or configured) machine token to hand to your agents:
-docker exec docker-server-1 dopilot-server agent-token print          # DOPILOT_AGENT_TOKEN=<token> + hint
-docker exec docker-server-1 dopilot-server agent-token print --quiet  # bare token only
+docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print          # DOPILOT_AGENT_TOKEN=<token> + hint
+docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print --quiet  # bare token only
 
 # On each agent host: join with that token (required, no dev fallback) and the
 # server's Redis. Agents never receive DOPILOT_ADMIN_API_TOKEN.

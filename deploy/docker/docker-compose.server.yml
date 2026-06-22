@@ -13,12 +13,14 @@
 # token is omitted, the server GENERATES and PERSISTS one under its data volume
 # (/server-data/secrets/agent-token) on first start and reuses it on restart.
 #
-# Retrieve the generated token (to configure your agents) with:
-#   docker exec <server-container> dopilot-server agent-token print
-#   docker exec <server-container> dopilot-server agent-token print --quiet
-# (the container name is typically docker-server-1; check `docker compose
-#  -f docker-compose.server.yml ps`). Then set that value as DOPILOT_AGENT_TOKEN
-# in docker-compose.agent.yml on each agent host.
+# Retrieve the generated token (to configure your agents) with the Compose
+# service name instead of guessing the generated container name:
+#   docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print
+#   docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print --quiet
+# Check actual container names only when needed with:
+#   docker compose -f docker-compose.server.yml ps
+# Then set that value as DOPILOT_AGENT_TOKEN in docker-compose.agent.yml on each
+# agent host.
 #
 # To pin the token explicitly instead of generating it, set DOPILOT_AGENT_TOKEN
 # (>= 16 chars) in your shell / .env before `up`.

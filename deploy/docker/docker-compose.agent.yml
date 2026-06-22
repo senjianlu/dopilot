@@ -8,7 +8,7 @@
 # Required env (no dev fallbacks — the agent must be told how to join):
 #   DOPILOT_AGENT_TOKEN   The single server<->agent machine token. It MUST equal
 #                         the server's token. Retrieve it on the server host with:
-#                           docker exec <server> dopilot-server agent-token print
+#                           docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print
 #                         A non-empty value must be >= 16 characters.
 #   REDIS_PASSWORD        Redis AUTH password of the server's Redis (used to build
 #                         the Redis URL below), OR set DOPILOT_REDIS_URL directly.
@@ -49,7 +49,7 @@ services:
       DOPILOT_REDIS_URL: ${DOPILOT_REDIS_URL:-redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD or DOPILOT_REDIS_URL}@${REDIS_HOST:-host.docker.internal}:6379/0}
       # The single server<->agent machine token. REQUIRED — no dev fallback. Must
       # match the server's token; agents never get DOPILOT_ADMIN_API_TOKEN.
-      DOPILOT_AGENT_TOKEN: ${DOPILOT_AGENT_TOKEN:?set DOPILOT_AGENT_TOKEN to the server's machine token (docker exec <server> dopilot-server agent-token print)}
+      DOPILOT_AGENT_TOKEN: ${DOPILOT_AGENT_TOKEN:?set DOPILOT_AGENT_TOKEN to the server's machine token (docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print)}
     volumes:
       - dopilot-agent-remote1-data:/agent-data
     healthcheck:
