@@ -150,8 +150,8 @@ cd deploy/docker
 docker compose -f docker-compose.server.yml up -d
 
 # 读取（生成或配置的）机器令牌，发给 agent：
-docker exec docker-server-1 dopilot-server agent-token print          # DOPILOT_AGENT_TOKEN=<token> + 提示
-docker exec docker-server-1 dopilot-server agent-token print --quiet  # 仅打印裸令牌
+docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print          # DOPILOT_AGENT_TOKEN=<token> + 提示
+docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print --quiet  # 仅打印裸令牌
 
 # 在每个 agent 主机：用该令牌（必填、无开发回退）+ server 的 Redis 接入。
 # agent 绝不接收 DOPILOT_ADMIN_API_TOKEN。

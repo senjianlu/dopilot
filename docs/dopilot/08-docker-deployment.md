@@ -450,8 +450,8 @@ agent_token = ""
 
 - **取令牌**（server-only 部署后，配置 agent 用）：
   ```bash
-  docker exec <server-container> dopilot-server agent-token print           # DOPILOT_AGENT_TOKEN=<token> + 提示
-  docker exec <server-container> dopilot-server agent-token print --quiet   # 仅打印裸令牌
+  docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print           # DOPILOT_AGENT_TOKEN=<token> + 提示
+  docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print --quiet   # 仅打印裸令牌
   ```
   该 CLI 用与 `run()` 相同的默认配置路径加载 settings，**不需要 DB/Redis/ASGI 启动**，读或生成持久化令牌后打印。把打印出的值设为每个 agent 的 `DOPILOT_AGENT_TOKEN` 即可接入。
 
