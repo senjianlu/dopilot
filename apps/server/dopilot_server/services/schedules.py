@@ -10,9 +10,14 @@ routed through :func:`dispatch.run_execution_template` so they share one path:
 - :func:`fire_timer` — what the APScheduler runner calls on each tick
   (``source=schedule_timer``). Subject to the schedule-keyed coalesce: it is
   suppressed only when the schedule already has an UNDISPATCHED backlog task
-  (Redis-outage backlog), never because a prior run is merely running.
+  (Redis-outage backlog), never because a prior run is merely running. Phase
+  2.2: it also defensively no-ops for a disabled schedule.
 
-Pause/resume is out of scope; there is no paused state.
+Phase 2.2: schedules carry a row-level ``enabled`` flag (default false). Only
+enabled schedules are registered with APScheduler and fire on a timer; disabled
+schedules stay listable/editable/deletable and remain manually runnable via
+:func:`trigger_now`. This is the "pause/resume" of timer firing (distinct from
+the global ``[scheduler].enabled``).
 """
 
 from __future__ import annotations
@@ -72,6 +77,27 @@ def _validate_trigger(data: dict[str, Any]) -> None:
             ) from None
 
 
+async def _ensure_unique_name(
+    session: AsyncSession, name: str, *, exclude_id: str | None = None
+) -> None:
+    """Raise 409 if another schedule already uses ``name`` (phase 2.2).
+
+    Checked in service code before commit so the API returns a deterministic
+    ``schedule.name_conflict`` instead of a raw DB IntegrityError. ``exclude_id``
+    excludes the row being updated (rename self-exclusion).
+    """
+    stmt = select(Schedule.id).where(Schedule.name == name)
+    if exclude_id is not None:
+        stmt = stmt.where(Schedule.id != exclude_id)
+    if (await session.execute(stmt.limit(1))).first() is not None:
+        raise ApiError(
+            409,
+            "schedule.name_conflict",
+            "errors.scheduleNameConflict",
+            {"name": name},
+        )
+
+
 async def create_schedule(
     session: AsyncSession, data: dict[str, Any]
 ) -> Schedule:
@@ -80,6 +106,7 @@ async def create_schedule(
             400, "schedule.invalid_params", "errors.invalidParams",
             {"missing": ["name"]},
         )
+    await _ensure_unique_name(session, str(data["name"]).strip())
     # execution template must exist (FK + a friendly 404-equivalent at create).
     template = await templates.get_template_or_404(
         session, data.get("execution_template_id") or ""
@@ -93,6 +120,9 @@ async def create_schedule(
         id=new_id(),
         name=str(data["name"]).strip(),
         description=data.get("description"),
+        # Phase 2.2: default disabled when omitted; only an explicit true enables
+        # timer firing. trigger-now works regardless.
+        enabled=bool(data.get("enabled", False)),
         execution_template_id=str(data["execution_template_id"]),
         trigger_type=trigger_type,
         interval_seconds=(
@@ -116,9 +146,13 @@ async def update_schedule(
         )
         schedule.execution_template_id = str(data["execution_template_id"])
     if "name" in data and (data.get("name") or "").strip():
-        schedule.name = str(data["name"]).strip()
+        new_name = str(data["name"]).strip()
+        await _ensure_unique_name(session, new_name, exclude_id=schedule.id)
+        schedule.name = new_name
     if "description" in data:
         schedule.description = data["description"]
+    if "enabled" in data:
+        schedule.enabled = bool(data["enabled"])
     if "overrides" in data:
         template = await templates.get_template_or_404(
             session, schedule.execution_template_id
@@ -175,8 +209,24 @@ async def get_schedule_or_404(
 async def list_schedules(
     session: AsyncSession, limit: int = 200
 ) -> list[Schedule]:
+    """All schedules (enabled and disabled). The shared API list path uses this
+    so disabled rows stay visible to users and to later reconcile work."""
     result = await session.execute(
         select(Schedule).order_by(Schedule.created_at.desc()).limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def list_enabled_schedules(
+    session: AsyncSession, limit: int = 200
+) -> list[Schedule]:
+    """Only enabled schedules — what :class:`ScheduleRunner` registers (phase
+    2.2). Disabled schedules are never given an APScheduler job."""
+    result = await session.execute(
+        select(Schedule)
+        .where(Schedule.enabled.is_(True))
+        .order_by(Schedule.created_at.desc())
+        .limit(limit)
     )
     return list(result.scalars().all())
 
@@ -219,8 +269,12 @@ async def fire_timer(
     """Timer firing: create+dispatch a task UNLESS undispatched backlog exists.
 
     Returns the run response, or ``None`` when the firing was coalesced away
-    because the schedule still has an undispatched backlog task (Redis outage).
+    because the schedule still has an undispatched backlog task (Redis outage),
+    or when the schedule is disabled (defensive: the runner only registers
+    enabled schedules, but a schedule may be disabled between reload and tick).
     """
+    if not schedule.enabled:
+        return None
     if await has_undispatched_backlog_for_schedule(session, schedule.id):
         return None
     template = await templates.get_template_or_404(
@@ -296,6 +350,7 @@ def schedule_view(
         "id": schedule.id,
         "name": schedule.name,
         "description": schedule.description,
+        "enabled": schedule.enabled,
         "execution_template_id": schedule.execution_template_id,
         "trigger_type": schedule.trigger_type,
         "interval_seconds": schedule.interval_seconds,

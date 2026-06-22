@@ -84,6 +84,8 @@ async def _seed_schedule(session, **overrides):
             "name": "every-30s",
             "execution_template_id": template.id,
             "interval_seconds": 30,
+            # Phase 2.2: only enabled schedules are registered by the runner.
+            "enabled": True,
             **overrides,
         },
     )
@@ -191,6 +193,7 @@ async def test_runner_reload_syncs_added_and_removed_jobs(
                 "name": "s2",
                 "execution_template_id": template.id,
                 "interval_seconds": 60,
+                "enabled": True,
             },
         )
         await db_session.commit()
@@ -205,6 +208,45 @@ async def test_runner_reload_syncs_added_and_removed_jobs(
         await db_session.commit()
         await runner.reload()
         assert {j.id for j in runner._scheduler.get_jobs()} == {second.id}
+    finally:
+        await runner.stop()
+
+
+async def test_reload_skips_disabled_schedules(
+    db_session, exec_settings, test_sessionmaker, exec_redis
+):
+    # One enabled + one disabled schedule on the same template; only the enabled
+    # one gets an APScheduler job after reload (phase 2.2).
+    template, enabled = await _seed_schedule(db_session)
+    disabled = await sched_svc.create_schedule(
+        db_session,
+        {
+            "name": "paused",
+            "execution_template_id": template.id,
+            "interval_seconds": 60,
+            "enabled": False,
+        },
+    )
+    await db_session.commit()
+    runner = ScheduleRunner(
+        test_sessionmaker,
+        exec_settings,
+        _dispatcher(test_sessionmaker, exec_redis),
+    )
+    await runner.start()
+    try:
+        job_ids = {j.id for j in runner._scheduler.get_jobs()}
+        assert job_ids == {enabled.id}
+        assert disabled.id not in job_ids
+
+        # Enable the paused schedule, reload: now it registers too.
+        await sched_svc.update_schedule(db_session, disabled, {"enabled": True})
+        await db_session.commit()
+        await runner.reload()
+        assert {j.id for j in runner._scheduler.get_jobs()} == {
+            enabled.id,
+            disabled.id,
+        }
     finally:
         await runner.stop()
 

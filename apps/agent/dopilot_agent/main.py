@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse
 
 from . import __version__
 from .api.router import api_router
-from .config.loader import get_settings, load_settings
+from .config.loader import DEFAULT_CONFIG_PATH, get_settings, load_settings
 from .config.settings import Settings
 from .deps import build_runtime
 from .errors import AgentError
@@ -128,7 +128,9 @@ def main() -> None:
     parser.add_argument("-p", "--port", type=int, default=None, help="port to bind")
     args = parser.parse_args()
 
-    settings = load_settings()
+    # load_settings reads DOPILOT_CONFIG itself when no path is passed, then
+    # falls back to the baked agent default so the image needs no DOPILOT_CONFIG.
+    settings = load_settings(default_path=DEFAULT_CONFIG_PATH)
     host = args.bind or settings.agent.host
     port = args.port or settings.agent.port
 

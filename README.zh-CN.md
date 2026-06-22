@@ -92,6 +92,11 @@ agent 环境中。
 
 ```bash
 cd deploy/docker
+cat > .env <<'EOF'
+DOPILOT_ADMIN_PASSWORD=replace-with-admin-login-password
+DOPILOT_ADMIN_API_SECRET=replace-with-long-random-secret
+REDIS_PASSWORD=replace-with-redis-password
+EOF
 docker compose pull
 docker compose up -d
 ```
@@ -100,6 +105,24 @@ docker compose up -d
 单副本运行（进程内调度器 + 进程内 SSE 表）。可用 `DOPILOT_IMAGE` 覆盖镜像（默认
 `rabbir/dopilot:latest`）。
 
+API 客户端需要先用单管理员账号登录，拿返回的 opaque access token 调用接口：
+
+```bash
+ACCESS_TOKEN=$(
+  curl -s http://localhost:5000/api/v1/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"'"$DOPILOT_ADMIN_PASSWORD"'"}' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'
+)
+
+curl -H "Authorization: Bearer $ACCESS_TOKEN" \
+  http://localhost:5000/api/v1/auth/me
+```
+
+`DOPILOT_ADMIN_API_SECRET` 是服务端用于保护这些 opaque token 的 secret。未设置
+`DOPILOT_AGENT_SHARED_TOKEN` 与 `DOPILOT_SERVER_SHARED_TOKEN` 时，它也作为
+server-agent 机器 token 的默认单一来源。
+
 如需用本地源码构建镜像（而非拉取），叠加 build 覆盖文件（smoke 脚本即用此方式）：
 
 ```bash
@@ -107,10 +130,9 @@ cd deploy/docker
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
-> compose 配置设置了 `[auth]`，因此 Web 认证在那里是**开启**的。默认的 `change-me`
-> 凭据不可用于生产——对外暴露前请先修改。默认 TOML 已内置在镜像中；需要真实密钥时，
-> 请通过 compose override 把修改后的配置挂载到 `/app/configs/server.toml` 与
-> `/app/configs/agent.toml`。
+> compose 配置保持 Web 认证**开启**，Redis 密码认证也默认开启。默认的 `change-me`
+> fallback 仅适合开发；对外暴露前请先设置上面的 `.env`。Docker 镜像已内置
+> server/agent 默认 TOML，compose 栈不需要配置 `DOPILOT_CONFIG`。
 
 ## 本地开发
 
@@ -149,9 +171,12 @@ NEXT_PUBLIC_API_BASE=http://localhost:5000/api/v1 corepack pnpm --filter web dev
 
 本地 Redis 可用 `docker stop dopilot-redis-dev` 停止。
 
-`DOPILOT_CONFIG` 指向 `configs/` 下的 TOML 配置；`DOPILOT_DATABASE_URL` 与
-`DOPILOT_REDIS_URL` 可覆盖数据库与 Redis 地址。Web 认证与 agent 认证均为
-**config-present-or-off**：仅在对应凭据齐全时启用。
+`DOPILOT_CONFIG` 用于让本地开发进程读取 `configs/` 下的 TOML 配置；
+`DOPILOT_DATABASE_URL` 与 `DOPILOT_REDIS_URL` 可覆盖数据库与 Redis 地址。Web
+管理员认证是 **fail-closed**：除非显式设置 `DOPILOT_AUTH_DISABLED=true`，否则
+`admin_username`、`admin_password`、`token_secret` 必须全部配置。Agent 机器 token
+可通过 `DOPILOT_AGENT_SHARED_TOKEN` 与 `DOPILOT_SERVER_SHARED_TOKEN` 拆分；留空时
+双方回退到有效的 admin API secret。
 
 Web 应用是 **Next.js 静态导出**产物（shadcn/ui + react-i18next），由
 `dopilot-server` 在同一容器内托管——没有独立的 Web 容器，也没有 Node 生产运行时。

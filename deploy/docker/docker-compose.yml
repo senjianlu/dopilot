@@ -22,11 +22,34 @@
 #
 # The stack runs PostgreSQL, Redis, a one-shot migration, three Scrapy agents,
 # and one server.
+#
+# ---------------------------------------------------------------------------
+# Deployment env (set these in your shell or a .env file next to this compose):
+#
+#   Required (change before any real deployment — the defaults are dev-only):
+#     DOPILOT_ADMIN_PASSWORD     Web admin login password (server [auth]).
+#     DOPILOT_ADMIN_API_SECRET   Admin API secret. ALSO the single source for the
+#                                server<->agent machine tokens: when the split
+#                                tokens below are unset, both sides derive their
+#                                shared token from this value, so it must be
+#                                injected into the server AND every agent.
+#     REDIS_PASSWORD             Redis AUTH password (used in the redis URL).
+#
+#   Optional (advanced — only if you want SPLIT machine tokens instead of the
+#   single DOPILOT_ADMIN_API_SECRET): uncomment in the server + agent services.
+#     DOPILOT_AGENT_SHARED_TOKEN   server -> agent token (egg deploy).
+#     DOPILOT_SERVER_SHARED_TOKEN  agent -> server token (heartbeat).
+#
+# The config TOML path is an internal image detail (baked per role into each
+# entrypoint); compose does NOT set DOPILOT_CONFIG. Redis is never published to a
+# host port and keeps password AUTH on by default.
+# ---------------------------------------------------------------------------
 
 # Shared agent definition. The three agents differ only by AGENT_ID + data
 # volume; the agent config loader lets AGENT_ID / AGENT_WORKDIR / DOPILOT_REDIS_URL
-# env vars override the baked TOML. Each advertises endpoint=None, so its node
-# endpoint becomes the distinct `agent://{agent_id}` => three distinct nodes.
+# env vars override the baked TOML (read from the role default /app/configs/agent.toml
+# — no DOPILOT_CONFIG needed). Each advertises endpoint=None, so its node endpoint
+# becomes the distinct `agent://{agent_id}` => three distinct nodes.
 x-agent: &agent
   image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
   command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
@@ -111,10 +134,14 @@ services:
   scrapy-agent-1:
     <<: *agent
     environment:
-      DOPILOT_CONFIG: /app/configs/agent.toml
       AGENT_ID: scrapy-agent-1
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      # Single secret: both server<->agent machine tokens derive from this unless
+      # the optional split tokens below are set.
+      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
+      # DOPILOT_AGENT_SHARED_TOKEN: ${DOPILOT_AGENT_SHARED_TOKEN:-}
+      # DOPILOT_SERVER_SHARED_TOKEN: ${DOPILOT_SERVER_SHARED_TOKEN:-}
     volumes:
       - dopilot-agent1-data:/agent-data
     ports:
@@ -127,20 +154,24 @@ services:
   scrapy-agent-2:
     <<: *agent
     environment:
-      DOPILOT_CONFIG: /app/configs/agent.toml
       AGENT_ID: scrapy-agent-2
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
+      # DOPILOT_AGENT_SHARED_TOKEN: ${DOPILOT_AGENT_SHARED_TOKEN:-}
+      # DOPILOT_SERVER_SHARED_TOKEN: ${DOPILOT_SERVER_SHARED_TOKEN:-}
     volumes:
       - dopilot-agent2-data:/agent-data
 
   scrapy-agent-3:
     <<: *agent
     environment:
-      DOPILOT_CONFIG: /app/configs/agent.toml
       AGENT_ID: scrapy-agent-3
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
+      # DOPILOT_AGENT_SHARED_TOKEN: ${DOPILOT_AGENT_SHARED_TOKEN:-}
+      # DOPILOT_SERVER_SHARED_TOKEN: ${DOPILOT_SERVER_SHARED_TOKEN:-}
     volumes:
       - dopilot-agent3-data:/agent-data
 
@@ -149,9 +180,15 @@ services:
     command: ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
     init: true
     environment:
-      DOPILOT_CONFIG: /app/configs/server.toml
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      # Web admin password + admin API secret (override the dev-only defaults).
+      DOPILOT_ADMIN_PASSWORD: ${DOPILOT_ADMIN_PASSWORD:-change-me}
+      # Also the single source for the server<->agent machine tokens (see header).
+      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
+      # Optional split machine tokens (override the DOPILOT_ADMIN_API_SECRET fallback):
+      # DOPILOT_AGENT_SHARED_TOKEN: ${DOPILOT_AGENT_SHARED_TOKEN:-}
+      # DOPILOT_SERVER_SHARED_TOKEN: ${DOPILOT_SERVER_SHARED_TOKEN:-}
     volumes:
       - dopilot-server-data:/server-data
     ports:

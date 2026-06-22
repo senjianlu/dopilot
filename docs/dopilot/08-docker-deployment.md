@@ -24,7 +24,7 @@
 | server 数据边界 | 只有 server 连接 PostgreSQL；agent 和 web 不直连数据库。 |
 | 日志链路 | **agent 经 Redis log stream 主动推增量，server 消费后落盘**：agent tail 本地 `job.log` 按字节 offset `XADD dopilot:server:logs`（base64 字节）→ server log consumer 写 `/server-data/logs` 正文 + 更新 PG 索引/offset → 经 **SSE** 单向推给 web。四个不变量保留：**第一版完全不使用 WebSocket、server→web SSE、正文落 `/server-data/logs`、PG 只存索引/offset/状态**。日志 RPO≠0（server 长停或 Redis 裁剪致 partial，详见 `docs/refactor/00-redis-streams-agent-communication.md`）。 |
 | 单实例硬约束 | server = 单容器 + **uvicorn workers=1** + 单 APScheduler 实例。**不支持多副本/多 worker，未来也不做** —— 不引入 Redis 做多副本 HA/fan-out/选主/分布式锁；server→web SSE fan-out 仍在单进程内存完成。**显式允许 Redis 作单实例 server↔agent 通信总线**（命令/事件/日志三条 stream + heartbeat HTTP，详见 `docs/refactor/00-redis-streams-agent-communication.md`）。 |
-| 认证 | **config-present-or-off**：`admin_username + admin_password + token_secret` 三者齐全且非空才启用 Web 认证；**agent→server heartbeat 用独立 `server_shared_token`（不复用旧 server→agent token），Redis 启用 AUTH/ACL**；SSE `stream_token` 仅在 Web 认证开启时需要。内网防误操作策略，非互联网零信任。 |
+| 认证 | **Web 管理员认证 fail-closed（阶段 2.2）**：经 `load_settings()` 启动时 `admin_username + admin_password + token_secret` 三者必须齐全且非空，否则抛 `ConfigError` 拒绝启动；开发环境如需匿名管理员模式，必须显式设 `DOPILOT_AUTH_DISABLED=true`（不再以"缺配置即静默关闭"进入匿名）。**agent→server heartbeat 用独立 `server_shared_token`（config-present-or-off：非空才校验，不复用旧 server→agent token），Redis 启用 AUTH/ACL**；SSE `stream_token` 仅在 Web 认证开启时需要。内网防误操作策略，非互联网零信任。 |
 
 ---
 
@@ -37,7 +37,7 @@
 | APScheduler jobstore | reference 默认 SQLite jobstore；dopilot 使用 PostgreSQL-backed jobstore 或自有 scheduler 表 | 定时任务必须落 PostgreSQL，并受 Alembic/迁移策略管理 |
 | 进程内调度器 | `BackgroundScheduler`，进程内线程，`scheduler.start(paused=True)`（`scheduler.py:45,90`） | 单进程单实例假设；**多副本会重复触发**定时任务 |
 | 后台子进程 | LogParser 与 Poll 两个 `Popen` 子进程，靠 `prctl(PR_SET_PDEATHSIG)` 跟随父进程退出（`sub_process.py`） | 与容器「单进程」哲学冲突；属 server 角色，不应进 agent 镜像 |
-| 配置文件 | （scrapydweb 行为参考）文件名硬编码 `scrapydweb_settings_v11.py`（`vars.py:29`），从 `os.getcwd()` 加载（`run.py:37,124`） | dopilot **不沿用**此形态：dopilot 以 toml 配置（`configs/server.toml`）经自有加载器读取，容器内通过 `DOPILOT_CONFIG` 环境变量（或挂载 `configs/`）指定路径，无 cwd 硬编码文件名约束 |
+| 配置文件 | （scrapydweb 行为参考）文件名硬编码 `scrapydweb_settings_v11.py`（`vars.py:29`），从 `os.getcwd()` 加载（`run.py:37,124`） | dopilot **不沿用**此形态：dopilot 以 toml 配置经自有加载器读取；Docker 镜像内置 server/agent 角色默认配置路径，部署配置主要用 `DOPILOT_*` 环境变量覆盖，无 cwd 硬编码文件名约束 |
 
 ---
 
@@ -261,10 +261,10 @@ services:
   scrapy-agent-1:
     <<: *agent
     environment:
-      DOPILOT_CONFIG: /app/configs/agent.toml
       AGENT_ID: scrapy-agent-1
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
     volumes:
       - dopilot-agent1-data:/agent-data
     ports:
@@ -273,20 +273,20 @@ services:
   scrapy-agent-2:
     <<: *agent
     environment:
-      DOPILOT_CONFIG: /app/configs/agent.toml
       AGENT_ID: scrapy-agent-2
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
     volumes:
       - dopilot-agent2-data:/agent-data
 
   scrapy-agent-3:
     <<: *agent
     environment:
-      DOPILOT_CONFIG: /app/configs/agent.toml
       AGENT_ID: scrapy-agent-3
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
     volumes:
       - dopilot-agent3-data:/agent-data
 
@@ -295,9 +295,10 @@ services:
     command: ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
     init: true
     environment:
-      DOPILOT_CONFIG: /app/configs/server.toml
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      DOPILOT_ADMIN_PASSWORD: ${DOPILOT_ADMIN_PASSWORD:-change-me}
+      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
     volumes:
       - dopilot-server-data:/server-data
     ports:
@@ -341,8 +342,15 @@ public_url = "http://localhost:5000"
 [database]
 url = "postgresql+psycopg://dopilot:dopilot@db:5432/dopilot"
 
+# [auth] fail-closed（阶段 2.2）：load_settings() 启动时三者必须齐全且非空，否则
+# 抛 ConfigError 拒绝启动。开发环境如需匿名管理员模式，显式设 DOPILOT_AUTH_DISABLED=true。
+# 任意标量/密钥可被 DOPILOT_* 环境变量覆盖（env 优先于 TOML），例如：
+#   DOPILOT_ADMIN_PASSWORD / DOPILOT_ADMIN_API_SECRET（admin token secret，原 DOPILOT_TOKEN_SECRET 已改名，无兼容别名）
+#   DOPILOT_SERVER_PORT / DOPILOT_SCHEDULER_ENABLED / DOPILOT_AUTH_DISABLED …
+# 单密钥机器令牌（阶段 2.2.1）：[agent_auth].shared_token / [agents].server_shared_token 留空时，
+# 加载器回退为有效 admin API secret（auth.token_secret / DOPILOT_ADMIN_API_SECRET）；
+# 需要拆分令牌再设 DOPILOT_AGENT_SHARED_TOKEN / DOPILOT_SERVER_SHARED_TOKEN。
 [auth]
-# config-present-or-off：三者齐全且非空才启用 Web 认证；任一为空则 Web 认证关闭（内网防误操作策略，非互联网零信任）
 admin_username = "admin"
 admin_password = "change-me"
 token_secret = "change-me"
@@ -351,8 +359,8 @@ access_token_ttl_minutes = 720
 stream_token_ttl_seconds = 60
 
 [agent_auth]
-# shared_token 非空才启用 agent 认证；为空则不校验
-shared_token = "change-me-agent-token"
+# server→agent token；留空则回退为有效 admin API secret（单密钥姿态）。
+shared_token = ""
 
 [nodes]
 # 节点不再靠 server 轮询 /health 发现/判健康；改为 agent 主动 POST heartbeat，server 以 last_seen_at 判健康。
@@ -373,7 +381,7 @@ require_aof = true                          # 生产启用 AOF
 heartbeat_timeout_seconds = 30              # now - last_seen_at 超此值判 agent 不健康，不再投递新任务
 stalled_attempt_seconds = 300              # heartbeat 正常但 attempt 长时间无状态事件 → operator-visible stalled 告警
 lost_after_stalled_seconds = 900           # event_stall 持续超此值 → 对账 loop 转 lost（同时投 stop intent=reclaim）
-server_shared_token = "change-me-agent-server-token"  # agent→server heartbeat 鉴权；须与 agent [agent].server_shared_token 一致
+server_shared_token = ""  # agent→server heartbeat 鉴权；留空则回退为有效 admin API secret（单密钥姿态）
 
 [scheduler]
 enabled = true
@@ -415,8 +423,8 @@ event_outbox_dir = "/agent-data/outbox"          # 状态事件/日志 outbox（
 agent_id = "agent-01"                            # 稳定标识；command stream 路由 / heartbeat 携带
 server_url = "http://server:5000"                # 主动 POST heartbeat 的目标
 heartbeat_interval_seconds = 10                  # 周期 POST /api/v1/agents/{agent_id}/heartbeat
-# agent→server 鉴权独立 token，不复用旧 server→agent token
-server_shared_token = "change-me-agent-server-token"
+# agent→server 鉴权独立 token，不复用旧 server→agent token；留空则回退为 DOPILOT_ADMIN_API_SECRET（单密钥姿态）
+server_shared_token = ""
 ```
 
 
@@ -426,7 +434,8 @@ server_shared_token = "change-me-agent-server-token"
 
 | 容器 | 必要参数 | 说明 |
 | --- | --- | --- |
-| `server` | `DOPILOT_CONFIG=/app/configs/server.toml` | 显式指定配置路径，不使用 cwd 魔法。 |
+| `server` | 角色默认配置路径 `/app/configs/server.toml`（烤进 `dopilot-server` 入口） | compose 不需要配置路径环境变量；常规部署通过 `DOPILOT_*` 覆盖，进阶部署可把自有 toml 挂载到该默认路径；不使用 cwd 魔法。 |
+| `server` | `DOPILOT_ADMIN_PASSWORD` / `DOPILOT_ADMIN_API_SECRET` | Web 管理员密码 + admin API secret；后者亦为 server↔agent 机器令牌的单一来源（拆分令牌未设时双方据此派生），故须注入 server 与每个 agent。 |
 | `server` | `DOPILOT_DATABASE_URL=postgresql+psycopg://...` | 指向 PostgreSQL；可覆盖 toml `[database].url`。 |
 | `server` | `5000:5000` | API/SSE 入口，并**同源托管** Web 静态产物（阶段 2.1：Next.js 静态导出 `/app/web`，无独立 Web 容器）；外层用户托管层（可选反代）也通过该地址访问 `/api/v1`。 |
 | `server` | 内置 `/app/configs/server.toml`（烤进镜像，源自 `configs/server.docker.toml`） | compose 网络配置；默认无需挂载，要定制时把自有 toml 只读挂到该路径。 |
@@ -442,7 +451,7 @@ server_shared_token = "change-me-agent-server-token"
 | `scrapy-agent-1/2/3` | `init: true` | agent 作 PID 1，收割 scrapyd 子进程；本机 scrapyd 内部端口（如 6801）仅本机可见，不再对外暴露 server→agent 调度端口（仅 `scrapy-agent-1` 发布 6800 供 smoke/调试）。 |
 | `scrapy-agent-1/2/3` | `dopilot-agent{1,2,3}-data:/agent-data` | 每个 agent 各自的数据卷：scrapyd `job.log` + `/agent-data/state/executions/{attempt_id}.json` 映射 + Redis event/log outbox；server drain 完成前不得删 `job.log`。 |
 
-三个对称 agent（`scrapy-agent-1/2/3`，阶段 1 即落地）共用镜像内置的 `/app/configs/agent.toml`，仅 `AGENT_ID` 与数据卷不同；compose 为每个 agent 注入 `DOPILOT_CONFIG`、稳定 `AGENT_ID`、`AGENT_WORKDIR`、`DOPILOT_REDIS_URL`。heartbeat 目标从 `[agent].server_url` 读取，当前提交未通过 `DOPILOT_SERVER_URL` 环境变量注入。
+三个对称 agent（`scrapy-agent-1/2/3`，阶段 1 即落地）共用镜像内置的 `/app/configs/agent.toml`（由 `dopilot-agent` 入口的角色默认路径读取，compose 不再注入 `DOPILOT_CONFIG`），仅 `AGENT_ID` 与数据卷不同；compose 为每个 agent 注入稳定 `AGENT_ID`、`AGENT_WORKDIR`、`DOPILOT_REDIS_URL`、`DOPILOT_ADMIN_API_SECRET`（机器令牌单一来源）。heartbeat 目标从 `[agent].server_url` 读取，当前提交未通过 `DOPILOT_SERVER_URL` 环境变量注入。
 
 > 重构后 server↔agent 经 **Redis 通信总线**：agent 主动消费命令、主动 `XADD` 推状态/日志，并**主动 POST heartbeat**。agent 启动必须携带稳定 `agent_id`（环境变量 `AGENT_ID` 或 `configs/agent.toml`），server 据 heartbeat 写入 `nodes.last_seen_at` 并判健康（不再轮询 `/health`）。agent→server 鉴权用独立 `server_shared_token`（config-present-or-off：非空才校验），**不复用** server→agent 旧 token、也不复用 Web 管理员账号密码；agent 仍不直连 PostgreSQL。
 
@@ -604,7 +613,7 @@ scrapydweb 的后台执行分两类，共 3 个单元：
 | 优先级 | 动作 | 关联事实 |
 |:------:|------|----------|
 | P0 | server 配置 `DOPILOT_DATABASE_URL` 指向 PostgreSQL；compose/k8s 提供 PostgreSQL 或外部托管实例 | dopilot 决策 10 |
-| P0 | dopilot toml 配置（`configs/server.toml`）经 `DOPILOT_CONFIG` 环境变量指定路径、只读挂载进容器 | （对比 scrapydweb cwd 硬编码加载 `vars.py:29`、`run.py:37,124`，dopilot 不沿用） |
+| P0 | dopilot toml 配置由镜像内 server/agent 角色默认路径读取，compose 常规部署通过 `DOPILOT_*` 覆盖；进阶部署可把自有 toml 只读挂载到默认路径 | （对比 scrapydweb cwd 硬编码加载 `vars.py:29`、`run.py:37,124`，dopilot 不沿用） |
 | P0 | server 固定**单容器 + uvicorn workers=1 + 单 APScheduler 实例**（不支持多副本/多 worker，未来也不做）；compose 加 `init: true` | `scheduler.py:45,90`、`sub_process.py:38`；v1 单实例硬约束 |
 | P0 | 基础镜像用 glibc 系（slim/debian），禁用 Alpine | `sub_process.py:38` prctl 依赖 `libc.so.6` |
 | P0 | `/server-data/logs`（日志正文）作为重要持久化卷挂载；备份**同时**覆盖 PostgreSQL + `/server-data/logs` | v1 正文存储/备份约束 |
@@ -623,7 +632,7 @@ scrapydweb 的后台执行分两类，共 3 个单元：
 
 ## 6. 开放问题
 
-1. **配置路径加载**（已决，非开放问题）：dopilot 用 toml 配置 + 环境变量/CLI（`DOPILOT_CONFIG`）显式指定路径，容器内挂载 `configs/server.toml` 即可，无 cwd 硬编码约束。对比之下 scrapydweb 基线把文件名硬编码 `scrapydweb_settings_v11.py` 且只从 `os.getcwd()` 找（`vars.py:29`、`run.py:124`），dopilot 不沿用该形态。
+1. **配置路径加载**（已决，非开放问题）：dopilot 用 toml 配置 + 环境变量覆盖；Docker 镜像内置 server/agent 角色默认配置路径，compose 无需配置路径变量，进阶部署可把自有 toml 挂载到默认路径；无 cwd 硬编码约束。对比之下 scrapydweb 基线把文件名硬编码 `scrapydweb_settings_v11.py` 且只从 `os.getcwd()` 找（`vars.py:29`、`run.py:124`），dopilot 不沿用该形态。
 2. **单实例约束（已定，非开放问题）**：v1 锁定 server = 单容器 + **uvicorn workers=1** + 单 APScheduler 实例，**不做多副本/多 worker，未来也不做**。不把 scheduler 拆成独立服务、不引入分布式锁/选主或 NATS/PG LISTEN-NOTIFY 多副本 fan-out；**Redis 仅作单实例 server↔agent 通信总线**，不用于多副本 HA/fan-out/选主，server→web SSE fan-out 仍单进程内存完成。
 3. **agent 协议范围**（已定方向，已翻案为 Redis）：server↔agent 经 **Redis 通信总线**——agent 主动消费命令（`run`/`stop`/`cleanup_logs`）、主动 `XADD` 推状态/日志、主动 POST heartbeat，**不使用 WebSocket**；server→agent HTTP run/status/tail 主路径已删除。仍需在 `packages/protocol/.../streams.py` 细化 `AgentCommand`/`AgentEvent`/`AgentLogEvent`/`AgentHeartbeatRequest/Response` 与错误码（既有 tail/status schema 标 legacy；详见 `docs/refactor/00-redis-streams-agent-communication.md`、`01-gap-executors.md` / `03-gap-realtime-logs.md`）。
 4. **通信鉴权边界**（已翻案）：agent→server heartbeat 用独立 `server_shared_token`（config-present-or-off：非空才校验），**不复用** server→agent 旧 token；Redis 启用 AUTH/ACL；agent 仍不直连 PostgreSQL。跨主机部署时 Redis/heartbeat 端口前是否再加 TLS/网络隔离仍待评估（v1 定位为内网防误操作，非互联网零信任）。
@@ -681,7 +690,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 │   ├── protocol/                         # server↔agent 共享协议 schema(dopilot_protocol/streams.py: AgentCommand/AgentEvent/AgentLogEvent/AgentHeartbeat*;旧 AgentRunRequest/AgentStatusResponse/Tail* 标 legacy)
 │   └── client/                           # 可选:Redis 总线/heartbeat 客户端 SDK
 ├── deploy/{docker/{Dockerfile.base,Dockerfile,docker-compose.yml},k8s/}
-├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置(经 DOPILOT_CONFIG 加载,不继承 scrapydweb 硬编码 settings)
+├── configs/{server.example.toml,agent.example.toml}   # dopilot 自有 toml 配置(容器内按角色默认路径读取,不继承 scrapydweb 硬编码 settings)
 ├── scripts/  docs/
 │   # 上游 scrapydweb 仅作外部行为参考，本仓库已移除本地 reference/scrapydweb/ 快照（MIT 开源）
 ├── README.md  pyproject.toml  pnpm-workspace.yaml  .dockerignore

@@ -143,3 +143,112 @@ def test_missing_config_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_missing_file_raises(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         load_settings(tmp_path / "does-not-exist.toml")
+
+
+# --- phase 2.2.1: single-secret machine-token fallback + role default path ---
+
+
+def _clear_token_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in (
+        "AGENT_ID",
+        "AGENT_WORKDIR",
+        "DOPILOT_ADMIN_API_SECRET",
+        "DOPILOT_AGENT_SHARED_TOKEN",
+        "DOPILOT_SERVER_SHARED_TOKEN",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
+def _write_empty_token_config(tmp_path: Path) -> Path:
+    cfg = tmp_path / "agent.toml"
+    cfg.write_text(
+        '[agent]\nagent_id = "x"\nserver_shared_token = ""\n'
+        '[auth]\nshared_token = ""\n',
+        encoding="utf-8",
+    )
+    return cfg
+
+
+def test_machine_tokens_fall_back_to_admin_api_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_token_env(monkeypatch)
+    cfg = _write_empty_token_config(tmp_path)
+    monkeypatch.setenv("DOPILOT_ADMIN_API_SECRET", "single-secret")
+    settings = load_settings(cfg)
+    assert settings.auth.shared_token == "single-secret"
+    assert settings.agent.server_shared_token == "single-secret"
+    assert settings.auth.enabled is True
+
+
+def test_split_machine_token_envs_override_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_token_env(monkeypatch)
+    cfg = _write_empty_token_config(tmp_path)
+    monkeypatch.setenv("DOPILOT_ADMIN_API_SECRET", "single-secret")
+    monkeypatch.setenv("DOPILOT_AGENT_SHARED_TOKEN", "s2a-tok")
+    monkeypatch.setenv("DOPILOT_SERVER_SHARED_TOKEN", "a2s-tok")
+    settings = load_settings(cfg)
+    assert settings.auth.shared_token == "s2a-tok"
+    assert settings.agent.server_shared_token == "a2s-tok"
+
+
+def test_split_token_env_overrides_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Env wins over non-empty TOML machine tokens (no admin secret involved).
+    _clear_token_env(monkeypatch)
+    cfg = _write_config(tmp_path)  # TOML: shared_token=tok, server=agent-server-tok
+    monkeypatch.setenv("DOPILOT_AGENT_SHARED_TOKEN", "env-s2a")
+    monkeypatch.setenv("DOPILOT_SERVER_SHARED_TOKEN", "env-a2s")
+    settings = load_settings(cfg)
+    assert settings.auth.shared_token == "env-s2a"
+    assert settings.agent.server_shared_token == "env-a2s"
+
+
+def test_toml_tokens_not_overwritten_by_admin_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Non-empty TOML machine tokens are kept; admin secret only fills empties.
+    _clear_token_env(monkeypatch)
+    cfg = _write_config(tmp_path)
+    monkeypatch.setenv("DOPILOT_ADMIN_API_SECRET", "single-secret")
+    settings = load_settings(cfg)
+    assert settings.auth.shared_token == "tok"
+    assert settings.agent.server_shared_token == "agent-server-tok"
+
+
+def test_no_fallback_when_admin_secret_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_token_env(monkeypatch)
+    cfg = _write_empty_token_config(tmp_path)
+    settings = load_settings(cfg)
+    assert settings.auth.shared_token == ""
+    assert settings.agent.server_shared_token == ""
+    assert settings.auth.enabled is False
+
+
+def test_default_path_used_when_no_explicit_or_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DOPILOT_CONFIG", raising=False)
+    monkeypatch.delenv("AGENT_ID", raising=False)
+    monkeypatch.delenv("AGENT_WORKDIR", raising=False)
+    cfg = _write_config(tmp_path)
+    settings = load_settings(default_path=str(cfg))
+    assert settings.agent.agent_id == "from-toml"
+
+
+def test_env_config_wins_over_default_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENT_ID", raising=False)
+    monkeypatch.delenv("AGENT_WORKDIR", raising=False)
+    env_cfg = _write_config(tmp_path)  # agent_id = from-toml
+    default_cfg = tmp_path / "default.toml"
+    default_cfg.write_text('[agent]\nagent_id = "from-default"\n', encoding="utf-8")
+    monkeypatch.setenv("DOPILOT_CONFIG", str(env_cfg))
+    settings = load_settings(default_path=str(default_cfg))
+    assert settings.agent.agent_id == "from-toml"

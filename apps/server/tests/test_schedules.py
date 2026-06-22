@@ -282,7 +282,12 @@ async def test_fire_timer_dispatches_when_no_backlog(
     template = await _template_row(db_session, seeder)
     schedule = await sched_svc.create_schedule(
         db_session,
-        {"name": "s", "execution_template_id": template.id, "interval_seconds": 30},
+        {
+            "name": "s",
+            "execution_template_id": template.id,
+            "interval_seconds": 30,
+            "enabled": True,
+        },
     )
     await db_session.commit()
 
@@ -303,7 +308,12 @@ async def test_fire_timer_coalesced_when_undispatched_backlog(
     template = await _template_row(db_session, seeder)
     schedule = await sched_svc.create_schedule(
         db_session,
-        {"name": "s", "execution_template_id": template.id, "interval_seconds": 30},
+        {
+            "name": "s",
+            "execution_template_id": template.id,
+            "interval_seconds": 30,
+            "enabled": True,
+        },
     )
     await db_session.commit()
 
@@ -347,3 +357,107 @@ async def test_delete_schedule(exec_client, seeder):
     assert (
         await exec_client.get(f"/api/v1/schedules/{schedule['id']}")
     ).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# phase 2.2: enabled gate + name uniqueness
+# ---------------------------------------------------------------------------
+
+
+async def test_schedule_defaults_enabled_false(exec_client, seeder):
+    template = await _create_template(exec_client, seeder)
+    created = await _create_schedule(exec_client, template["id"])
+    assert created["enabled"] is False
+    # still visible in list/get despite being disabled.
+    rows = (await exec_client.get("/api/v1/schedules")).json()["schedules"]
+    assert any(s["id"] == created["id"] and s["enabled"] is False for s in rows)
+    got = (await exec_client.get(f"/api/v1/schedules/{created['id']}")).json()
+    assert got["enabled"] is False
+
+
+async def test_create_schedule_enabled_true(exec_client, seeder):
+    template = await _create_template(exec_client, seeder)
+    created = await _create_schedule(exec_client, template["id"], enabled=True)
+    assert created["enabled"] is True
+
+
+async def test_update_schedule_enabled_toggle(exec_client, seeder):
+    template = await _create_template(exec_client, seeder)
+    created = await _create_schedule(exec_client, template["id"])
+    assert created["enabled"] is False
+    # enable
+    r = await exec_client.put(
+        f"/api/v1/schedules/{created['id']}", json={"enabled": True}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["enabled"] is True
+    # disable again
+    r = await exec_client.put(
+        f"/api/v1/schedules/{created['id']}", json={"enabled": False}
+    )
+    assert r.status_code == 200
+    assert r.json()["enabled"] is False
+
+
+async def test_disabled_schedule_trigger_now_still_runs(exec_client, seeder):
+    await seeder.healthy_node()
+    template = await _create_template(exec_client, seeder)
+    schedule = await _create_schedule(exec_client, template["id"])  # disabled
+    assert schedule["enabled"] is False
+    r = await exec_client.post(f"/api/v1/schedules/{schedule['id']}/trigger-now")
+    assert r.status_code == 200, r.text
+    detail = (await exec_client.get(f"/api/v1/tasks/{r.json()['task_id']}")).json()
+    assert detail["schedule_id"] == schedule["id"]
+    assert len(detail["executions"]) == 1
+
+
+async def test_fire_timer_noop_when_disabled(
+    db_session, exec_settings, seeder, test_sessionmaker, exec_redis
+):
+    await seeder.healthy_node()
+    template = await _template_row(db_session, seeder)
+    schedule = await sched_svc.create_schedule(
+        db_session,
+        {
+            "name": "disabled-sched",
+            "execution_template_id": template.id,
+            "interval_seconds": 30,
+            "enabled": False,
+        },
+    )
+    await db_session.commit()
+
+    dispatcher = _dispatcher(test_sessionmaker, exec_redis)
+    res = await sched_svc.fire_timer(
+        db_session, exec_settings, dispatcher, schedule
+    )
+    # Disabled: defensive no-op, no task created.
+    assert res is None
+    tasks = await list_tasks(db_session)
+    assert [t for t in tasks if t.schedule_id == schedule.id] == []
+
+
+async def test_create_schedule_duplicate_name_409(exec_client, seeder):
+    template = await _create_template(exec_client, seeder)
+    await _create_schedule(exec_client, template["id"], name="dup")
+    r = await exec_client.post(
+        "/api/v1/schedules",
+        json={
+            "name": "dup",
+            "execution_template_id": template["id"],
+            "interval_seconds": 30,
+        },
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "schedule.name_conflict"
+
+
+async def test_rename_schedule_to_existing_name_409(exec_client, seeder):
+    template = await _create_template(exec_client, seeder)
+    first = await _create_schedule(exec_client, template["id"], name="first")
+    second = await _create_schedule(exec_client, template["id"], name="second")
+    r = await exec_client.put(
+        f"/api/v1/schedules/{second['id']}", json={"name": first["name"]}
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "schedule.name_conflict"

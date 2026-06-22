@@ -265,7 +265,7 @@ agent log publisher 在 `XACK` / outbox 语义下保证日志至少一次到达 
 ### 第二步
 
 1. 在 `apps/agent/dopilot_agent/logs/` 增加 `DockerLogSource` 采集侧（docker SDK 或 `docker logs -f` 子进程落盘），同样由 agent log publisher tail 后增量 `XADD` 暴露 stdout/stderr。
-2. dopilot `auth/` 模块按 **config-present-or-off** 实现鉴权：agent `shared_token` 非空才启用 agent 认证；Web 认证（`admin_username`+`admin_password`+`token_secret` 三者齐全且非空）开启时，SSE 用短期 `stream_token`（POST 换取、TTL 60s、仅校验建连）。内网防误操作策略，非互联网零信任。
+2. dopilot `auth/` 模块按两套语义实现鉴权：**机器认证 config-present-or-off**（agent `shared_token` 非空才启用 agent 认证）；**Web 管理员认证 fail-closed**（阶段 2.2：`admin_username`+`admin_password`+`token_secret` 三者齐全且非空时启用，缺失则启动失败，仅显式 `DOPILOT_AUTH_DISABLED=true` 才匿名直连）。Web 认证启用时，SSE 用短期 `stream_token`（POST 换取、TTL 60s、仅校验建连）。内网防误操作策略，非互联网零信任。
 
 ### 兜底与边界
 
@@ -289,7 +289,7 @@ agent log publisher 在 `XACK` / outbox 语义下保证日志至少一次到达 
 | `apps/agent/dopilot_agent/logs/` + `apps/agent/dopilot_agent/redis/` | 新建 | **log publisher**：tail 本地日志按 byte offset 增量 `XADD` 到 `dopilot:server:logs`（base64 字节，单一顺序生产者 offset 递增，含 outbox 重放排序）+ `ScriptLogSource` / `DockerLogSource` 采集侧（脚本 stdout 落盘；容器 `docker logs -f` / SDK `container.logs(stream,follow)` 落盘）；`/agent-data/state/executions/{attempt_id}.json` 映射恢复 + TTL 兜底 |
 | `apps/agent/dopilot_agent/runners/script.py`、`docker.py` | 新建 | runner 自行实现进程/容器拉起，stdout/stderr 重定向到 `apps/agent/dopilot_agent/workspace/` 落盘以供 log publisher tail；进程拉起遵守 `prctl(PR_SET_PDEATHSIG)` + glibc 基础镜像约束（见文末行为参考） |
 | `apps/web/src/`（pages/components + api） | 新建 | Vue3 日志页组件，浏览器原生 `EventSource` 订阅 `/api/v1` SSE（`id:<seq>`/`Last-Event-ID` 重连补洞），前端实现增量 append/自动滚底；开窗/关窗只影响 server→web SSE 是否推送该 execution；不支持 SSE 时降级到 offset 分页 fetch |
-| `apps/server/dopilot_server/auth/` | 新建 | config-present-or-off 鉴权：agent→server `server_shared_token`（不复用 server→agent 旧 token）；前端 SSE 短期 `stream_token`（POST 换取、TTL 60s、仅校验建连，`EventSource` 不能带自定义头） |
+| `apps/server/dopilot_server/auth/` | 新建 | 机器认证 config-present-or-off：agent→server `server_shared_token`（不复用 server→agent 旧 token）；Web 管理员认证 fail-closed（阶段 2.2，缺凭据则启动失败，仅 `DOPILOT_AUTH_DISABLED=true` 匿名）；前端 SSE 短期 `stream_token`（POST 换取、TTL 60s、仅校验建连，`EventSource` 不能带自定义头） |
 | `packages/protocol/dopilot_protocol/streams.py` | 新建 | server↔agent stream 消息 schema：`AgentLogEvent`（base64 字节，`offset`/`size_bytes`/`eof`）/ `AgentCommand` / `AgentEvent` / `AgentHeartbeatRequest`/`Response`；统一任务/日志标识定义。既有 `TailRequest`/`TailResponse`/`AgentRunRequest`/`AgentStatusResponse` 标 legacy，不再代表当前协议 |
 | `apps/server/dopilot_server/models/`（如 `execution_log_files`） + Alembic 迁移 | 新建 | PG 索引表 `execution_log_files`（见 §5.1），新增 `log_integrity` 列 + gap 字段；SQLAlchemy + **裸 Alembic**（FastAPI 无 Flask app，非 Flask-Migrate），新增放 `0003+`；APScheduler jobstore 落 PG |
 | `configs/server.example.toml` + `apps/server/dopilot_server/config/` | 新建 | 实时日志配置项写入 toml：`[redis]`（`url`/`stream_maxlen_logs`/`log_retention_seconds`/`consumer_name`/`require_aof`）、`[logs].log_drain_timeout_seconds=30`、EOF 稳定 3s、容器日志保留轮转策略；由 dopilot 的 toml 加载器解析与校验 |
@@ -358,7 +358,7 @@ agent log publisher 在 `XACK` / outbox 语义下保证日志至少一次到达 
 - ~~多副本日志广播~~ → 单容器 + uvicorn workers=1 + 单 APScheduler 实例，不支持多副本，未来也不做；**不引入 Redis 做多副本 HA/fan-out/分布式锁、不引入 NATS/PG LISTEN-NOTIFY**，server→web SSE fan-out 在单进程内存内完成（Redis 仅作单实例 server↔agent 通信总线，含日志 stream）。
 - ~~部署形态~~ → uvicorn workers=1 单实例。
 - ~~远程 scrapyd 真增量 / Docker 采集路径~~ → 不直连裸 scrapyd / docker daemon；统一由本机 dopilot-agent log publisher tail 后经 Redis log stream 推（agent 子进程拉起本机 scrapyd，scrapyd 仅监听容器内部端口）。
-- ~~流式端点鉴权~~ → config-present-or-off；Web 认证开启时 SSE 用短期 `stream_token`（TTL 60s、仅校验建连）；agent→server 用 `server_shared_token`（不复用 server→agent 旧 token），Redis 启用 AUTH/ACL。
+- ~~流式端点鉴权~~ → 机器认证 config-present-or-off（agent→server 用 `server_shared_token`，不复用 server→agent 旧 token；Redis 启用 AUTH/ACL）；Web 管理员认证 fail-closed（阶段 2.2，缺凭据则启动失败，仅 `DOPILOT_AUTH_DISABLED=true` 匿名），启用时 SSE 用短期 `stream_token`（TTL 60s、仅校验建连）。
 - ~~多人共享同一 job~~ → 多窗口复用一个 log consumer 落盘 + 单进程内存 SSE fan-out。
 
 **新增锁定：**

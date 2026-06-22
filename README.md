@@ -100,6 +100,11 @@ migrate + three Scrapy agents + server):
 
 ```bash
 cd deploy/docker
+cat > .env <<'EOF'
+DOPILOT_ADMIN_PASSWORD=replace-with-admin-login-password
+DOPILOT_ADMIN_API_SECRET=replace-with-long-random-secret
+REDIS_PASSWORD=replace-with-redis-password
+EOF
 docker compose pull
 docker compose up -d
 ```
@@ -107,6 +112,26 @@ docker compose up -d
 The server is then reachable at **http://localhost:5000** (web UI and API). The
 server runs single-replica only (in-process scheduler + in-memory SSE tables).
 Override the image with `DOPILOT_IMAGE` (default `rabbir/dopilot:latest`).
+
+For API clients, first log in with the single admin account and use the returned
+opaque access token:
+
+```bash
+ACCESS_TOKEN=$(
+  curl -s http://localhost:5000/api/v1/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"'"$DOPILOT_ADMIN_PASSWORD"'"}' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'
+)
+
+curl -H "Authorization: Bearer $ACCESS_TOKEN" \
+  http://localhost:5000/api/v1/auth/me
+```
+
+`DOPILOT_ADMIN_API_SECRET` is the server-side secret used to protect those
+opaque tokens. It is also the default single source for server-agent machine
+tokens when `DOPILOT_AGENT_SHARED_TOKEN` and `DOPILOT_SERVER_SHARED_TOKEN` are
+left unset.
 
 To build the image from local source instead of pulling, layer the build
 override (used by the smoke scripts):
@@ -116,11 +141,10 @@ cd deploy/docker
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
-> Compose configs set `[auth]`, so web auth is **on** there. The default
-> `change-me` credentials are not production-safe; change them before exposing
-> the server. The default TOML files are baked into the image; mount edited
-> config files over `/app/configs/server.toml` and `/app/configs/agent.toml` in a
-> compose override when you need real secrets.
+> Compose configs keep web auth **on** and Redis password auth enabled. The
+> default `change-me` fallbacks are dev-only; set the `.env` values above before
+> exposing the server. Docker images already contain the default server/agent
+> TOML files and the compose stack does not require `DOPILOT_CONFIG`.
 
 ## Local development
 
@@ -160,10 +184,14 @@ NEXT_PUBLIC_API_BASE=http://localhost:5000/api/v1 corepack pnpm --filter web dev
 
 Stop the local Redis container with `docker stop dopilot-redis-dev`.
 
-`DOPILOT_CONFIG` points at a TOML config under `configs/`; `DOPILOT_DATABASE_URL`
-and `DOPILOT_REDIS_URL` override the database and Redis URLs. Web auth and agent
-auth are **config-present-or-off**: each is enabled only when its credentials are
-set.
+`DOPILOT_CONFIG` points local development processes at a TOML config under
+`configs/`; `DOPILOT_DATABASE_URL` and `DOPILOT_REDIS_URL` override the database
+and Redis URLs. Web admin auth is **fail-closed**: unless
+`DOPILOT_AUTH_DISABLED=true` is set explicitly, `admin_username`,
+`admin_password`, and `token_secret` must all be configured. Agent machine
+tokens can be split with `DOPILOT_AGENT_SHARED_TOKEN` and
+`DOPILOT_SERVER_SHARED_TOKEN`; when they are left empty, both sides fall back to
+the effective admin API secret.
 
 The web app is a **Next.js static export** (shadcn/ui + react-i18next) served by
 `dopilot-server` from the same container; there is no separate web container and

@@ -1,8 +1,25 @@
 # dopilot server example config.
 #
-# Copy to configs/server.toml (or point DOPILOT_CONFIG at your own file) and edit.
+# Copy to configs/server.toml and edit, or rely on DOPILOT_* environment
+# overrides in Docker deployments.
 # WARNING: every "change-me" value below is a placeholder and is NOT production-safe.
 # Replace admin_password / token_secret / shared_token before any real deployment.
+#
+# Env overrides (phase 2.2): any scalar/secret below can be overridden by a
+# DOPILOT_* environment variable (env wins over TOML), so real deployments inject
+# secrets without mounting a TOML — e.g. DOPILOT_ADMIN_PASSWORD, DOPILOT_ADMIN_API_SECRET,
+# DOPILOT_DATABASE_URL, DOPILOT_REDIS_URL, DOPILOT_SERVER_PORT,
+# DOPILOT_SCHEDULER_ENABLED, DOPILOT_AUTH_DISABLED.
+#
+# Single-secret machine tokens (phase 2.2.1): leave [agent_auth].shared_token and
+# [agents].server_shared_token empty to default them to the effective admin API
+# secret (auth.token_secret / DOPILOT_ADMIN_API_SECRET); set
+# DOPILOT_AGENT_SHARED_TOKEN / DOPILOT_SERVER_SHARED_TOKEN for split tokens.
+#
+# Web admin auth is FAIL-CLOSED: the server refuses to start unless
+# admin_username + admin_password + token_secret are all non-empty. To run
+# anonymously in development, set DOPILOT_AUTH_DISABLED=true (do NOT do this in
+# production).
 
 [server]
 host = "0.0.0.0"
