@@ -34,13 +34,27 @@ class AuthSettings(BaseModel):
     disabled: bool = False
     admin_username: str | None = None
     admin_password: str | None = None
+    # Internal HMAC signing key for login access tokens and SSE stream tokens.
+    # TOML-only (phase 2.2.2): it has NO env override and is never the machine
+    # token fallback source.
     token_secret: str | None = None
+    # Externally supplied static admin API token (phase 2.2.2). When non-empty it
+    # may be presented directly as ``Authorization: Bearer <admin_api_token>`` to
+    # authenticate as admin (no login round-trip), and it is the fallback source
+    # for empty server<->agent machine tokens. Set via ``DOPILOT_ADMIN_API_TOKEN``
+    # or TOML. It is an ADDITIONAL automation credential and does NOT participate
+    # in :attr:`enabled` (interactive web login still needs the three creds).
+    admin_api_token: str | None = None
     access_token_ttl_minutes: int = 720
     stream_token_ttl_seconds: int = 3600
 
     @property
     def enabled(self) -> bool:
-        """Web auth is ON iff not disabled AND all three creds are non-empty."""
+        """Web auth is ON iff not disabled AND all three creds are non-empty.
+
+        ``admin_api_token`` is intentionally excluded: it is an additional
+        automation credential, not a substitute for interactive login.
+        """
         return not self.disabled and bool(
             self.admin_username
             and self.admin_password

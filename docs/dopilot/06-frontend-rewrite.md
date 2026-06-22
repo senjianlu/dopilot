@@ -120,6 +120,7 @@ apps/web/                       # 权威布局见 05-dev-setup-and-known-issues.
 - SPA 登录页调用 `POST /api/v1/auth/login`，提交 `admin_username/admin_password`。
 - FastAPI server 校验后返回服务端签发的 **opaque `access_token`**。token 本身不承载业务 claims；server 端按 token 查验有效性/过期时间。
 - 前端 axios 拦截器统一注入 `Authorization: Bearer <access_token>`；401 跳登录页。
+- 自动化调用可直接使用静态 `admin_api_token`（env `DOPILOT_ADMIN_API_TOKEN`，非空须 >= 16 字符）作为 `Authorization: Bearer <token>`，无需登录换取 opaque token。
 - 单用户唯一管理员，无 RBAC、多租户、用户管理。
 
 配置示例：
@@ -128,7 +129,10 @@ apps/web/                       # 权威布局见 05-dev-setup-and-known-issues.
 [auth]
 admin_username = "admin"
 admin_password = "change-me"
-token_secret = "change-me"
+# 登录 access token / SSE stream token 的内部 HMAC 签名密钥；仅 TOML 配置，无 env 覆盖。
+token_secret = "shLv5qNwC3aViZQYr08x3yfaY6yGZACB6ujydXiVaGnb7OdOflc91xVLyXBoeRDL"
+# 静态 admin API token；可直接作 Bearer 调用 admin API，也是机器 token 默认回退源。
+admin_api_token = "change-me-admin-api-token"
 access_token_ttl_minutes = 720
 ```
 
@@ -166,7 +170,7 @@ server_shared_token = "change-me-agent-server-token"
 url = "redis://redis:6379/0"
 ```
 
-`server_shared_token` 只用于校验 agent→server 的 heartbeat 请求；agent 不持有管理员 API 凭据，**也不直连 PostgreSQL**（经 Redis 与 server 通信）。**第一版完全不用 WebSocket**：日志正文由 server 端 log consumer 消费 agent→Redis 日志事件后写入，offset 权威仍在 server（PG `last_pulled_offset`）。agent→server 机器认证为 config-present-or-off（`server_shared_token` 配置存在则启用，缺失则关闭）；Web 管理员认证则是 fail-closed（默认要求凭据，仅 `DOPILOT_AUTH_DISABLED=true` 时匿名）。
+`server_shared_token` 只用于校验 agent→server 的 heartbeat 请求；agent 仍**不直连 PostgreSQL**（经 Redis 与 server 通信）。默认 Docker 单密钥姿态下，空的机器 token 会从 `DOPILOT_ADMIN_API_TOKEN` 回退，因此 agent 环境会持有可直用的静态 admin API token；如果部署方不接受这个边界，应显式设置 `DOPILOT_AGENT_SHARED_TOKEN` / `DOPILOT_SERVER_SHARED_TOKEN` 拆分机器令牌。**第一版完全不用 WebSocket**：日志正文由 server 端 log consumer 消费 agent→Redis 日志事件后写入，offset 权威仍在 server（PG `last_pulled_offset`）。agent→server 机器认证为 config-present-or-off（`server_shared_token` 配置存在则启用，缺失则关闭）；Web 管理员认证则是 fail-closed（默认要求凭据，仅 `DOPILOT_AUTH_DISABLED=true` 时匿名）。
 
 ## 6. 实时日志（agent → Redis 推送 + server 消费落盘 + SSE）
 

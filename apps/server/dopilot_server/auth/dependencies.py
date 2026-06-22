@@ -9,6 +9,7 @@ case the platform runs as an anonymous admin and protected endpoints are open.
 
 from __future__ import annotations
 
+import hmac
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -57,6 +58,22 @@ async def get_current_admin(
         )
 
     token = _extract_bearer(request)
+
+    # Static admin API token (phase 2.2.2): a non-empty configured
+    # ``admin_api_token`` matching the Bearer token authenticates as admin with
+    # no expiry. Both sides must be non-empty (``hmac.compare_digest("", "")`` is
+    # True, so an empty configured token must NOT match an empty/missing bearer),
+    # and the compare is constant-time. This stays inside the ``auth.enabled``
+    # branch, so it never bypasses fail-closed auth.
+    api_token = (settings.auth.admin_api_token or "").strip()
+    if api_token and token and hmac.compare_digest(token, api_token):
+        return AdminContext(
+            mode="on",
+            username=settings.auth.admin_username,
+            authenticated=True,
+            expires_at=None,
+        )
+
     record = await get_token_record(session, settings, token) if token else None
     if record is None:
         raise ApiError(401, "auth.unauthorized", "errors.unauthorized", {})

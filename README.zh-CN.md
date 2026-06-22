@@ -94,7 +94,7 @@ agent 环境中。
 cd deploy/docker
 cat > .env <<'EOF'
 DOPILOT_ADMIN_PASSWORD=replace-with-admin-login-password
-DOPILOT_ADMIN_API_SECRET=replace-with-long-random-secret
+DOPILOT_ADMIN_API_TOKEN=replace-with-long-random-token
 REDIS_PASSWORD=replace-with-redis-password
 EOF
 docker compose pull
@@ -105,7 +105,16 @@ docker compose up -d
 单副本运行（进程内调度器 + 进程内 SSE 表）。可用 `DOPILOT_IMAGE` 覆盖镜像（默认
 `rabbir/dopilot:latest`）。
 
-API 客户端需要先用单管理员账号登录，拿返回的 opaque access token 调用接口：
+API 客户端最简单的方式是用静态 admin API token：直接把 `DOPILOT_ADMIN_API_TOKEN`
+作为 Bearer token 调用，无需登录：
+
+```bash
+curl -H "Authorization: Bearer $DOPILOT_ADMIN_API_TOKEN" \
+  http://localhost:5000/api/v1/auth/me
+```
+
+或者先用单管理员账号登录，拿返回的 opaque access token（由内部 `token_secret`
+签名）调用接口：
 
 ```bash
 ACCESS_TOKEN=$(
@@ -119,9 +128,10 @@ curl -H "Authorization: Bearer $ACCESS_TOKEN" \
   http://localhost:5000/api/v1/auth/me
 ```
 
-`DOPILOT_ADMIN_API_SECRET` 是服务端用于保护这些 opaque token 的 secret。未设置
-`DOPILOT_AGENT_SHARED_TOKEN` 与 `DOPILOT_SERVER_SHARED_TOKEN` 时，它也作为
-server-agent 机器 token 的默认单一来源。
+`DOPILOT_ADMIN_API_TOKEN` 是外部提供的静态 admin API token（非空时须 >= 16 字符）。
+未设置 `DOPILOT_AGENT_SHARED_TOKEN` 与 `DOPILOT_SERVER_SHARED_TOKEN` 时，它也作为
+server-agent 机器 token 的默认单一来源。登录/stream 的签名密钥（`token_secret`）是
+另一个仅 TOML 配置、已烤进镜像的值。
 
 如需用本地源码构建镜像（而非拉取），叠加 build 覆盖文件（smoke 脚本即用此方式）：
 
@@ -176,7 +186,7 @@ NEXT_PUBLIC_API_BASE=http://localhost:5000/api/v1 corepack pnpm --filter web dev
 管理员认证是 **fail-closed**：除非显式设置 `DOPILOT_AUTH_DISABLED=true`，否则
 `admin_username`、`admin_password`、`token_secret` 必须全部配置。Agent 机器 token
 可通过 `DOPILOT_AGENT_SHARED_TOKEN` 与 `DOPILOT_SERVER_SHARED_TOKEN` 拆分；留空时
-双方回退到有效的 admin API secret。
+双方回退到有效的 admin API token。
 
 Web 应用是 **Next.js 静态导出**产物（shadcn/ui + react-i18next），由
 `dopilot-server` 在同一容器内托管——没有独立的 Web 容器，也没有 Node 生产运行时。

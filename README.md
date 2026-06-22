@@ -102,7 +102,7 @@ migrate + three Scrapy agents + server):
 cd deploy/docker
 cat > .env <<'EOF'
 DOPILOT_ADMIN_PASSWORD=replace-with-admin-login-password
-DOPILOT_ADMIN_API_SECRET=replace-with-long-random-secret
+DOPILOT_ADMIN_API_TOKEN=replace-with-long-random-token
 REDIS_PASSWORD=replace-with-redis-password
 EOF
 docker compose pull
@@ -113,8 +113,16 @@ The server is then reachable at **http://localhost:5000** (web UI and API). The
 server runs single-replica only (in-process scheduler + in-memory SSE tables).
 Override the image with `DOPILOT_IMAGE` (default `rabbir/dopilot:latest`).
 
-For API clients, first log in with the single admin account and use the returned
-opaque access token:
+For API clients, the simplest path is the static admin API token: present
+`DOPILOT_ADMIN_API_TOKEN` directly as a Bearer token, no login round-trip:
+
+```bash
+curl -H "Authorization: Bearer $DOPILOT_ADMIN_API_TOKEN" \
+  http://localhost:5000/api/v1/auth/me
+```
+
+Alternatively, log in with the single admin account and use the returned opaque
+access token (signed by the internal `token_secret`):
 
 ```bash
 ACCESS_TOKEN=$(
@@ -128,10 +136,11 @@ curl -H "Authorization: Bearer $ACCESS_TOKEN" \
   http://localhost:5000/api/v1/auth/me
 ```
 
-`DOPILOT_ADMIN_API_SECRET` is the server-side secret used to protect those
-opaque tokens. It is also the default single source for server-agent machine
-tokens when `DOPILOT_AGENT_SHARED_TOKEN` and `DOPILOT_SERVER_SHARED_TOKEN` are
-left unset.
+`DOPILOT_ADMIN_API_TOKEN` is the externally supplied static admin API token
+(must be >= 16 characters). It is also the default single source for
+server-agent machine tokens when `DOPILOT_AGENT_SHARED_TOKEN` and
+`DOPILOT_SERVER_SHARED_TOKEN` are left unset. The login/stream signing key
+(`token_secret`) is a separate TOML-only value baked into the image.
 
 To build the image from local source instead of pulling, layer the build
 override (used by the smoke scripts):
@@ -191,7 +200,7 @@ and Redis URLs. Web admin auth is **fail-closed**: unless
 `admin_password`, and `token_secret` must all be configured. Agent machine
 tokens can be split with `DOPILOT_AGENT_SHARED_TOKEN` and
 `DOPILOT_SERVER_SHARED_TOKEN`; when they are left empty, both sides fall back to
-the effective admin API secret.
+the effective admin API token.
 
 The web app is a **Next.js static export** (shadcn/ui + react-i18next) served by
 `dopilot-server` from the same container; there is no separate web container and

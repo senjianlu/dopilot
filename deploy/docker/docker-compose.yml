@@ -28,15 +28,21 @@
 #
 #   Required (change before any real deployment — the defaults are dev-only):
 #     DOPILOT_ADMIN_PASSWORD     Web admin login password (server [auth]).
-#     DOPILOT_ADMIN_API_SECRET   Admin API secret. ALSO the single source for the
-#                                server<->agent machine tokens: when the split
-#                                tokens below are unset, both sides derive their
-#                                shared token from this value, so it must be
-#                                injected into the server AND every agent.
+#     DOPILOT_ADMIN_API_TOKEN    Static admin API token: usable directly as
+#                                `Authorization: Bearer <token>`. ALSO the single
+#                                source for the server<->agent machine tokens:
+#                                when the split tokens below are unset, both sides
+#                                derive their shared token from this value, so it
+#                                must be injected into the server AND every agent.
+#                                A non-empty value must be >= 16 characters.
 #     REDIS_PASSWORD             Redis AUTH password (used in the redis URL).
 #
+#   The login/SSE signing key (server [auth].token_secret) is TOML-only and is
+#   baked into the image (a generated long value, not a per-deployment secret);
+#   high-security deployments override it by mounting their own server TOML.
+#
 #   Optional (advanced — only if you want SPLIT machine tokens instead of the
-#   single DOPILOT_ADMIN_API_SECRET): uncomment in the server + agent services.
+#   single DOPILOT_ADMIN_API_TOKEN): uncomment in the server + agent services.
 #     DOPILOT_AGENT_SHARED_TOKEN   server -> agent token (egg deploy).
 #     DOPILOT_SERVER_SHARED_TOKEN  agent -> server token (heartbeat).
 #
@@ -138,8 +144,8 @@ services:
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
       # Single secret: both server<->agent machine tokens derive from this unless
-      # the optional split tokens below are set.
-      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
+      # the optional split tokens below are set. Dev default is >= 16 chars.
+      DOPILOT_ADMIN_API_TOKEN: ${DOPILOT_ADMIN_API_TOKEN:-change-me-admin-api-token}
       # DOPILOT_AGENT_SHARED_TOKEN: ${DOPILOT_AGENT_SHARED_TOKEN:-}
       # DOPILOT_SERVER_SHARED_TOKEN: ${DOPILOT_SERVER_SHARED_TOKEN:-}
     volumes:
@@ -157,7 +163,7 @@ services:
       AGENT_ID: scrapy-agent-2
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
-      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
+      DOPILOT_ADMIN_API_TOKEN: ${DOPILOT_ADMIN_API_TOKEN:-change-me-admin-api-token}
       # DOPILOT_AGENT_SHARED_TOKEN: ${DOPILOT_AGENT_SHARED_TOKEN:-}
       # DOPILOT_SERVER_SHARED_TOKEN: ${DOPILOT_SERVER_SHARED_TOKEN:-}
     volumes:
@@ -169,7 +175,7 @@ services:
       AGENT_ID: scrapy-agent-3
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
-      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
+      DOPILOT_ADMIN_API_TOKEN: ${DOPILOT_ADMIN_API_TOKEN:-change-me-admin-api-token}
       # DOPILOT_AGENT_SHARED_TOKEN: ${DOPILOT_AGENT_SHARED_TOKEN:-}
       # DOPILOT_SERVER_SHARED_TOKEN: ${DOPILOT_SERVER_SHARED_TOKEN:-}
     volumes:
@@ -182,11 +188,12 @@ services:
     environment:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
-      # Web admin password + admin API secret (override the dev-only defaults).
+      # Web admin password + static admin API token (override the dev-only
+      # defaults). token_secret is TOML-only (baked into the image).
       DOPILOT_ADMIN_PASSWORD: ${DOPILOT_ADMIN_PASSWORD:-change-me}
       # Also the single source for the server<->agent machine tokens (see header).
-      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
-      # Optional split machine tokens (override the DOPILOT_ADMIN_API_SECRET fallback):
+      DOPILOT_ADMIN_API_TOKEN: ${DOPILOT_ADMIN_API_TOKEN:-change-me-admin-api-token}
+      # Optional split machine tokens (override the DOPILOT_ADMIN_API_TOKEN fallback):
       # DOPILOT_AGENT_SHARED_TOKEN: ${DOPILOT_AGENT_SHARED_TOKEN:-}
       # DOPILOT_SERVER_SHARED_TOKEN: ${DOPILOT_SERVER_SHARED_TOKEN:-}
     volumes:

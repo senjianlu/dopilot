@@ -3,9 +3,9 @@
 # Copy to configs/agent.toml and edit, or rely on environment overrides in
 # Docker deployments.
 #
-# Single-secret machine tokens (phase 2.2.1): the two shared-token fields below
-# are intentionally EMPTY so the loader defaults them to DOPILOT_ADMIN_API_SECRET
-# (the same secret the server uses). For split tokens, set
+# Single-secret machine tokens (phase 2.2.2): the two shared-token fields below
+# are intentionally EMPTY so the loader defaults them to DOPILOT_ADMIN_API_TOKEN
+# (the same static admin API token the server uses). For split tokens, set
 # DOPILOT_AGENT_SHARED_TOKEN (server -> agent) / DOPILOT_SERVER_SHARED_TOKEN
 # (agent -> server), or fill the fields here; they MUST then match the server's
 # [agent_auth].shared_token / [agents].server_shared_token respectively.
@@ -16,14 +16,14 @@ host = "0.0.0.0"
 port = 6800
 workdir = "/agent-data"
 # Phase 1.5: where the agent POSTs heartbeats, and the agent -> server token.
-# Empty => defaults to DOPILOT_ADMIN_API_SECRET; an explicit value (or
+# Empty => defaults to DOPILOT_ADMIN_API_TOKEN; an explicit value (or
 # DOPILOT_SERVER_SHARED_TOKEN) must match the server's [agents].server_shared_token.
 server_url = "http://server:5000"
 heartbeat_interval_seconds = 10
 server_shared_token = ""
 
 [auth]
-# server -> agent token (egg deploy). Empty => defaults to DOPILOT_ADMIN_API_SECRET;
+# server -> agent token (egg deploy). Empty => defaults to DOPILOT_ADMIN_API_TOKEN;
 # an explicit value (or DOPILOT_AGENT_SHARED_TOKEN) must match the server's
 # [agent_auth].shared_token.
 shared_token = ""

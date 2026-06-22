@@ -48,7 +48,10 @@ _STR_OVERRIDES: tuple[tuple[str, str, str], ...] = (
     ("DOPILOT_DATABASE_URL", "database", "url"),
     ("DOPILOT_ADMIN_USERNAME", "auth", "admin_username"),
     ("DOPILOT_ADMIN_PASSWORD", "auth", "admin_password"),
-    ("DOPILOT_ADMIN_API_SECRET", "auth", "token_secret"),
+    # Phase 2.2.2: the static admin API token. ``token_secret`` has NO env
+    # override (TOML-only signing key); the removed ``DOPILOT_ADMIN_API_SECRET``
+    # has no effect and no compatibility alias.
+    ("DOPILOT_ADMIN_API_TOKEN", "auth", "admin_api_token"),
     ("DOPILOT_AGENT_SHARED_TOKEN", "agent_auth", "shared_token"),
     ("DOPILOT_REDIS_URL", "redis", "url"),
     ("DOPILOT_REDIS_CONSUMER_NAME", "redis", "consumer_name"),
@@ -156,22 +159,50 @@ def _apply_env_overrides(settings: Settings) -> None:
 
 
 def _apply_machine_token_fallback(settings: Settings) -> None:
-    """Default empty machine tokens to the effective admin API secret.
+    """Default empty machine tokens to the static ``admin_api_token``.
 
-    Phase 2.2.1 single-secret posture: when ``[agent_auth].shared_token`` and/or
-    ``[agents].server_shared_token`` are empty, derive them from the effective
-    ``auth.token_secret`` (set via TOML or ``DOPILOT_ADMIN_API_SECRET``). This runs
-    AFTER env overrides, so an explicit ``DOPILOT_AGENT_SHARED_TOKEN`` /
-    ``DOPILOT_SERVER_SHARED_TOKEN`` (or a non-empty TOML value) wins. No secret to
-    derive from (empty ``token_secret``, e.g. anonymous dev mode) => leave empty.
+    Single-secret posture: when ``[agent_auth].shared_token`` and/or
+    ``[agents].server_shared_token`` are empty, derive them from
+    ``auth.admin_api_token`` (set via TOML or ``DOPILOT_ADMIN_API_TOKEN``). This
+    runs AFTER env overrides, so an explicit ``DOPILOT_AGENT_SHARED_TOKEN`` /
+    ``DOPILOT_SERVER_SHARED_TOKEN`` (or a non-empty TOML value) wins.
+
+    Phase 2.2.2 changed the fallback source from ``token_secret`` (a required
+    fail-closed credential, so machine auth was always ON in production) to the
+    OPTIONAL ``admin_api_token``: with no ``admin_api_token`` and no explicit
+    split tokens, machine auth falls back to OFF (config-present-or-off). Set
+    ``admin_api_token`` (or both split tokens) to keep machine auth ON.
     """
-    secret = (settings.auth.token_secret or "").strip()
+    secret = (settings.auth.admin_api_token or "").strip()
     if not secret:
         return
     if not (settings.agent_auth.shared_token or "").strip():
         settings.agent_auth.shared_token = secret
     if not (settings.agents.server_shared_token or "").strip():
         settings.agents.server_shared_token = secret
+
+
+# Minimum length for a non-empty static ``admin_api_token`` (phase 2.2.2).
+_ADMIN_API_TOKEN_MIN_LEN = 16
+
+
+def _validate_admin_api_token(settings: Settings) -> None:
+    """Reject a non-empty ``admin_api_token`` shorter than the minimum length.
+
+    Empty / unset is allowed (machine auth simply falls back to OFF). A
+    non-empty but too-short token is almost certainly a misconfiguration, so we
+    hard-fail at the loader boundary rather than in :class:`Settings`
+    construction (so tests / dependency overrides can still build short-token
+    Settings directly).
+    """
+    token = (settings.auth.admin_api_token or "").strip()
+    if token and len(token) < _ADMIN_API_TOKEN_MIN_LEN:
+        raise ConfigError(
+            "auth.admin_api_token is too short: a non-empty admin API token "
+            f"must be at least {_ADMIN_API_TOKEN_MIN_LEN} characters "
+            "(set DOPILOT_ADMIN_API_TOKEN or auth.admin_api_token, or leave it "
+            "empty)."
+        )
 
 
 def _enforce_fail_closed_auth(settings: Settings) -> None:
@@ -196,10 +227,10 @@ def _enforce_fail_closed_auth(settings: Settings) -> None:
     if missing:
         raise ConfigError(
             "Web admin auth is fail-closed: missing/empty "
-            f"{', '.join(missing)}. Provide all three credentials (TOML or "
-            "DOPILOT_ADMIN_USERNAME / DOPILOT_ADMIN_PASSWORD / "
-            "DOPILOT_ADMIN_API_SECRET), or set DOPILOT_AUTH_DISABLED=true to run "
-            "anonymously in development."
+            f"{', '.join(missing)}. Provide admin_username and admin_password "
+            "(TOML or DOPILOT_ADMIN_USERNAME / DOPILOT_ADMIN_PASSWORD) and "
+            "token_secret (TOML-only signing key, no env override), or set "
+            "DOPILOT_AUTH_DISABLED=true to run anonymously in development."
         )
 
 
@@ -217,8 +248,9 @@ def load_settings(
     ``DOPILOT_*`` env vars (see ``_STR_OVERRIDES`` / ``_INT_OVERRIDES`` /
     ``_BOOL_OVERRIDES``) override the matching TOML scalar — env wins over TOML.
     A malformed integer/boolean env value raises :class:`ConfigError` naming the
-    env var. After overrides, empty machine tokens fall back to the admin API
-    secret, then web admin auth is enforced fail-closed.
+    env var. After overrides, empty machine tokens fall back to the static
+    ``admin_api_token``, a non-empty-but-too-short ``admin_api_token`` is
+    rejected, then web admin auth is enforced fail-closed.
     """
     resolved = path or os.environ.get("DOPILOT_CONFIG") or default_path
     if not resolved:
@@ -238,6 +270,7 @@ def load_settings(
 
     settings = Settings.model_validate(raw)
     _apply_env_overrides(settings)
+    _validate_admin_api_token(settings)
     _apply_machine_token_fallback(settings)
     _enforce_fail_closed_auth(settings)
     return settings
