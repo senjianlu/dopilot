@@ -58,10 +58,12 @@ def load_settings(
     ``[auth].shared_token`` (server->agent), ``DOPILOT_SERVER_SHARED_TOKEN`` ->
     ``[agent].server_shared_token`` (agent->server).
 
-    Single-secret fallback (phase 2.2.1): when a machine token is still empty
-    after overrides, it defaults to ``DOPILOT_ADMIN_API_SECRET`` (loader-only on
-    the agent — there is no agent settings field for the admin secret). An
-    explicit split-token value (TOML or env) always wins over the fallback.
+    Single-secret fallback (phase 2.2.2): when a machine token is still empty
+    after overrides, it defaults to ``DOPILOT_ADMIN_API_TOKEN`` (loader-only on
+    the agent — there is no agent settings field for the admin API token). An
+    explicit split-token value (TOML or env) always wins over the fallback. The
+    server is the config authority; the old ``DOPILOT_ADMIN_API_SECRET`` is
+    ignored here and has no effect.
     """
     raw_path = (
         path if path is not None else os.environ.get("DOPILOT_CONFIG")
@@ -90,7 +92,7 @@ def load_settings(
         redis_section["url"] = env_redis_url
 
     # Machine-token env overrides (env wins over TOML), then single-secret
-    # fallback to DOPILOT_ADMIN_API_SECRET for whichever stays empty.
+    # fallback to DOPILOT_ADMIN_API_TOKEN for whichever stays empty.
     env_agent_shared = os.environ.get("DOPILOT_AGENT_SHARED_TOKEN")
     if env_agent_shared is not None:
         auth_section["shared_token"] = env_agent_shared
@@ -98,12 +100,12 @@ def load_settings(
     if env_server_shared is not None:
         agent_section["server_shared_token"] = env_server_shared
 
-    admin_secret = (os.environ.get("DOPILOT_ADMIN_API_SECRET") or "").strip()
-    if admin_secret:
+    admin_api_token = (os.environ.get("DOPILOT_ADMIN_API_TOKEN") or "").strip()
+    if admin_api_token:
         if not str(auth_section.get("shared_token") or "").strip():
-            auth_section["shared_token"] = admin_secret
+            auth_section["shared_token"] = admin_api_token
         if not str(agent_section.get("server_shared_token") or "").strip():
-            agent_section["server_shared_token"] = admin_secret
+            agent_section["server_shared_token"] = admin_api_token
 
     if not agent_section.get("agent_id"):
         raise ConfigError("missing required setting: [agent].agent_id")

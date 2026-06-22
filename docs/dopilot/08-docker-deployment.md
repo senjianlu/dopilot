@@ -264,7 +264,7 @@ services:
       AGENT_ID: scrapy-agent-1
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
-      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
+      DOPILOT_ADMIN_API_TOKEN: ${DOPILOT_ADMIN_API_TOKEN:-change-me-admin-api-token}
     volumes:
       - dopilot-agent1-data:/agent-data
     ports:
@@ -276,7 +276,7 @@ services:
       AGENT_ID: scrapy-agent-2
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
-      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
+      DOPILOT_ADMIN_API_TOKEN: ${DOPILOT_ADMIN_API_TOKEN:-change-me-admin-api-token}
     volumes:
       - dopilot-agent2-data:/agent-data
 
@@ -286,7 +286,7 @@ services:
       AGENT_ID: scrapy-agent-3
       AGENT_WORKDIR: /agent-data
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
-      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
+      DOPILOT_ADMIN_API_TOKEN: ${DOPILOT_ADMIN_API_TOKEN:-change-me-admin-api-token}
     volumes:
       - dopilot-agent3-data:/agent-data
 
@@ -298,7 +298,7 @@ services:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
       DOPILOT_ADMIN_PASSWORD: ${DOPILOT_ADMIN_PASSWORD:-change-me}
-      DOPILOT_ADMIN_API_SECRET: ${DOPILOT_ADMIN_API_SECRET:-change-me}
+      DOPILOT_ADMIN_API_TOKEN: ${DOPILOT_ADMIN_API_TOKEN:-change-me-admin-api-token}
     volumes:
       - dopilot-server-data:/server-data
     ports:
@@ -344,22 +344,27 @@ url = "postgresql+psycopg://dopilot:dopilot@db:5432/dopilot"
 
 # [auth] fail-closed（阶段 2.2）：load_settings() 启动时三者必须齐全且非空，否则
 # 抛 ConfigError 拒绝启动。开发环境如需匿名管理员模式，显式设 DOPILOT_AUTH_DISABLED=true。
-# 任意标量/密钥可被 DOPILOT_* 环境变量覆盖（env 优先于 TOML），例如：
-#   DOPILOT_ADMIN_PASSWORD / DOPILOT_ADMIN_API_SECRET（admin token secret，原 DOPILOT_TOKEN_SECRET 已改名，无兼容别名）
+# 多数标量/密钥可被 DOPILOT_* 环境变量覆盖（env 优先于 TOML），例如：
+#   DOPILOT_ADMIN_PASSWORD / DOPILOT_ADMIN_API_TOKEN（静态 admin API token，非空须 >= 16 字符）
 #   DOPILOT_SERVER_PORT / DOPILOT_SCHEDULER_ENABLED / DOPILOT_AUTH_DISABLED …
-# 单密钥机器令牌（阶段 2.2.1）：[agent_auth].shared_token / [agents].server_shared_token 留空时，
-# 加载器回退为有效 admin API secret（auth.token_secret / DOPILOT_ADMIN_API_SECRET）；
-# 需要拆分令牌再设 DOPILOT_AGENT_SHARED_TOKEN / DOPILOT_SERVER_SHARED_TOKEN。
+# 例外（阶段 2.2.2）：token_secret 仅 TOML 可配、无 env 覆盖；它是登录/SSE 的 HMAC 签名密钥，
+#   不再作为机器令牌来源；旧的 DOPILOT_ADMIN_API_SECRET 已移除、无兼容别名、无任何作用。
+# 单密钥机器令牌（阶段 2.2.2）：[agent_auth].shared_token / [agents].server_shared_token 留空时，
+# 加载器回退为 auth.admin_api_token（DOPILOT_ADMIN_API_TOKEN）；需要拆分令牌再设
+# DOPILOT_AGENT_SHARED_TOKEN / DOPILOT_SERVER_SHARED_TOKEN。
 [auth]
 admin_username = "admin"
 admin_password = "change-me"
-token_secret = "change-me"
+# 内部签名密钥，仅 TOML、无 env 覆盖；镜像内置生成的长随机值（非用户专属密钥），高安全部署可挂载自有 TOML 覆盖。
+token_secret = "shLv5qNwC3aViZQYr08x3yfaY6yGZACB6ujydXiVaGnb7OdOflc91xVLyXBoeRDL"
+# 静态 admin API token：可直接作 Bearer 认证 admin，亦为机器令牌的回退来源；compose 经 DOPILOT_ADMIN_API_TOKEN 注入。
+admin_api_token = ""
 access_token_ttl_minutes = 720
 # SSE 短期建连凭证：仅在 Web 认证开启时需要；POST 换取、TTL 60s、只校验建连、连接最长寿命如 30min
 stream_token_ttl_seconds = 60
 
 [agent_auth]
-# server→agent token；留空则回退为有效 admin API secret（单密钥姿态）。
+# server→agent token；留空则回退为 auth.admin_api_token（单密钥姿态）。
 shared_token = ""
 
 [nodes]
@@ -381,7 +386,7 @@ require_aof = true                          # 生产启用 AOF
 heartbeat_timeout_seconds = 30              # now - last_seen_at 超此值判 agent 不健康，不再投递新任务
 stalled_attempt_seconds = 300              # heartbeat 正常但 attempt 长时间无状态事件 → operator-visible stalled 告警
 lost_after_stalled_seconds = 900           # event_stall 持续超此值 → 对账 loop 转 lost（同时投 stop intent=reclaim）
-server_shared_token = ""  # agent→server heartbeat 鉴权；留空则回退为有效 admin API secret（单密钥姿态）
+server_shared_token = ""  # agent→server heartbeat 鉴权；留空则回退为 auth.admin_api_token（单密钥姿态）
 
 [scheduler]
 enabled = true
@@ -423,7 +428,7 @@ event_outbox_dir = "/agent-data/outbox"          # 状态事件/日志 outbox（
 agent_id = "agent-01"                            # 稳定标识；command stream 路由 / heartbeat 携带
 server_url = "http://server:5000"                # 主动 POST heartbeat 的目标
 heartbeat_interval_seconds = 10                  # 周期 POST /api/v1/agents/{agent_id}/heartbeat
-# agent→server 鉴权独立 token，不复用旧 server→agent token；留空则回退为 DOPILOT_ADMIN_API_SECRET（单密钥姿态）
+# agent→server 鉴权独立 token，不复用旧 server→agent token；留空则回退为 DOPILOT_ADMIN_API_TOKEN（单密钥姿态）
 server_shared_token = ""
 ```
 
@@ -435,7 +440,7 @@ server_shared_token = ""
 | 容器 | 必要参数 | 说明 |
 | --- | --- | --- |
 | `server` | 角色默认配置路径 `/app/configs/server.toml`（烤进 `dopilot-server` 入口） | compose 不需要配置路径环境变量；常规部署通过 `DOPILOT_*` 覆盖，进阶部署可把自有 toml 挂载到该默认路径；不使用 cwd 魔法。 |
-| `server` | `DOPILOT_ADMIN_PASSWORD` / `DOPILOT_ADMIN_API_SECRET` | Web 管理员密码 + admin API secret；后者亦为 server↔agent 机器令牌的单一来源（拆分令牌未设时双方据此派生），故须注入 server 与每个 agent。 |
+| `server` | `DOPILOT_ADMIN_PASSWORD` / `DOPILOT_ADMIN_API_TOKEN` | Web 管理员密码 + 静态 admin API token（可直接作 Bearer 认证 admin，非空须 >= 16 字符）；后者亦为 server↔agent 机器令牌的单一来源（拆分令牌未设时双方据此派生），故须注入 server 与每个 agent。登录/SSE 签名密钥 `token_secret` 仅 TOML、无 env、已烤进镜像。 |
 | `server` | `DOPILOT_DATABASE_URL=postgresql+psycopg://...` | 指向 PostgreSQL；可覆盖 toml `[database].url`。 |
 | `server` | `5000:5000` | API/SSE 入口，并**同源托管** Web 静态产物（阶段 2.1：Next.js 静态导出 `/app/web`，无独立 Web 容器）；外层用户托管层（可选反代）也通过该地址访问 `/api/v1`。 |
 | `server` | 内置 `/app/configs/server.toml`（烤进镜像，源自 `configs/server.docker.toml`） | compose 网络配置；默认无需挂载，要定制时把自有 toml 只读挂到该路径。 |
@@ -451,7 +456,7 @@ server_shared_token = ""
 | `scrapy-agent-1/2/3` | `init: true` | agent 作 PID 1，收割 scrapyd 子进程；本机 scrapyd 内部端口（如 6801）仅本机可见，不再对外暴露 server→agent 调度端口（仅 `scrapy-agent-1` 发布 6800 供 smoke/调试）。 |
 | `scrapy-agent-1/2/3` | `dopilot-agent{1,2,3}-data:/agent-data` | 每个 agent 各自的数据卷：scrapyd `job.log` + `/agent-data/state/executions/{attempt_id}.json` 映射 + Redis event/log outbox；server drain 完成前不得删 `job.log`。 |
 
-三个对称 agent（`scrapy-agent-1/2/3`，阶段 1 即落地）共用镜像内置的 `/app/configs/agent.toml`（由 `dopilot-agent` 入口的角色默认路径读取，compose 不再注入 `DOPILOT_CONFIG`），仅 `AGENT_ID` 与数据卷不同；compose 为每个 agent 注入稳定 `AGENT_ID`、`AGENT_WORKDIR`、`DOPILOT_REDIS_URL`、`DOPILOT_ADMIN_API_SECRET`（机器令牌单一来源）。heartbeat 目标从 `[agent].server_url` 读取，当前提交未通过 `DOPILOT_SERVER_URL` 环境变量注入。
+三个对称 agent（`scrapy-agent-1/2/3`，阶段 1 即落地）共用镜像内置的 `/app/configs/agent.toml`（由 `dopilot-agent` 入口的角色默认路径读取，compose 不再注入 `DOPILOT_CONFIG`），仅 `AGENT_ID` 与数据卷不同；compose 为每个 agent 注入稳定 `AGENT_ID`、`AGENT_WORKDIR`、`DOPILOT_REDIS_URL`、`DOPILOT_ADMIN_API_TOKEN`（机器令牌单一来源）。heartbeat 目标从 `[agent].server_url` 读取，当前提交未通过 `DOPILOT_SERVER_URL` 环境变量注入。
 
 > 重构后 server↔agent 经 **Redis 通信总线**：agent 主动消费命令、主动 `XADD` 推状态/日志，并**主动 POST heartbeat**。agent 启动必须携带稳定 `agent_id`（环境变量 `AGENT_ID` 或 `configs/agent.toml`），server 据 heartbeat 写入 `nodes.last_seen_at` 并判健康（不再轮询 `/health`）。agent→server 鉴权用独立 `server_shared_token`（config-present-or-off：非空才校验），**不复用** server→agent 旧 token、也不复用 Web 管理员账号密码；agent 仍不直连 PostgreSQL。
 

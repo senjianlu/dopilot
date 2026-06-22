@@ -5,16 +5,28 @@
 # WARNING: every "change-me" value below is a placeholder and is NOT production-safe.
 # Replace admin_password / token_secret / shared_token before any real deployment.
 #
-# Env overrides (phase 2.2): any scalar/secret below can be overridden by a
+# Env overrides (phase 2.2): most scalars/secrets below can be overridden by a
 # DOPILOT_* environment variable (env wins over TOML), so real deployments inject
-# secrets without mounting a TOML — e.g. DOPILOT_ADMIN_PASSWORD, DOPILOT_ADMIN_API_SECRET,
-# DOPILOT_DATABASE_URL, DOPILOT_REDIS_URL, DOPILOT_SERVER_PORT,
-# DOPILOT_SCHEDULER_ENABLED, DOPILOT_AUTH_DISABLED.
+# secrets without mounting a TOML — e.g. DOPILOT_ADMIN_PASSWORD,
+# DOPILOT_ADMIN_API_TOKEN, DOPILOT_DATABASE_URL, DOPILOT_REDIS_URL,
+# DOPILOT_SERVER_PORT, DOPILOT_SCHEDULER_ENABLED, DOPILOT_AUTH_DISABLED.
+# EXCEPTION: token_secret is TOML-only (phase 2.2.2) — it has NO env override.
 #
-# Single-secret machine tokens (phase 2.2.1): leave [agent_auth].shared_token and
-# [agents].server_shared_token empty to default them to the effective admin API
-# secret (auth.token_secret / DOPILOT_ADMIN_API_SECRET); set
-# DOPILOT_AGENT_SHARED_TOKEN / DOPILOT_SERVER_SHARED_TOKEN for split tokens.
+# token_secret vs admin_api_token (phase 2.2.2):
+#   - token_secret  = internal HMAC signing key for login access tokens + SSE
+#                     stream tokens. TOML-only, never sent to clients.
+#   - admin_api_token = externally supplied STATIC admin API token. Clients may
+#                     present it directly as `Authorization: Bearer <token>` to
+#                     authenticate as admin (no login). Set via TOML or
+#                     DOPILOT_ADMIN_API_TOKEN. A non-empty value must be >= 16
+#                     characters. It is ALSO the fallback source for empty
+#                     machine tokens (below).
+#
+# Single-secret machine tokens (phase 2.2.2): leave [agent_auth].shared_token and
+# [agents].server_shared_token empty to default them to auth.admin_api_token
+# (DOPILOT_ADMIN_API_TOKEN); set DOPILOT_AGENT_SHARED_TOKEN /
+# DOPILOT_SERVER_SHARED_TOKEN for split tokens. With no admin_api_token and no
+# split tokens, machine auth falls back to OFF (config-present-or-off).
 #
 # Web admin auth is FAIL-CLOSED: the server refuses to start unless
 # admin_username + admin_password + token_secret are all non-empty. To run
@@ -32,7 +44,13 @@ url = "postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot"
 [auth]
 admin_username = "admin"
 admin_password = "change-me"
-token_secret = "change-me"
+# Internal signing key (TOML-only, no env override). This example value is
+# public; replace with your own long random value before any real deployment.
+token_secret = "shLv5qNwC3aViZQYr08x3yfaY6yGZACB6ujydXiVaGnb7OdOflc91xVLyXBoeRDL"
+# Static admin API token: usable directly as `Authorization: Bearer <token>` and
+# the default source for the machine tokens below. Leave empty to disable both;
+# a non-empty value must be >= 16 chars. Override with DOPILOT_ADMIN_API_TOKEN.
+admin_api_token = "change-me-admin-api-token"
 access_token_ttl_minutes = 720
 stream_token_ttl_seconds = 60
 
@@ -57,7 +75,9 @@ heartbeat_timeout_seconds = 30
 stalled_attempt_seconds = 300
 lost_after_stalled_seconds = 900
 # agent -> server token (heartbeat). MUST match the agent's
-# [agent].server_shared_token. Leave empty to disable inbound agent auth (dev).
+# [agent].server_shared_token. Leave empty to default to auth.admin_api_token
+# (single-secret posture), or to disable inbound agent auth when no admin token
+# is set either.
 server_shared_token = "change-me-agent-server-token"
 
 [nodes]

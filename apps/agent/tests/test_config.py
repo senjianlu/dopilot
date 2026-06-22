@@ -145,7 +145,7 @@ def test_missing_file_raises(tmp_path: Path) -> None:
         load_settings(tmp_path / "does-not-exist.toml")
 
 
-# --- phase 2.2.1: single-secret machine-token fallback + role default path ---
+# --- phase 2.2.2: single-secret machine-token fallback + role default path ---
 
 
 def _clear_token_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,6 +153,7 @@ def _clear_token_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "AGENT_ID",
         "AGENT_WORKDIR",
         "DOPILOT_ADMIN_API_SECRET",
+        "DOPILOT_ADMIN_API_TOKEN",
         "DOPILOT_AGENT_SHARED_TOKEN",
         "DOPILOT_SERVER_SHARED_TOKEN",
     ):
@@ -169,15 +170,15 @@ def _write_empty_token_config(tmp_path: Path) -> Path:
     return cfg
 
 
-def test_machine_tokens_fall_back_to_admin_api_secret(
+def test_machine_tokens_fall_back_to_admin_api_token(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _clear_token_env(monkeypatch)
     cfg = _write_empty_token_config(tmp_path)
-    monkeypatch.setenv("DOPILOT_ADMIN_API_SECRET", "single-secret")
+    monkeypatch.setenv("DOPILOT_ADMIN_API_TOKEN", "single-token")
     settings = load_settings(cfg)
-    assert settings.auth.shared_token == "single-secret"
-    assert settings.agent.server_shared_token == "single-secret"
+    assert settings.auth.shared_token == "single-token"
+    assert settings.agent.server_shared_token == "single-token"
     assert settings.auth.enabled is True
 
 
@@ -186,7 +187,7 @@ def test_split_machine_token_envs_override_fallback(
 ) -> None:
     _clear_token_env(monkeypatch)
     cfg = _write_empty_token_config(tmp_path)
-    monkeypatch.setenv("DOPILOT_ADMIN_API_SECRET", "single-secret")
+    monkeypatch.setenv("DOPILOT_ADMIN_API_TOKEN", "single-token")
     monkeypatch.setenv("DOPILOT_AGENT_SHARED_TOKEN", "s2a-tok")
     monkeypatch.setenv("DOPILOT_SERVER_SHARED_TOKEN", "a2s-tok")
     settings = load_settings(cfg)
@@ -194,10 +195,24 @@ def test_split_machine_token_envs_override_fallback(
     assert settings.agent.server_shared_token == "a2s-tok"
 
 
+def test_old_admin_api_secret_env_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Phase 2.2.2: the removed DOPILOT_ADMIN_API_SECRET no longer fills machine
+    # tokens; with empty TOML tokens they stay empty.
+    _clear_token_env(monkeypatch)
+    cfg = _write_empty_token_config(tmp_path)
+    monkeypatch.setenv("DOPILOT_ADMIN_API_SECRET", "should-be-ignored")
+    settings = load_settings(cfg)
+    assert settings.auth.shared_token == ""
+    assert settings.agent.server_shared_token == ""
+    assert settings.auth.enabled is False
+
+
 def test_split_token_env_overrides_toml(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Env wins over non-empty TOML machine tokens (no admin secret involved).
+    # Env wins over non-empty TOML machine tokens (no admin API token involved).
     _clear_token_env(monkeypatch)
     cfg = _write_config(tmp_path)  # TOML: shared_token=tok, server=agent-server-tok
     monkeypatch.setenv("DOPILOT_AGENT_SHARED_TOKEN", "env-s2a")
@@ -207,19 +222,19 @@ def test_split_token_env_overrides_toml(
     assert settings.agent.server_shared_token == "env-a2s"
 
 
-def test_toml_tokens_not_overwritten_by_admin_secret(
+def test_toml_tokens_not_overwritten_by_admin_api_token(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Non-empty TOML machine tokens are kept; admin secret only fills empties.
+    # Non-empty TOML machine tokens are kept; admin API token only fills empties.
     _clear_token_env(monkeypatch)
     cfg = _write_config(tmp_path)
-    monkeypatch.setenv("DOPILOT_ADMIN_API_SECRET", "single-secret")
+    monkeypatch.setenv("DOPILOT_ADMIN_API_TOKEN", "single-token")
     settings = load_settings(cfg)
     assert settings.auth.shared_token == "tok"
     assert settings.agent.server_shared_token == "agent-server-tok"
 
 
-def test_no_fallback_when_admin_secret_absent(
+def test_no_fallback_when_admin_api_token_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _clear_token_env(monkeypatch)

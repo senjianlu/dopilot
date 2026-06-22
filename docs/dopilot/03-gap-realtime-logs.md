@@ -265,7 +265,7 @@ agent log publisher 在 `XACK` / outbox 语义下保证日志至少一次到达 
 ### 第二步
 
 1. 在 `apps/agent/dopilot_agent/logs/` 增加 `DockerLogSource` 采集侧（docker SDK 或 `docker logs -f` 子进程落盘），同样由 agent log publisher tail 后增量 `XADD` 暴露 stdout/stderr。
-2. dopilot `auth/` 模块按两套语义实现鉴权：**机器认证 config-present-or-off**（agent `shared_token` 非空才启用 agent 认证）；**Web 管理员认证 fail-closed**（阶段 2.2：`admin_username`+`admin_password`+`token_secret` 三者齐全且非空时启用，缺失则启动失败，仅显式 `DOPILOT_AUTH_DISABLED=true` 才匿名直连）。Web 认证启用时，SSE 用短期 `stream_token`（POST 换取、TTL 60s、仅校验建连）。内网防误操作策略，非互联网零信任。
+2. dopilot `auth/` 模块按两套语义实现鉴权：**机器认证 config-present-or-off**（agent `shared_token` 非空才启用 agent 认证，空机器 token 可回退到静态 `admin_api_token` / `DOPILOT_ADMIN_API_TOKEN`）；**Web 管理员认证 fail-closed**（阶段 2.2：`admin_username`+`admin_password`+`token_secret` 三者齐全且非空时启用，缺失则启动失败，仅显式 `DOPILOT_AUTH_DISABLED=true` 才匿名直连；阶段 2.2.2：`token_secret` 仅 TOML、用于登录/SSE 签名，静态 `admin_api_token` 可直接作 Bearer 认证 admin）。Web 认证启用时，SSE 用短期 `stream_token`（POST 换取、TTL 60s、仅校验建连）。内网防误操作策略，非互联网零信任。
 
 ### 兜底与边界
 

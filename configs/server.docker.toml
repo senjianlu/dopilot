@@ -7,18 +7,24 @@
 # change-me* values are NOT production-safe; this file is a local/dev compose
 # convenience, not a secret store.
 #
-# Env overrides (phase 2.2): any scalar/secret can be overridden by a DOPILOT_*
+# Env overrides (phase 2.2): most scalars/secrets can be overridden by a DOPILOT_*
 # env var (env wins over TOML). The compose stack already injects
 # DOPILOT_DATABASE_URL / DOPILOT_REDIS_URL this way; real deployments should
-# override DOPILOT_ADMIN_PASSWORD / DOPILOT_ADMIN_API_SECRET rather than editing
+# override DOPILOT_ADMIN_PASSWORD / DOPILOT_ADMIN_API_TOKEN rather than editing
 # this file. Web admin auth is fail-closed (the three [auth] creds must be
 # non-empty); DOPILOT_AUTH_DISABLED=true is the dev-only escape hatch.
+# EXCEPTION: token_secret is TOML-only (phase 2.2.2) — it has no env override.
 #
-# Single-secret machine tokens (phase 2.2.1): the [agent_auth].shared_token and
+# The token_secret baked below is a generated long value, NOT a user-specific
+# production secret: it is shipped in the open-source image, so anyone can read
+# it. High-security deployments should override it by mounting their own TOML
+# over /app/configs/server.toml (token_secret has no env override).
+#
+# Single-secret machine tokens (phase 2.2.2): the [agent_auth].shared_token and
 # [agents].server_shared_token fields below are intentionally EMPTY so the loader
-# defaults them to the effective admin API secret (auth.token_secret /
-# DOPILOT_ADMIN_API_SECRET). Set DOPILOT_AGENT_SHARED_TOKEN /
-# DOPILOT_SERVER_SHARED_TOKEN (or fill these fields) to use split tokens instead.
+# defaults them to auth.admin_api_token (DOPILOT_ADMIN_API_TOKEN). Set
+# DOPILOT_AGENT_SHARED_TOKEN / DOPILOT_SERVER_SHARED_TOKEN (or fill these fields)
+# to use split tokens instead.
 
 [server]
 host = "0.0.0.0"
@@ -31,13 +37,20 @@ url = "postgresql+psycopg://dopilot:dopilot@db:5432/dopilot"
 [auth]
 admin_username = "admin"
 admin_password = "change-me"
-token_secret = "change-me"
+# Internal HMAC signing key for login/SSE tokens (TOML-only; no env override).
+# Generated long value baked into the open-source image — NOT a per-deployment
+# secret. Override via a mounted TOML for high-security deployments.
+token_secret = "shLv5qNwC3aViZQYr08x3yfaY6yGZACB6ujydXiVaGnb7OdOflc91xVLyXBoeRDL"
+# Static admin API token. Empty here so the compose stack injects it via
+# DOPILOT_ADMIN_API_TOKEN (also the machine-token fallback source). A non-empty
+# value must be >= 16 chars.
+admin_api_token = ""
 access_token_ttl_minutes = 720
 stream_token_ttl_seconds = 60
 
 [agent_auth]
 # server -> agent token; must match [auth].shared_token in the agent config.
-# Empty => defaults to the effective admin API secret (single-secret posture).
+# Empty => defaults to auth.admin_api_token (single-secret posture).
 shared_token = ""
 
 # Redis reached by its compose SERVICE NAME (redis), with AUTH password.
@@ -55,7 +68,7 @@ heartbeat_timeout_seconds = 30
 stalled_attempt_seconds = 300
 lost_after_stalled_seconds = 900
 # agent -> server token; must match [agent].server_shared_token in agent config.
-# Empty => defaults to the effective admin API secret (single-secret posture).
+# Empty => defaults to auth.admin_api_token (single-secret posture).
 server_shared_token = ""
 
 [nodes]
