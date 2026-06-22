@@ -107,9 +107,12 @@ COPY apps/server/alembic.ini ./alembic.ini
 COPY apps/server/migrations ./migrations
 
 # Default configs baked into the image so the prebuilt image runs with no host
-# config mounts. server reads /app/configs/server.toml; agent reads
-# /app/configs/agent.toml (compose env vars override per-agent fields like
-# AGENT_ID). Mount your own TOML over these paths to customize.
+# config mounts. The role default config path is baked into each entrypoint
+# (dopilot-server -> /app/configs/server.toml, dopilot-agent ->
+# /app/configs/agent.toml), so there is NO global DOPILOT_CONFIG env (which would
+# wrongly make the agent read the server TOML). compose env vars override
+# per-agent fields like AGENT_ID. Advanced deployments may mount their own TOML
+# over these baked paths; compose uses environment overrides for normal changes.
 RUN mkdir -p /app/configs
 COPY configs/server.docker.toml ./configs/server.toml
 COPY configs/agent.example.toml ./configs/agent.toml
@@ -120,7 +123,6 @@ COPY configs/agent.example.toml ./configs/agent.toml
 COPY --from=web-build /build/apps/web/out ./web
 
 ENV DOPILOT_WEB_DIST=/app/web
-ENV DOPILOT_CONFIG=/app/configs/server.toml
 ENV DOPILOT_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
 ENV AGENT_WORKDIR=/agent-data
 

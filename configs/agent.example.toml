@@ -1,23 +1,32 @@
 # dopilot agent example config.
 #
-# Copy to configs/agent.toml (or point DOPILOT_CONFIG at your own file) and edit.
-# WARNING: the "change-me" shared_token below is a placeholder and is NOT production-safe.
-# It MUST match the server's [agent_auth].shared_token. Replace before any real deployment.
+# Copy to configs/agent.toml and edit, or rely on environment overrides in
+# Docker deployments.
+#
+# Single-secret machine tokens (phase 2.2.1): the two shared-token fields below
+# are intentionally EMPTY so the loader defaults them to DOPILOT_ADMIN_API_SECRET
+# (the same secret the server uses). For split tokens, set
+# DOPILOT_AGENT_SHARED_TOKEN (server -> agent) / DOPILOT_SERVER_SHARED_TOKEN
+# (agent -> server), or fill the fields here; they MUST then match the server's
+# [agent_auth].shared_token / [agents].server_shared_token respectively.
 
 [agent]
 agent_id = "scrapy-agent-1"
 host = "0.0.0.0"
 port = 6800
 workdir = "/agent-data"
-# Phase 1.5: where the agent POSTs heartbeats, and the agent -> server token
-# (must match the server's [agents].server_shared_token).
+# Phase 1.5: where the agent POSTs heartbeats, and the agent -> server token.
+# Empty => defaults to DOPILOT_ADMIN_API_SECRET; an explicit value (or
+# DOPILOT_SERVER_SHARED_TOKEN) must match the server's [agents].server_shared_token.
 server_url = "http://server:5000"
 heartbeat_interval_seconds = 10
-server_shared_token = "change-me-agent-server-token"
+server_shared_token = ""
 
 [auth]
-# server -> agent token (egg deploy). Must match server's [agent_auth].shared_token.
-shared_token = "change-me-agent-token"
+# server -> agent token (egg deploy). Empty => defaults to DOPILOT_ADMIN_API_SECRET;
+# an explicit value (or DOPILOT_AGENT_SHARED_TOKEN) must match the server's
+# [agent_auth].shared_token.
+shared_token = ""
 
 # Phase 2b: the unified agent image ships python + pip, so it can run
 # python_wheel ("script") tasks via `pip install --no-deps --target` + PYTHONPATH.

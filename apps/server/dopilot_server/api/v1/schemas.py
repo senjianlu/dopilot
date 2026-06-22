@@ -273,6 +273,9 @@ class ScheduleView(BaseModel):
     id: str
     name: str
     description: str | None = None
+    # Phase 2.2: row-level timer gate (default false). Disabled schedules stay
+    # listable/editable and remain manually runnable via trigger-now.
+    enabled: bool = False
     execution_template_id: str
     trigger_type: str = "interval"  # interval | cron
     interval_seconds: int | None = None
@@ -289,6 +292,8 @@ class ScheduleView(BaseModel):
 class ScheduleCreateRequest(BaseModel):
     name: str
     description: str | None = None
+    # Phase 2.2: new schedules default disabled; pass true to enable timer firing.
+    enabled: bool = False
     execution_template_id: str
     trigger_type: str = "interval"
     interval_seconds: int | None = None
@@ -299,6 +304,8 @@ class ScheduleCreateRequest(BaseModel):
 class ScheduleUpdateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+    # Phase 2.2: patched only when provided (PUT carries exclude_unset).
+    enabled: bool | None = None
     execution_template_id: str | None = None
     trigger_type: str | None = None
     interval_seconds: int | None = None

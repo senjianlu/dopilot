@@ -203,6 +203,48 @@ async def test_run_template_no_healthy_nodes_no_target(exec_client, seeder):
     assert detail["execution_template_id"] == template["id"]
 
 
+async def test_create_template_duplicate_name_409(exec_client, seeder):
+    await _create_template(exec_client, seeder)
+    artifact = await seeder.build_artifact()
+    r = await exec_client.post(
+        "/api/v1/templates",
+        json={
+            "name": "demo-template",  # same name as the first template
+            "build_artifact_id": artifact.id,
+            "command": "scrapy crawl phase1",
+            "node_strategy": "all",
+        },
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "template.name_conflict"
+
+
+async def test_rename_template_to_existing_name_409(exec_client, seeder):
+    artifact = await seeder.build_artifact()
+    first = await _create_template(exec_client, seeder)
+    second = await _create_template(
+        exec_client, seeder, _artifact=artifact, name="other-template"
+    )
+    # Rename the second onto the first's name -> conflict.
+    r = await exec_client.put(
+        f"/api/v1/templates/{second['id']}",
+        json={"name": first["name"]},
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "template.name_conflict"
+
+
+async def test_rename_template_to_same_name_ok(exec_client, seeder):
+    # Self-exclusion: updating a template without changing its name is allowed.
+    template = await _create_template(exec_client, seeder)
+    r = await exec_client.put(
+        f"/api/v1/templates/{template['id']}",
+        json={"name": template["name"], "description": "edited"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["description"] == "edited"
+
+
 async def test_delete_template(exec_client, seeder):
     template = await _create_template(exec_client, seeder)
     r = await exec_client.delete(f"/api/v1/templates/{template['id']}")

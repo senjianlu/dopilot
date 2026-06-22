@@ -1,9 +1,14 @@
 """Pydantic settings models mirroring the dopilot server TOML config.
 
-Each model maps one ``[section]`` of the config file. Auth is
-"config-present-or-off": web auth is enabled iff admin_username,
-admin_password and token_secret are all present and non-empty; agent auth is
-enabled iff shared_token is non-empty.
+Each model maps one ``[section]`` of the config file.
+
+Web admin auth is **fail-closed** (phase 2.2): it is enabled iff it is not
+explicitly disabled AND admin_username, admin_password and token_secret are all
+present and non-empty. Production startup (:func:`loader.load_settings`) refuses
+to boot when auth is not disabled but a credential is missing; the only way to
+run anonymously is the explicit ``auth.disabled`` flag
+(``DOPILOT_AUTH_DISABLED=true``). Agent machine auth stays
+"config-present-or-off": agent auth is enabled iff shared_token is non-empty.
 """
 
 from __future__ import annotations
@@ -22,6 +27,11 @@ class DatabaseSettings(BaseModel):
 
 
 class AuthSettings(BaseModel):
+    # Explicit dev/anonymous escape hatch (phase 2.2). When true the platform
+    # runs as an anonymous admin and protected endpoints are open. Set via
+    # ``DOPILOT_AUTH_DISABLED=true``. Anonymous mode is NEVER entered silently:
+    # it requires this flag, so production startup fail-closes otherwise.
+    disabled: bool = False
     admin_username: str | None = None
     admin_password: str | None = None
     token_secret: str | None = None
@@ -30,8 +40,8 @@ class AuthSettings(BaseModel):
 
     @property
     def enabled(self) -> bool:
-        """Web auth is ON iff all three credentials are present and non-empty."""
-        return bool(
+        """Web auth is ON iff not disabled AND all three creds are non-empty."""
+        return not self.disabled and bool(
             self.admin_username
             and self.admin_password
             and self.token_secret
@@ -77,7 +87,9 @@ class AgentsSettings(BaseModel):
     ``server_shared_token`` authenticates agent-initiated calls (heartbeat) TO
     the server; it is a *different* secret from
     :attr:`AgentAuthSettings.shared_token` (server -> agent). Inbound agent auth
-    follows the same "config-present-or-off" idiom as web/agent auth.
+    follows the "config-present-or-off" idiom shared by all machine auth (it is
+    ON iff the token is set); this is distinct from Web admin auth, which is
+    fail-closed (see the module docstring).
     """
 
     heartbeat_timeout_seconds: int = 30

@@ -6,6 +6,19 @@
 #
 # change-me* values are NOT production-safe; this file is a local/dev compose
 # convenience, not a secret store.
+#
+# Env overrides (phase 2.2): any scalar/secret can be overridden by a DOPILOT_*
+# env var (env wins over TOML). The compose stack already injects
+# DOPILOT_DATABASE_URL / DOPILOT_REDIS_URL this way; real deployments should
+# override DOPILOT_ADMIN_PASSWORD / DOPILOT_ADMIN_API_SECRET rather than editing
+# this file. Web admin auth is fail-closed (the three [auth] creds must be
+# non-empty); DOPILOT_AUTH_DISABLED=true is the dev-only escape hatch.
+#
+# Single-secret machine tokens (phase 2.2.1): the [agent_auth].shared_token and
+# [agents].server_shared_token fields below are intentionally EMPTY so the loader
+# defaults them to the effective admin API secret (auth.token_secret /
+# DOPILOT_ADMIN_API_SECRET). Set DOPILOT_AGENT_SHARED_TOKEN /
+# DOPILOT_SERVER_SHARED_TOKEN (or fill these fields) to use split tokens instead.
 
 [server]
 host = "0.0.0.0"
@@ -24,7 +37,8 @@ stream_token_ttl_seconds = 60
 
 [agent_auth]
 # server -> agent token; must match [auth].shared_token in the agent config.
-shared_token = "change-me-agent-token"
+# Empty => defaults to the effective admin API secret (single-secret posture).
+shared_token = ""
 
 # Redis reached by its compose SERVICE NAME (redis), with AUTH password.
 [redis]
@@ -41,7 +55,8 @@ heartbeat_timeout_seconds = 30
 stalled_attempt_seconds = 300
 lost_after_stalled_seconds = 900
 # agent -> server token; must match [agent].server_shared_token in agent config.
-server_shared_token = "change-me-agent-server-token"
+# Empty => defaults to the effective admin API secret (single-secret posture).
+server_shared_token = ""
 
 [nodes]
 # Phase 1.5+ liveness comes from agent heartbeats, not a configured endpoint

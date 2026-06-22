@@ -145,7 +145,7 @@ Authorization: Bearer <access_token>
 GET /api/v1/executions/{id}/logs/stream?token=...
 ```
 
-约束：`stream_token` 只允许订阅指定 execution 的日志，TTL 建议 60 秒，**仅校验建连**（建连后不再逐条校验）；配合 `id:<seq>` + `Last-Event-ID` 断点续传；服务端日志与可选反向代理日志避免记录完整 query string；若用户自行接 nginx，SSE 路径需 `proxy_buffering off`。认证为 config-present-or-off（管理员认证开时才签发 `stream_token`，关闭时直连）。
+约束：`stream_token` 只允许订阅指定 execution 的日志，TTL 建议 60 秒，**仅校验建连**（建连后不再逐条校验）；配合 `id:<seq>` + `Last-Event-ID` 断点续传；服务端日志与可选反向代理日志避免记录完整 query string；若用户自行接 nginx，SSE 路径需 `proxy_buffering off`。Web 管理员认证为 **fail-closed**（阶段 2.2）：默认要求凭据，仅当显式 `DOPILOT_AUTH_DISABLED=true` 时才以匿名管理员直连；管理员认证开启时才签发 `stream_token`，被显式关闭时直连。
 
 ### 5.3 Agent ↔ Server：机器 token（agent 主动消费/上报）
 
@@ -166,7 +166,7 @@ server_shared_token = "change-me-agent-server-token"
 url = "redis://redis:6379/0"
 ```
 
-`server_shared_token` 只用于校验 agent→server 的 heartbeat 请求；agent 不持有管理员 API 凭据，**也不直连 PostgreSQL**（经 Redis 与 server 通信）。**第一版完全不用 WebSocket**：日志正文由 server 端 log consumer 消费 agent→Redis 日志事件后写入，offset 权威仍在 server（PG `last_pulled_offset`）。认证为 config-present-or-off（配置存在则启用，缺失则关闭）。
+`server_shared_token` 只用于校验 agent→server 的 heartbeat 请求；agent 不持有管理员 API 凭据，**也不直连 PostgreSQL**（经 Redis 与 server 通信）。**第一版完全不用 WebSocket**：日志正文由 server 端 log consumer 消费 agent→Redis 日志事件后写入，offset 权威仍在 server（PG `last_pulled_offset`）。agent→server 机器认证为 config-present-or-off（`server_shared_token` 配置存在则启用，缺失则关闭）；Web 管理员认证则是 fail-closed（默认要求凭据，仅 `DOPILOT_AUTH_DISABLED=true` 时匿名）。
 
 ## 6. 实时日志（agent → Redis 推送 + server 消费落盘 + SSE）
 

@@ -7,8 +7,9 @@ session. This is why the server is single-replica with ``workers=1`` — multipl
 workers would fire every timer multiple times (CLAUDE.md hard constraint).
 
 Trigger engine: interval (``interval_seconds``) or a 5-field crontab (``cron``),
-via APScheduler ``>=3.10,<4`` (importlib-based; never 3.6.0). Pause/resume is
-out of scope.
+via APScheduler ``>=3.10,<4`` (importlib-based; never 3.6.0). Phase 2.2: only
+schedules with row-level ``enabled=true`` get a job; disabled schedules are the
+"paused" state (still manually runnable via trigger-now).
 
 The runner is OFF unless ``[scheduler].enabled`` is true; tests exercise
 ``fire_timer`` / coalesce directly rather than waiting on real timers. The
@@ -61,11 +62,11 @@ class ScheduleRunner:
         )
 
     async def reload(self) -> None:
-        """Rebuild the job set from the ``schedules`` table."""
+        """Rebuild the job set from the ENABLED schedules (phase 2.2)."""
         if self._scheduler is None:
             return
         async with self._maker() as session:
-            schedules = await svc.list_schedules(session)
+            schedules = await svc.list_enabled_schedules(session)
         self._scheduler.remove_all_jobs()
         for schedule in schedules:
             self._scheduler.add_job(

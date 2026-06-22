@@ -54,6 +54,27 @@ def _validate_basics(data: dict[str, Any]) -> None:
     # generic non-empty requirement above.
 
 
+async def _ensure_unique_name(
+    session: AsyncSession, name: str, *, exclude_id: str | None = None
+) -> None:
+    """Raise 409 if another template already uses ``name`` (phase 2.2).
+
+    Checked in service code before commit so the API returns a deterministic
+    ``template.name_conflict`` rather than surfacing a raw DB IntegrityError.
+    ``exclude_id`` excludes the row being updated (rename self-exclusion).
+    """
+    stmt = select(ExecutionTemplate.id).where(ExecutionTemplate.name == name)
+    if exclude_id is not None:
+        stmt = stmt.where(ExecutionTemplate.id != exclude_id)
+    if (await session.execute(stmt.limit(1))).first() is not None:
+        raise ApiError(
+            409,
+            "template.name_conflict",
+            "errors.templateNameConflict",
+            {"name": name},
+        )
+
+
 async def _require_artifact(session: AsyncSession, build_artifact_id: str | None):
     """Resolve + validate the mandatory runnable build artifact binding."""
     if not (build_artifact_id or "").strip():
@@ -85,13 +106,15 @@ async def create_template(
     session: AsyncSession, data: dict[str, Any]
 ) -> ExecutionTemplate:
     _validate_basics(data)
+    name = str(data["name"]).strip()
+    await _ensure_unique_name(session, name)
     artifact = await _require_artifact(session, data.get("build_artifact_id"))
     meta = dict(artifact.artifact_metadata or {})
     # Once the artifact is known, validate the command for its type.
     _validate_command_for_artifact(artifact, str(data["command"]).strip())
     template = ExecutionTemplate(
         id=new_id(),
-        name=str(data["name"]).strip(),
+        name=name,
         description=data.get("description"),
         build_artifact_id=artifact.id,
         # project/version come from the bound artifact, not the user.
@@ -115,6 +138,8 @@ async def update_template(
         "node_strategy": data.get("node_strategy", template.node_strategy),
     }
     _validate_basics(merged)
+    new_name = str(merged["name"]).strip()
+    await _ensure_unique_name(session, new_name, exclude_id=template.id)
     # build_artifact_id is mandatory on every update; default to the current one.
     artifact = await _require_artifact(
         session, data.get("build_artifact_id", template.build_artifact_id)
@@ -122,7 +147,7 @@ async def update_template(
     meta = dict(artifact.artifact_metadata or {})
     # Once the artifact is known, validate the command for its type.
     _validate_command_for_artifact(artifact, str(merged["command"]).strip())
-    template.name = str(merged["name"]).strip()
+    template.name = new_name
     template.node_strategy = merged["node_strategy"]
     template.command = str(merged["command"]).strip()
     template.build_artifact_id = artifact.id

@@ -25,7 +25,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -44,7 +52,10 @@ class ExecutionTemplate(Base):
     __tablename__ = "execution_templates"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
-    name: Mapped[str] = mapped_column(String, nullable=False)
+    # Phase 2.2: template names are unique (create/rename conflicts -> 409). The
+    # ORM-level unique=True is what SQLite ``create_all`` tests see; PostgreSQL
+    # gets the named constraint in migration 0010.
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     # Phase 1.8: mandatory binding to one build artifact. Nullable in the DB so a
     # legacy template whose artifact descriptor could not be resolved during
@@ -85,8 +96,10 @@ class Schedule(Base):
     """A timer referencing one execution template (interval or cron).
 
     ``trigger_type`` is ``interval`` (uses ``interval_seconds``) or ``cron``
-    (uses the ``cron`` 5-field crontab expression). Pause/resume is out of scope
-    — there is no paused state. ``overrides`` (phase 1.8.1) is a bounded JSONB
+    (uses the ``cron`` 5-field crontab expression). Phase 2.2 adds row-level
+    ``enabled``: a disabled schedule is "paused" for timer firing (not registered
+    with APScheduler) but stays manually runnable via trigger-now. ``overrides``
+    (phase 1.8.1) is a bounded JSONB
     payload merged over the template defaults at firing time (precedence:
     schedule override > execution template default > build artifact default). It
     may carry only ``command`` / ``node_strategy`` / ``node_ids`` — a ``command``
@@ -98,8 +111,18 @@ class Schedule(Base):
     __tablename__ = "schedules"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
-    name: Mapped[str] = mapped_column(String, nullable=False)
+    # Phase 2.2: schedule names are unique (create/rename conflicts -> 409).
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Phase 2.2: row-level timer gate. Only enabled schedules are registered with
+    # APScheduler and fire on a timer; disabled schedules stay listable, editable,
+    # deletable, and manually runnable via trigger-now. Defaults to false (new
+    # schedules are created paused unless explicitly enabled). Distinct from the
+    # global ``[scheduler].enabled`` that decides whether the in-process runner
+    # exists at all. Server default false is set in migration 0011.
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     execution_template_id: Mapped[str] = mapped_column(
         String(32),
         ForeignKey("execution_templates.id"),

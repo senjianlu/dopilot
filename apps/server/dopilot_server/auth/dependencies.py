@@ -1,8 +1,10 @@
 """The ``get_current_admin`` FastAPI dependency (single-admin auth).
 
-Config-present-or-off: when web auth is disabled the platform runs as an
-anonymous admin and protected endpoints are open; when enabled, a valid Bearer
-token is required.
+Web admin auth is **fail-closed** (phase 2.2): a valid Bearer token is required
+unless auth is explicitly disabled via ``DOPILOT_AUTH_DISABLED=true``, in which
+case the platform runs as an anonymous admin and protected endpoints are open.
+(This is distinct from agent/server machine auth, which stays
+"config-present-or-off".)
 """
 
 from __future__ import annotations

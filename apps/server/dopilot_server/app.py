@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from .api.v1.router import router as api_v1_router
 from .clients.agent import DEFAULT_TIMEOUT, AgentClient
-from .config.loader import get_settings, load_settings
+from .config.loader import DEFAULT_CONFIG_PATH, get_settings, load_settings
 from .config.settings import Settings
 from .db.engine import dispose_engines, get_session, get_sessionmaker
 from .errors import ApiError
@@ -249,8 +249,9 @@ def run() -> None:
     parser.add_argument("-p", "--port", type=int, default=None, help="port")
     args = parser.parse_args()
 
-    # load_settings reads DOPILOT_CONFIG itself when no path is passed.
-    settings = load_settings()
+    # load_settings reads DOPILOT_CONFIG itself when no path is passed, then
+    # falls back to the baked server default so the image needs no DOPILOT_CONFIG.
+    settings = load_settings(default_path=DEFAULT_CONFIG_PATH)
     host = args.bind or settings.server.host
     port = args.port or settings.server.port
 
