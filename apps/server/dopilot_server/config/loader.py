@@ -45,6 +45,9 @@ def _read_toml(path: Path) -> dict[str, Any]:
 _STR_OVERRIDES: tuple[tuple[str, str, str], ...] = (
     ("DOPILOT_SERVER_HOST", "server", "host"),
     ("DOPILOT_SERVER_PUBLIC_URL", "server", "public_url"),
+    # Phase 2.2.4: server-owned data root (anchors the auto-generated agent-token
+    # file). Distinct from logs/artifacts roots.
+    ("DOPILOT_SERVER_DATA_DIR", "server", "data_dir"),
     ("DOPILOT_DATABASE_URL", "database", "url"),
     ("DOPILOT_ADMIN_USERNAME", "auth", "admin_username"),
     ("DOPILOT_ADMIN_PASSWORD", "auth", "admin_password"),
@@ -52,10 +55,12 @@ _STR_OVERRIDES: tuple[tuple[str, str, str], ...] = (
     # override (TOML-only signing key); the removed ``DOPILOT_ADMIN_API_SECRET``
     # has no effect and no compatibility alias.
     ("DOPILOT_ADMIN_API_TOKEN", "auth", "admin_api_token"),
-    ("DOPILOT_AGENT_SHARED_TOKEN", "agent_auth", "shared_token"),
     ("DOPILOT_REDIS_URL", "redis", "url"),
     ("DOPILOT_REDIS_CONSUMER_NAME", "redis", "consumer_name"),
-    ("DOPILOT_SERVER_SHARED_TOKEN", "agents", "server_shared_token"),
+    # Phase 2.2.3: the single server<->agent machine token. The old split envs
+    # ``DOPILOT_AGENT_SHARED_TOKEN`` / ``DOPILOT_SERVER_SHARED_TOKEN`` were
+    # removed and have no effect (no compatibility alias).
+    ("DOPILOT_AGENT_TOKEN", "agents", "agent_token"),
     ("DOPILOT_LOGS_ROOT_DIR", "logs", "root_dir"),
     ("DOPILOT_ARTIFACTS_ROOT_DIR", "artifacts", "root_dir"),
     ("DOPILOT_I18N_LOCALE", "i18n", "locale"),
@@ -158,38 +163,16 @@ def _apply_env_overrides(settings: Settings) -> None:
             setattr(getattr(settings, section), attr, _parse_bool(env_var, raw))
 
 
-def _apply_machine_token_fallback(settings: Settings) -> None:
-    """Default empty machine tokens to the static ``admin_api_token``.
-
-    Single-secret posture: when ``[agent_auth].shared_token`` and/or
-    ``[agents].server_shared_token`` are empty, derive them from
-    ``auth.admin_api_token`` (set via TOML or ``DOPILOT_ADMIN_API_TOKEN``). This
-    runs AFTER env overrides, so an explicit ``DOPILOT_AGENT_SHARED_TOKEN`` /
-    ``DOPILOT_SERVER_SHARED_TOKEN`` (or a non-empty TOML value) wins.
-
-    Phase 2.2.2 changed the fallback source from ``token_secret`` (a required
-    fail-closed credential, so machine auth was always ON in production) to the
-    OPTIONAL ``admin_api_token``: with no ``admin_api_token`` and no explicit
-    split tokens, machine auth falls back to OFF (config-present-or-off). Set
-    ``admin_api_token`` (or both split tokens) to keep machine auth ON.
-    """
-    secret = (settings.auth.admin_api_token or "").strip()
-    if not secret:
-        return
-    if not (settings.agent_auth.shared_token or "").strip():
-        settings.agent_auth.shared_token = secret
-    if not (settings.agents.server_shared_token or "").strip():
-        settings.agents.server_shared_token = secret
-
-
-# Minimum length for a non-empty static ``admin_api_token`` (phase 2.2.2).
+# Minimum length for a non-empty static ``admin_api_token`` (phase 2.2.2) and
+# for the non-empty server<->agent ``agent_token`` (phase 2.2.3).
 _ADMIN_API_TOKEN_MIN_LEN = 16
+_AGENT_TOKEN_MIN_LEN = 16
 
 
 def _validate_admin_api_token(settings: Settings) -> None:
     """Reject a non-empty ``admin_api_token`` shorter than the minimum length.
 
-    Empty / unset is allowed (machine auth simply falls back to OFF). A
+    Empty / unset is allowed (it is simply not usable as an admin API token). A
     non-empty but too-short token is almost certainly a misconfiguration, so we
     hard-fail at the loader boundary rather than in :class:`Settings`
     construction (so tests / dependency overrides can still build short-token
@@ -202,6 +185,23 @@ def _validate_admin_api_token(settings: Settings) -> None:
             f"must be at least {_ADMIN_API_TOKEN_MIN_LEN} characters "
             "(set DOPILOT_ADMIN_API_TOKEN or auth.admin_api_token, or leave it "
             "empty)."
+        )
+
+
+def _validate_agent_token(settings: Settings) -> None:
+    """Reject a non-empty ``[agents].agent_token`` shorter than the minimum.
+
+    Empty / unset is allowed and keeps server<->agent machine auth OFF
+    (config-present-or-off). A non-empty but too-short token is almost certainly
+    a misconfiguration, so we hard-fail at the loader boundary (so tests /
+    dependency overrides can still build short-token Settings directly).
+    """
+    token = (settings.agents.agent_token or "").strip()
+    if token and len(token) < _AGENT_TOKEN_MIN_LEN:
+        raise ConfigError(
+            "agents.agent_token is too short: a non-empty server<->agent token "
+            f"must be at least {_AGENT_TOKEN_MIN_LEN} characters "
+            "(set DOPILOT_AGENT_TOKEN or agents.agent_token, or leave it empty)."
         )
 
 
@@ -248,9 +248,10 @@ def load_settings(
     ``DOPILOT_*`` env vars (see ``_STR_OVERRIDES`` / ``_INT_OVERRIDES`` /
     ``_BOOL_OVERRIDES``) override the matching TOML scalar — env wins over TOML.
     A malformed integer/boolean env value raises :class:`ConfigError` naming the
-    env var. After overrides, empty machine tokens fall back to the static
-    ``admin_api_token``, a non-empty-but-too-short ``admin_api_token`` is
-    rejected, then web admin auth is enforced fail-closed.
+    env var. After overrides, a non-empty-but-too-short ``admin_api_token`` or
+    ``agents.agent_token`` is rejected, then web admin auth is enforced
+    fail-closed. There is no admin-token -> machine-token fallback (phase 2.2.3):
+    the admin API token and the server<->agent ``agent_token`` are independent.
     """
     resolved = path or os.environ.get("DOPILOT_CONFIG") or default_path
     if not resolved:
@@ -271,7 +272,7 @@ def load_settings(
     settings = Settings.model_validate(raw)
     _apply_env_overrides(settings)
     _validate_admin_api_token(settings)
-    _apply_machine_token_fallback(settings)
+    _validate_agent_token(settings)
     _enforce_fail_closed_auth(settings)
     return settings
 

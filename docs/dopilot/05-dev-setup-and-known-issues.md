@@ -204,6 +204,7 @@ require_aof = true
 heartbeat_timeout_seconds = 30                # healthy = now - nodes.last_seen_at <= 该值
 stalled_attempt_seconds = 300
 lost_after_stalled_seconds = 900
+agent_token = "change-me-agent-token"         # 阶段 2.2.3 唯一机器令牌；与 agent [agent].agent_token 同值
 
 [logs]
 log_drain_timeout_seconds = 30
@@ -221,7 +222,7 @@ event_outbox_dir = "/agent-data/outbox"
 agent_id = "agent-01"
 server_url = "http://localhost:5000"          # 主动 POST /api/v1/agents/{agent_id}/heartbeat 用
 heartbeat_interval_seconds = 10
-server_shared_token = "change-me-agent-server-token"   # agent→server token,不复用 server→agent 旧 token
+agent_token = "change-me-agent-token"         # 阶段 2.2.3 唯一机器令牌；与 server [agents].agent_token 同值
 ```
 
 **移植/对照注意(功能参考,非 dopilot 设计)**:scrapydweb 首次运行会在工作目录生成默认 `scrapydweb_settings_v11.py`(文件名硬编码于 `vars.py:29` `SCRAPYDWEB_SETTINGS_PY`),且仅从 `os.getcwd()` 查找,在其中配置 `SCRAPYD_SERVERS` 等。dopilot **不沿用**这种「硬编码文件名 + 仅 cwd 查找」的加载方式——仅参考其配置键的**语义**,改用上述 toml + `DOPILOT_CONFIG` 显式路径加载。

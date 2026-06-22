@@ -26,13 +26,13 @@ class ScrapyArtifactCache:
         *,
         root_dir: str | os.PathLike[str],
         server_url: str,
-        server_shared_token: str = "",
+        agent_token: str = "",
         scrapyd: ScrapydClient,
         wait_timeout_seconds: float = 60.0,
     ) -> None:
         self._dir = Path(root_dir) / "scrapy"
         self._server_url = server_url.rstrip("/") + "/"
-        self._token = server_shared_token
+        self._token = agent_token
         self._scrapyd = scrapyd
         self._wait_timeout = wait_timeout_seconds
 

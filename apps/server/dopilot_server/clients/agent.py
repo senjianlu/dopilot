@@ -4,7 +4,8 @@ The phase-1 run/stop/status/logs-tail/cleanup HTTP main paths were removed in th
 Redis Streams refactor; the only surviving server->agent HTTP path is **egg
 deploy** (``POST /artifacts/scrapy/egg`` -> agent -> local scrapyd
 ``/addversion.json``), which stays HTTP by design. Outgoing requests carry
-``Authorization: Bearer <shared_token>`` (the server->agent token) when set.
+``Authorization: Bearer <agent_token>`` (the single server<->agent machine
+token, phase 2.2.3) when set.
 
 Failures surface as two kinds so the API layer can render a clean ``ApiError``:
 
@@ -74,10 +75,10 @@ class AgentClient:
     """Thin async client over the agent's surviving egg-deploy HTTP endpoint."""
 
     def __init__(
-        self, http: httpx.AsyncClient, shared_token: str | None = None
+        self, http: httpx.AsyncClient, agent_token: str | None = None
     ) -> None:
         self._http = http
-        self._token = shared_token
+        self._token = agent_token
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"} if self._token else {}

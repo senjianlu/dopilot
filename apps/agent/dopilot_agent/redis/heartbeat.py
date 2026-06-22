@@ -78,7 +78,7 @@ class HeartbeatWorker:
         return f"{base}/api/v1/agents/{self._settings.agent.agent_id}/heartbeat"
 
     def _headers(self) -> dict[str, str]:
-        token = self._settings.agent.server_shared_token
+        token = self._settings.agent.agent_token
         return {"Authorization": f"Bearer {token}"} if token else {}
 
     async def send_once(self, http: httpx.AsyncClient) -> bool:

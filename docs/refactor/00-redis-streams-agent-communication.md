@@ -385,6 +385,9 @@ require_aof = true
 heartbeat_timeout_seconds = 30
 stalled_attempt_seconds = 300
 lost_after_stalled_seconds = 900
+# 阶段 2.2.3：单一机器令牌，同时认证 server↔agent 两个方向；与每个 agent
+# [agent].agent_token 同值。admin_api_token 仅管理员、绝不下发给 agent。
+agent_token = "change-me-agent-token"
 
 [logs]
 log_drain_timeout_seconds = 30
@@ -403,7 +406,9 @@ event_outbox_dir = "/agent-data/outbox"
 agent_id = "agent-01"
 server_url = "http://server:5000"
 heartbeat_interval_seconds = 10
-server_shared_token = "change-me-agent-server-token"
+# 阶段 2.2.3：单一机器令牌，同时认证 server↔agent 两个方向；与 server
+# [agents].agent_token 同值（原拆分的 server_shared_token 已删除）。
+agent_token = "change-me-agent-token"
 ```
 
 Redis 部署要求：

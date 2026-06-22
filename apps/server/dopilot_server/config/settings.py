@@ -7,8 +7,11 @@ explicitly disabled AND admin_username, admin_password and token_secret are all
 present and non-empty. Production startup (:func:`loader.load_settings`) refuses
 to boot when auth is not disabled but a credential is missing; the only way to
 run anonymously is the explicit ``auth.disabled`` flag
-(``DOPILOT_AUTH_DISABLED=true``). Agent machine auth stays
-"config-present-or-off": agent auth is enabled iff shared_token is non-empty.
+(``DOPILOT_AUTH_DISABLED=true``). Machine (server<->agent) auth stays
+"config-present-or-off": it is enabled iff the single ``[agents].agent_token``
+is non-empty after config loading or after the phase 2.2.4 server runtime
+auto-generates and applies a persisted token (phase 2.2.3 collapsed the old
+split tokens into one).
 """
 
 from __future__ import annotations
@@ -20,6 +23,12 @@ class ServerSettings(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8000
     public_url: str | None = None
+    # Server-owned data root (phase 2.2.4). The persistence anchor for
+    # server-side secrets — specifically the auto-generated server<->agent token
+    # at ``<data_dir>/secrets/agent-token``. This is intentionally distinct from
+    # ``logs.root_dir`` / ``artifacts.root_dir`` (those stay independent and are
+    # NOT the token anchor). Override with ``DOPILOT_SERVER_DATA_DIR``.
+    data_dir: str = "/server-data"
 
 
 class DatabaseSettings(BaseModel):
@@ -40,10 +49,11 @@ class AuthSettings(BaseModel):
     token_secret: str | None = None
     # Externally supplied static admin API token (phase 2.2.2). When non-empty it
     # may be presented directly as ``Authorization: Bearer <admin_api_token>`` to
-    # authenticate as admin (no login round-trip), and it is the fallback source
-    # for empty server<->agent machine tokens. Set via ``DOPILOT_ADMIN_API_TOKEN``
+    # authenticate as admin (no login round-trip). Set via ``DOPILOT_ADMIN_API_TOKEN``
     # or TOML. It is an ADDITIONAL automation credential and does NOT participate
     # in :attr:`enabled` (interactive web login still needs the three creds).
+    # Admin-only (phase 2.2.3): it is NEVER a source for the server<->agent
+    # machine token — those are separate secrets with no fallback between them.
     admin_api_token: str | None = None
     access_token_ttl_minutes: int = 720
     stream_token_ttl_seconds: int = 3600
@@ -60,19 +70,6 @@ class AuthSettings(BaseModel):
             and self.admin_password
             and self.token_secret
         )
-
-
-class AgentAuthSettings(BaseModel):
-    """server -> agent shared-token auth (used by the surviving egg-deploy
-    HTTP path). Distinct from the agent -> server token in :class:`AgentsSettings`
-    (auth is split in phase 1.5, decision #12)."""
-
-    shared_token: str | None = None
-
-    @property
-    def enabled(self) -> bool:
-        """Agent auth is ON iff the shared token is present and non-empty."""
-        return bool(self.shared_token)
 
 
 class RedisSettings(BaseModel):
@@ -96,25 +93,33 @@ class RedisSettings(BaseModel):
 
 
 class AgentsSettings(BaseModel):
-    """``[agents]`` — agent-fleet behavior + the agent -> server inbound token.
+    """``[agents]`` — agent-fleet behavior + the single server<->agent token.
 
-    ``server_shared_token`` authenticates agent-initiated calls (heartbeat) TO
-    the server; it is a *different* secret from
-    :attr:`AgentAuthSettings.shared_token` (server -> agent). Inbound agent auth
-    follows the "config-present-or-off" idiom shared by all machine auth (it is
-    ON iff the token is set); this is distinct from Web admin auth, which is
+    ``agent_token`` (phase 2.2.3) is the ONE machine secret. It authenticates
+    BOTH directions: server -> agent (the surviving egg-deploy HTTP path) and
+    agent -> server (heartbeat / artifact fetches). It replaced the old split
+    ``[agent_auth].shared_token`` + ``[agents].server_shared_token`` pair; there
+    is no fallback from the admin API token. Machine auth is ON iff
+    ``agent_token`` is set; this is distinct from Web admin auth, which is
     fail-closed (see the module docstring).
+
+    Phase 2.2.4 relaxed the strict "config-present-or-off" rule at the SERVER
+    runtime boundary only: when no ``agent_token`` is configured, the server
+    runtime/CLI auto-generates and persists one under ``server.data_dir`` and
+    sets it on this field before startup, so machine auth ends up ON. The
+    generation is a runtime step (:mod:`dopilot_server.agent_token`), never a
+    side effect of :func:`loader.load_settings` — loading stays pure.
     """
 
     heartbeat_timeout_seconds: int = 30
     stalled_attempt_seconds: int = 300
     lost_after_stalled_seconds: int = 900
-    server_shared_token: str | None = None
+    agent_token: str | None = None
 
     @property
-    def inbound_auth_enabled(self) -> bool:
-        """Agent -> server auth is ON iff ``server_shared_token`` is set."""
-        return bool(self.server_shared_token)
+    def machine_auth_enabled(self) -> bool:
+        """server<->agent machine auth is ON iff ``agent_token`` is set."""
+        return bool(self.agent_token)
 
 
 class NodesSettings(BaseModel):
@@ -163,7 +168,6 @@ class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
-    agent_auth: AgentAuthSettings = Field(default_factory=AgentAuthSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     agents: AgentsSettings = Field(default_factory=AgentsSettings)
     nodes: NodesSettings = Field(default_factory=NodesSettings)

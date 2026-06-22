@@ -380,7 +380,7 @@ check_app_config(config)                         (check_app_config.py:38)
 |----|------|
 | 切入点 | `common.py` / `baseview.py:285` `make_request` + `execute_task.py` |
 | 现状 | 所有调度均为 scrapydweb 主动 HTTP POST 到目标 scrapyd（addversion/schedule） |
-| 改法 | （原构想：新增直达 worker 的 push 通道、复用 `make_request` 统一 HTTP+auth 封装与 `SCRAPYD_SERVERS_AUTHS` per-node 凭证 `baseview.py:102,196`）**dopilot v1 已翻案**：下发改走 Redis command stream(`dopilot:agent:{agent_id}:commands`)、agent 主动消费，鉴权走 Redis AUTH/ACL + agent→server `server_shared_token`，不再复用 scrapydweb 的 HTTP+auth 主路径。见 [`../refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md) |
+| 改法 | （原构想：新增直达 worker 的 push 通道、复用 `make_request` 统一 HTTP+auth 封装与 `SCRAPYD_SERVERS_AUTHS` per-node 凭证 `baseview.py:102,196`）**dopilot v1 已翻案**：下发改走 Redis command stream(`dopilot:agent:{agent_id}:commands`)、agent 主动消费，鉴权走 Redis AUTH/ACL + 阶段 2.2.3 单一 `agent_token`，不再复用 scrapydweb 的 HTTP+auth 主路径。见 [`../refactor/00-redis-streams-agent-communication.md`](../refactor/00-redis-streams-agent-communication.md) |
 
 ### 7.6 实时日志流
 

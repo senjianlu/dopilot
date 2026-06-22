@@ -91,8 +91,8 @@ async def test_heartbeat_id_mismatch_400(client):
 
 
 async def test_require_server_token_off_allows_anything():
-    settings = Settings.model_validate({})  # no [agents].server_shared_token
-    assert settings.agents.inbound_auth_enabled is False
+    settings = Settings.model_validate({})  # no [agents].agent_token
+    assert settings.agents.machine_auth_enabled is False
     # no exception regardless of header
     await require_server_token(_request({}), settings)
     await require_server_token(_request({"authorization": "Bearer whatever"}), settings)
@@ -100,9 +100,9 @@ async def test_require_server_token_off_allows_anything():
 
 async def test_require_server_token_on_enforces():
     settings = Settings.model_validate(
-        {"agents": {"server_shared_token": "s3cret"}}
+        {"agents": {"agent_token": "s3cret"}}
     )
-    assert settings.agents.inbound_auth_enabled is True
+    assert settings.agents.machine_auth_enabled is True
     # missing token
     with pytest.raises(ApiError) as ei:
         await require_server_token(_request({}), settings)

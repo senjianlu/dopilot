@@ -15,10 +15,7 @@ port = 6810
 workdir = "/agent-data"
 server_url = "http://server:5000"
 heartbeat_interval_seconds = 7
-server_shared_token = "agent-server-tok"
-
-[auth]
-shared_token = "tok"
+agent_token = "agent-machine-token"
 
 [capabilities]
 scrapy = true
@@ -46,14 +43,16 @@ def _write_config(tmp_path: Path) -> Path:
 def test_loads_from_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_ID", raising=False)
     monkeypatch.delenv("AGENT_WORKDIR", raising=False)
+    monkeypatch.delenv("DOPILOT_AGENT_TOKEN", raising=False)
     cfg = _write_config(tmp_path)
 
     settings = load_settings(cfg)
 
     assert settings.agent.agent_id == "from-toml"
     assert settings.agent.workdir == "/agent-data"
-    assert settings.auth.shared_token == "tok"
-    assert settings.auth.enabled is True
+    # phase 2.2.3: the single server<->agent token lives on [agent].agent_token.
+    assert settings.agent.agent_token == "agent-machine-token"
+    assert settings.agent.machine_auth_enabled is True
     assert settings.capabilities.scrapy is True
     assert settings.capabilities.docker is False
     assert settings.scrapyd.start is False
@@ -62,7 +61,6 @@ def test_loads_from_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     # phase 1.5 agent->server contact + redis transport
     assert settings.agent.server_url == "http://server:5000"
     assert settings.agent.heartbeat_interval_seconds == 7
-    assert settings.agent.server_shared_token == "agent-server-tok"
     assert settings.redis.url == "redis://:pw@redis:6379/3"
     assert settings.redis.command_block_ms == 2000
     assert settings.redis.event_outbox_dir == "/agent-data/ob"
@@ -74,6 +72,7 @@ def test_redis_defaults_when_section_absent(
     monkeypatch.delenv("AGENT_ID", raising=False)
     monkeypatch.delenv("AGENT_WORKDIR", raising=False)
     monkeypatch.delenv("DOPILOT_REDIS_URL", raising=False)
+    monkeypatch.delenv("DOPILOT_AGENT_TOKEN", raising=False)
     cfg = tmp_path / "agent.toml"
     cfg.write_text(
         '[agent]\nagent_id = "x"\n[capabilities]\nscrapy = true\n',
@@ -83,7 +82,9 @@ def test_redis_defaults_when_section_absent(
     assert settings.redis.url == "redis://redis:6379/0"
     assert settings.redis.event_outbox_dir == "/agent-data/outbox"
     assert settings.agent.heartbeat_interval_seconds == 10
-    assert settings.agent.server_shared_token == ""
+    # No token configured => machine auth OFF.
+    assert settings.agent.agent_token == ""
+    assert settings.agent.machine_auth_enabled is False
 
 
 def test_redis_url_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -145,7 +146,7 @@ def test_missing_file_raises(tmp_path: Path) -> None:
         load_settings(tmp_path / "does-not-exist.toml")
 
 
-# --- phase 2.2.2: single-secret machine-token fallback + role default path ---
+# --- phase 2.2.3: single server<->agent machine token -----------------------
 
 
 def _clear_token_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -154,6 +155,7 @@ def _clear_token_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "AGENT_WORKDIR",
         "DOPILOT_ADMIN_API_SECRET",
         "DOPILOT_ADMIN_API_TOKEN",
+        "DOPILOT_AGENT_TOKEN",
         "DOPILOT_AGENT_SHARED_TOKEN",
         "DOPILOT_SERVER_SHARED_TOKEN",
     ):
@@ -163,86 +165,103 @@ def _clear_token_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def _write_empty_token_config(tmp_path: Path) -> Path:
     cfg = tmp_path / "agent.toml"
     cfg.write_text(
-        '[agent]\nagent_id = "x"\nserver_shared_token = ""\n'
-        '[auth]\nshared_token = ""\n',
+        '[agent]\nagent_id = "x"\nagent_token = ""\n',
         encoding="utf-8",
     )
     return cfg
 
 
-def test_machine_tokens_fall_back_to_admin_api_token(
+def test_agent_token_env_populates_field(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _clear_token_env(monkeypatch)
     cfg = _write_empty_token_config(tmp_path)
-    monkeypatch.setenv("DOPILOT_ADMIN_API_TOKEN", "single-token")
+    monkeypatch.setenv("DOPILOT_AGENT_TOKEN", "env-agent-machine-token")
     settings = load_settings(cfg)
-    assert settings.auth.shared_token == "single-token"
-    assert settings.agent.server_shared_token == "single-token"
-    assert settings.auth.enabled is True
+    assert settings.agent.agent_token == "env-agent-machine-token"
+    assert settings.agent.machine_auth_enabled is True
 
 
-def test_split_machine_token_envs_override_fallback(
+def test_admin_api_token_ignored_for_machine_auth(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Phase 2.2.3: the agent never derives its machine token from the admin API
+    # token; with no agent_token set, machine auth stays OFF.
     _clear_token_env(monkeypatch)
     cfg = _write_empty_token_config(tmp_path)
-    monkeypatch.setenv("DOPILOT_ADMIN_API_TOKEN", "single-token")
+    monkeypatch.setenv("DOPILOT_ADMIN_API_TOKEN", "static-admin-api-token")
+    settings = load_settings(cfg)
+    assert settings.agent.agent_token == ""
+    assert settings.agent.machine_auth_enabled is False
+
+
+def test_old_split_machine_token_envs_have_no_effect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Phase 2.2.3: the removed split envs no longer fill any machine token.
+    _clear_token_env(monkeypatch)
+    cfg = _write_empty_token_config(tmp_path)
     monkeypatch.setenv("DOPILOT_AGENT_SHARED_TOKEN", "s2a-tok")
     monkeypatch.setenv("DOPILOT_SERVER_SHARED_TOKEN", "a2s-tok")
     settings = load_settings(cfg)
-    assert settings.auth.shared_token == "s2a-tok"
-    assert settings.agent.server_shared_token == "a2s-tok"
+    assert settings.agent.agent_token == ""
+    assert settings.agent.machine_auth_enabled is False
 
 
 def test_old_admin_api_secret_env_is_ignored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Phase 2.2.2: the removed DOPILOT_ADMIN_API_SECRET no longer fills machine
-    # tokens; with empty TOML tokens they stay empty.
     _clear_token_env(monkeypatch)
     cfg = _write_empty_token_config(tmp_path)
     monkeypatch.setenv("DOPILOT_ADMIN_API_SECRET", "should-be-ignored")
     settings = load_settings(cfg)
-    assert settings.auth.shared_token == ""
-    assert settings.agent.server_shared_token == ""
-    assert settings.auth.enabled is False
+    assert settings.agent.agent_token == ""
+    assert settings.agent.machine_auth_enabled is False
 
 
-def test_split_token_env_overrides_toml(
+def test_agent_token_env_wins_over_toml(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Env wins over non-empty TOML machine tokens (no admin API token involved).
     _clear_token_env(monkeypatch)
-    cfg = _write_config(tmp_path)  # TOML: shared_token=tok, server=agent-server-tok
-    monkeypatch.setenv("DOPILOT_AGENT_SHARED_TOKEN", "env-s2a")
-    monkeypatch.setenv("DOPILOT_SERVER_SHARED_TOKEN", "env-a2s")
+    cfg = _write_config(tmp_path)  # TOML: agent_token = "agent-machine-token"
+    monkeypatch.setenv("DOPILOT_AGENT_TOKEN", "env-agent-machine-token")
     settings = load_settings(cfg)
-    assert settings.auth.shared_token == "env-s2a"
-    assert settings.agent.server_shared_token == "env-a2s"
+    assert settings.agent.agent_token == "env-agent-machine-token"
 
 
-def test_toml_tokens_not_overwritten_by_admin_api_token(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Non-empty TOML machine tokens are kept; admin API token only fills empties.
-    _clear_token_env(monkeypatch)
-    cfg = _write_config(tmp_path)
-    monkeypatch.setenv("DOPILOT_ADMIN_API_TOKEN", "single-token")
-    settings = load_settings(cfg)
-    assert settings.auth.shared_token == "tok"
-    assert settings.agent.server_shared_token == "agent-server-tok"
-
-
-def test_no_fallback_when_admin_api_token_absent(
+def test_no_machine_auth_without_agent_token(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _clear_token_env(monkeypatch)
     cfg = _write_empty_token_config(tmp_path)
     settings = load_settings(cfg)
-    assert settings.auth.shared_token == ""
-    assert settings.agent.server_shared_token == ""
-    assert settings.auth.enabled is False
+    assert settings.agent.agent_token == ""
+    assert settings.agent.machine_auth_enabled is False
+
+
+def test_short_agent_token_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_token_env(monkeypatch)
+    cfg = tmp_path / "agent.toml"
+    cfg.write_text(
+        '[agent]\nagent_id = "x"\nagent_token = "short"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError) as exc:
+        load_settings(cfg)
+    assert "agent_token" in str(exc.value)
+
+
+def test_short_agent_token_env_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_token_env(monkeypatch)
+    cfg = _write_empty_token_config(tmp_path)
+    monkeypatch.setenv("DOPILOT_AGENT_TOKEN", "tiny")
+    with pytest.raises(ConfigError) as exc:
+        load_settings(cfg)
+    assert "agent_token" in str(exc.value)
 
 
 def test_default_path_used_when_no_explicit_or_env(

@@ -103,6 +103,7 @@ cd deploy/docker
 cat > .env <<'EOF'
 DOPILOT_ADMIN_PASSWORD=replace-with-admin-login-password
 DOPILOT_ADMIN_API_TOKEN=replace-with-long-random-token
+DOPILOT_AGENT_TOKEN=replace-with-long-random-agent-token
 REDIS_PASSWORD=replace-with-redis-password
 EOF
 docker compose pull
@@ -137,10 +138,44 @@ curl -H "Authorization: Bearer $ACCESS_TOKEN" \
 ```
 
 `DOPILOT_ADMIN_API_TOKEN` is the externally supplied static admin API token
-(must be >= 16 characters). It is also the default single source for
-server-agent machine tokens when `DOPILOT_AGENT_SHARED_TOKEN` and
-`DOPILOT_SERVER_SHARED_TOKEN` are left unset. The login/stream signing key
-(`token_secret`) is a separate TOML-only value baked into the image.
+(must be >= 16 characters). It is **admin-only and server-side only**: it is
+never sent to agents and is not a source for the machine token.
+`DOPILOT_AGENT_TOKEN` is the single server-agent machine token (must be >= 16
+characters): it authenticates both directions (server→agent egg deploy,
+agent→server heartbeat), so the **same value** must be set on the server and
+every agent; leave it unset to disable machine auth. The login/stream signing
+key (`token_secret`) is a separate TOML-only value baked into the image.
+
+Token auth is not transport encryption. For encrypted cross-host traffic put the
+server, agents, and Redis on a private network/VPN or terminate TLS at a reverse
+proxy.
+
+### Split deployment (server-only / agent-only)
+
+To run the server on one host and join agents from elsewhere, use the split
+compose files instead of the all-in-one one:
+
+```bash
+cd deploy/docker
+# Server-only stack (db + redis + migrate + server, no agents). You may OMIT
+# DOPILOT_AGENT_TOKEN — the server then generates and persists one under its data
+# volume on first start (/server-data/secrets/agent-token).
+docker compose -f docker-compose.server.yml up -d
+
+# Read the (generated or configured) machine token to hand to your agents:
+docker exec docker-server-1 dopilot-server agent-token print          # DOPILOT_AGENT_TOKEN=<token> + hint
+docker exec docker-server-1 dopilot-server agent-token print --quiet  # bare token only
+
+# On each agent host: join with that token (required, no dev fallback) and the
+# server's Redis. Agents never receive DOPILOT_ADMIN_API_TOKEN.
+DOPILOT_AGENT_TOKEN=<token-from-server> REDIS_PASSWORD=<server-redis-pass> \
+  REDIS_HOST=<server-host> \
+  docker compose -f docker-compose.agent.yml up -d
+```
+
+The all-in-one `docker-compose.yml` keeps an explicit shared `DOPILOT_AGENT_TOKEN`
+(server and agents start together, so generation cannot reach the agents). Token
+auth is still not transport encryption — see the note above.
 
 To build the image from local source instead of pulling, layer the build
 override (used by the smoke scripts):
@@ -197,10 +232,10 @@ Stop the local Redis container with `docker stop dopilot-redis-dev`.
 `configs/`; `DOPILOT_DATABASE_URL` and `DOPILOT_REDIS_URL` override the database
 and Redis URLs. Web admin auth is **fail-closed**: unless
 `DOPILOT_AUTH_DISABLED=true` is set explicitly, `admin_username`,
-`admin_password`, and `token_secret` must all be configured. Agent machine
-tokens can be split with `DOPILOT_AGENT_SHARED_TOKEN` and
-`DOPILOT_SERVER_SHARED_TOKEN`; when they are left empty, both sides fall back to
-the effective admin API token.
+`admin_password`, and `token_secret` must all be configured. Server-agent
+machine auth uses the single `DOPILOT_AGENT_TOKEN` (the same value on the server
+and every agent); leave it unset to disable machine auth. The admin API token is
+never used as the machine token.
 
 The web app is a **Next.js static export** (shadcn/ui + react-i18next) served by
 `dopilot-server` from the same container; there is no separate web container and

@@ -1,0 +1,155 @@
+# dopilot SERVER-ONLY stack (phase 2.2.4): db + redis + migrate + server.
+#
+# Use this when the server (Web + scheduler hub + Redis + PostgreSQL) runs on one
+# host and agents join from elsewhere with deploy/docker/docker-compose.agent.yml.
+#
+# Quick deploy — no local build required:
+#   cd deploy/docker
+#   docker compose -f docker-compose.server.yml pull
+#   docker compose -f docker-compose.server.yml up -d
+#
+# Unlike the all-in-one docker-compose.yml, this file has NO agent services, so
+# the server does NOT need to be handed DOPILOT_AGENT_TOKEN up front. When the
+# token is omitted, the server GENERATES and PERSISTS one under its data volume
+# (/server-data/secrets/agent-token) on first start and reuses it on restart.
+#
+# Retrieve the generated token (to configure your agents) with:
+#   docker exec <server-container> dopilot-server agent-token print
+#   docker exec <server-container> dopilot-server agent-token print --quiet
+# (the container name is typically docker-server-1; check `docker compose
+#  -f docker-compose.server.yml ps`). Then set that value as DOPILOT_AGENT_TOKEN
+# in docker-compose.agent.yml on each agent host.
+#
+# To pin the token explicitly instead of generating it, set DOPILOT_AGENT_TOKEN
+# (>= 16 chars) in your shell / .env before `up`.
+#
+# ---------------------------------------------------------------------------
+# Deployment env (set in your shell or a .env file next to this compose):
+#
+#   Required (change before any real deployment — the defaults are dev-only):
+#     DOPILOT_ADMIN_PASSWORD     Web admin login password (server [auth]).
+#     DOPILOT_ADMIN_API_TOKEN    Static admin API token (ADMIN-ONLY), server-side
+#                                only; never sent to agents and never a source for
+#                                the machine token. A non-empty value must be
+#                                >= 16 characters.
+#     REDIS_PASSWORD             Redis AUTH password (used in the redis URL).
+#
+#   Optional:
+#     DOPILOT_AGENT_TOKEN        The single server<->agent machine token. Omit it
+#                                to let the server generate + persist one (see
+#                                above). If set, a non-empty value must be
+#                                >= 16 characters.
+#
+#   token_secret (server [auth]) is TOML-only and baked into the image.
+#
+# Token auth is NOT transport encryption. For encrypted cross-host transport
+# between this server and remote agents, put them on a private network / VPN or
+# terminate TLS at a reverse proxy. The agent host must be able to reach BOTH the
+# server HTTP port (heartbeat) and Redis (commands/events/logs).
+#
+# Redis IS published here (6379) so remote agents can reach it; restrict access
+# with a firewall / private network and keep password AUTH on.
+# The config TOML path is an internal image detail; compose does NOT set
+# DOPILOT_CONFIG. Single server replica only (hard constraint).
+# ---------------------------------------------------------------------------
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: dopilot
+      POSTGRES_USER: dopilot
+      POSTGRES_PASSWORD: dopilot
+    volumes:
+      - dopilot-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dopilot -d dopilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Redis Streams transport. AUTH + AOF on; single instance (message bus, not an
+  # HA store). Published so remote agents can reach it — keep it behind a
+  # firewall / private network.
+  redis:
+    image: redis:7
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--requirepass"
+      - "${REDIS_PASSWORD:-change-me-redis-pass}"
+    volumes:
+      - dopilot-redis:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test:
+        - "CMD"
+        - "redis-cli"
+        - "--no-auth-warning"
+        - "-a"
+        - "${REDIS_PASSWORD:-change-me-redis-pass}"
+        - "ping"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot migration: brings the database to head before the server starts.
+  migrate:
+    image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  server:
+    image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
+    command: ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
+    init: true
+    environment:
+      DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
+      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      # Web admin password + static admin API token (override the dev defaults).
+      DOPILOT_ADMIN_PASSWORD: ${DOPILOT_ADMIN_PASSWORD:-change-me}
+      # Admin-only static API token: server-side only, never sent to agents.
+      DOPILOT_ADMIN_API_TOKEN: ${DOPILOT_ADMIN_API_TOKEN:-change-me-admin-api-token}
+      # The single server<->agent machine token. OMITTED by default so the server
+      # generates + persists one under /server-data on first start. Set it to pin
+      # a fixed token instead (no dev fallback here — empty means "generate").
+      DOPILOT_AGENT_TOKEN: ${DOPILOT_AGENT_TOKEN:-}
+      # Server data root: anchors the persisted generated agent token at
+      # /server-data/secrets/agent-token (matches the mounted volume below).
+      DOPILOT_SERVER_DATA_DIR: /server-data
+    volumes:
+      - dopilot-server-data:/server-data
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/api/v1/health', timeout=3).status==200 else 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  dopilot-db:
+  dopilot-redis:
+  dopilot-server-data:

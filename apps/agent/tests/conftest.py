@@ -4,7 +4,7 @@ Provides an in-process ASGI client (httpx + ASGITransport) wired to a test
 :class:`Settings` (scrapyd subprocess disabled, workdir in a tmp dir), plus
 helpers to:
 
-- build clients for both auth modes (shared_token set vs empty);
+- build clients for both auth modes (agent_token set vs empty);
 - inject a **fake scrapyd** by overriding the scrapyd-client dependency with a
   :class:`ScrapydClient` whose httpx transport is an ``httpx.MockTransport``
   driven by an in-process :class:`FakeScrapyd` — no real scrapyd binary needed.
@@ -29,7 +29,6 @@ import pytest_asyncio
 from dopilot_agent.config.loader import get_settings
 from dopilot_agent.config.settings import (
     AgentSettings,
-    AuthSettings,
     Capabilities,
     ScrapydSettings,
     Settings,
@@ -53,15 +52,15 @@ BASE_URL = "http://agent.test"
 TEST_TOKEN = "test-shared-token"
 
 
-def make_settings(workdir: str, shared_token: str = "") -> Settings:
+def make_settings(workdir: str, agent_token: str = "") -> Settings:
     return Settings(
         agent=AgentSettings(
             agent_id="agent-test-1",
             host="127.0.0.1",
             port=6810,
             workdir=workdir,
+            agent_token=agent_token,
         ),
-        auth=AuthSettings(shared_token=shared_token),
         capabilities=Capabilities(scrapy=True, script=True, docker=False),
         # No real scrapyd subprocess in tests.
         scrapyd=ScrapydSettings(start=False, host="127.0.0.1", port=6801),
@@ -313,26 +312,26 @@ def workdir(tmp_path: Path) -> Path:
 
 @pytest_asyncio.fixture
 async def client(workdir: Path) -> AsyncIterator[AsyncClient]:
-    """Default client: auth OFF (empty shared token)."""
-    async with build_client(make_settings(str(workdir), shared_token="")) as ac:
+    """Default client: auth OFF (empty agent token)."""
+    async with build_client(make_settings(str(workdir), agent_token="")) as ac:
         yield ac
 
 
 @pytest_asyncio.fixture
 async def client_auth(workdir: Path) -> AsyncIterator[AsyncClient]:
-    """Client with shared-token auth ENABLED."""
+    """Client with agent-token auth ENABLED."""
     async with build_client(
-        make_settings(str(workdir), shared_token=TEST_TOKEN)
+        make_settings(str(workdir), agent_token=TEST_TOKEN)
     ) as ac:
         yield ac
 
 
 @pytest.fixture
 def client_factory(workdir: Path) -> Callable[[str], AsyncClient]:
-    """Factory to build a client for an arbitrary shared token."""
+    """Factory to build a client for an arbitrary agent token."""
 
-    def _factory(shared_token: str = "") -> AsyncClient:
-        return build_client(make_settings(str(workdir), shared_token=shared_token))
+    def _factory(agent_token: str = "") -> AsyncClient:
+        return build_client(make_settings(str(workdir), agent_token=agent_token))
 
     return _factory
 
@@ -346,10 +345,10 @@ def make_runner(workdir: Path, fake: FakeScrapyd) -> ScrapyRunner:
 
 
 def app_with_fake_scrapyd(
-    workdir: Path, fake: FakeScrapyd, *, shared_token: str = ""
+    workdir: Path, fake: FakeScrapyd, *, agent_token: str = ""
 ) -> FastAPI:
     """Build an app whose scrapyd client/runner are backed by ``fake``."""
-    settings = make_settings(str(workdir), shared_token=shared_token)
+    settings = make_settings(str(workdir), agent_token=agent_token)
     app = _build_app(settings)
 
     fake_client = ScrapydClient(
