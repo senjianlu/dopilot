@@ -24,7 +24,7 @@
 | server 数据边界 | 只有 server 连接 PostgreSQL；agent 和 web 不直连数据库。 |
 | 日志链路 | **agent 经 Redis log stream 主动推增量，server 消费后落盘**：agent tail 本地 `job.log` 按字节 offset `XADD dopilot:server:logs`（base64 字节）→ server log consumer 写 `/server-data/logs` 正文 + 更新 PG 索引/offset → 经 **SSE** 单向推给 web。四个不变量保留：**第一版完全不使用 WebSocket、server→web SSE、正文落 `/server-data/logs`、PG 只存索引/offset/状态**。日志 RPO≠0（server 长停或 Redis 裁剪致 partial，详见 `docs/refactor/00-redis-streams-agent-communication.md`）。 |
 | 单实例硬约束 | server = 单容器 + **uvicorn workers=1** + 单 APScheduler 实例。**不支持多副本/多 worker，未来也不做** —— 不引入 Redis 做多副本 HA/fan-out/选主/分布式锁；server→web SSE fan-out 仍在单进程内存完成。**显式允许 Redis 作单实例 server↔agent 通信总线**（命令/事件/日志三条 stream + heartbeat HTTP，详见 `docs/refactor/00-redis-streams-agent-communication.md`）。 |
-| 认证 | **Web 管理员认证 fail-closed（阶段 2.2）**：经 `load_settings()` 启动时 `admin_username + admin_password + token_secret` 三者必须齐全且非空，否则抛 `ConfigError` 拒绝启动；开发环境如需匿名管理员模式，必须显式设 `DOPILOT_AUTH_DISABLED=true`（不再以"缺配置即静默关闭"进入匿名）。**server↔agent 机器认证（阶段 2.2.3）用单一 `agent_token` 同时认证两个方向（非空才校验、非空须 >=16 字符；不再拆分、不从 admin token 回退）。阶段 2.2.4 在 server 运行时边界放宽为：配置了 `agent_token`，或 server 自动生成并持久化到 `<server.data_dir>/secrets/agent-token` 的令牌即视为 ON（生成仅 server 端、`load_settings()` 无副作用），Redis 启用 AUTH/ACL**；`admin_api_token` 仅管理员、仅 server 端，绝不下发给 agent；SSE `stream_token` 仅在 Web 认证开启时需要。内网防误操作策略，非互联网零信任；Token 认证不是传输加密，跨主机加密仍需 TLS/VPN/私有网络。 |
+| 认证 | **Web 管理员认证 fail-closed（阶段 2.2）**：经 `load_settings()` 启动时 `admin_username + admin_password + token_secret` 三者必须齐全且非空，否则抛 `ConfigError` 拒绝启动；开发环境如需匿名管理员模式，必须显式设 `DOPILOT_AUTH_DISABLED=true`（不再以"缺配置即静默关闭"进入匿名）。**agent 机器认证用单一 `agent_token` 认证 agent→server 出站调用（heartbeat + artifact/wheel 拉取；非空才校验、非空须 >=16 字符；不再拆分、不从 admin token 回退）。阶段 2.2.4 在 server 运行时边界放宽为：配置了 `agent_token`，或 server 自动生成并持久化到 `<server.data_dir>/secrets/agent-token` 的令牌即视为 ON（生成仅 server 端、`load_settings()` 无副作用），Redis 启用 AUTH/ACL**；`admin_api_token` 仅管理员、仅 server 端，绝不下发给 agent；SSE `stream_token` 仅在 Web 认证开启时需要。阶段 2.2.7 起 agent 无入站 HTTP。内网防误操作策略，非互联网零信任；Token 认证不是传输加密，跨主机加密仍需 TLS/VPN/私有网络。 |
 
 ---
 
@@ -179,12 +179,12 @@ CMD ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
 
 ### 2.4 agent 角色（执行器，分期）
 
-agent 使用同一个 `rabbir/dopilot:latest` 镜像，不单独发布 `rabbir/dopilot-agent`。agent 容器只跑 worker 执行器 + 本机 scrapyd + Redis consumer/producer + heartbeat worker。**agent 主动**经 Redis consumer group 消费命令、主动 `XADD` 推状态/日志、主动 POST heartbeat（破坏性翻案，详见 `docs/refactor/00-redis-streams-agent-communication.md`）；**仍不使用 WebSocket**，server→agent HTTP run/status/tail 主路径已删除。
+agent 使用同一个 `rabbir/dopilot:latest` 镜像，不单独发布 `rabbir/dopilot-agent`。agent 容器只跑 worker 执行器 + 本机 scrapyd + Redis consumer/producer + heartbeat worker。**agent 主动**经 Redis consumer group 消费命令、主动 `XADD` 推状态/日志、主动 POST heartbeat（破坏性翻案，详见 `docs/refactor/00-redis-streams-agent-communication.md`）；**仍不使用 WebSocket**。**阶段 2.2.7 起 agent 为纯出站（outbound-only）守护进程**：删除了所有 server→agent HTTP 入站面（run/status/tail 早已删除，egg 部署端点与 `/health` 端点在 2.2.7 删除），agent 不再启动 uvicorn、不再监听任何端口（`6800` 移除）。Scrapy egg 由 agent 在执行 Redis `run` 命令时从 server 拉取（`ScrapyArtifactCache`）后部署到本机 scrapyd。
 
-启动命令：
+启动命令（无 `-b/-p`，不开监听端口）：
 
 ```bash
-dopilot-agent -b 0.0.0.0 -p 6800
+dopilot-agent
 ```
 
 > **dopilot 实现建议**：agent 与 server 用**不同的依赖声明**（各自的 `pyproject.toml`；agent 不需要 FastAPI server、SQLAlchemy/Alembic、前端或 logparser）。第一版正式架构中：
@@ -204,26 +204,28 @@ dopilot-agent -b 0.0.0.0 -p 6800
 
 - `server`：宿主机运行 FastAPI/uvicorn，连接 `localhost:5432` 的 PostgreSQL。
 - `web`：宿主机运行前端 dev server（阶段 2.1：`next dev`；历史为 Vite dev server），通过 proxy 访问 server `/api/v1` 与 SSE。生产形态为 Next.js 静态导出，由 dopilot-server 同源托管，无独立 Web 容器、无 Node 生产运行时。
-- `agent`：宿主机运行 dopilot-agent，阶段 1 可在本机拉起 scrapyd 子进程，经 Redis 消费命令 + 推事件/日志、并向 server POST heartbeat（不再对外暴露 server→agent 调度 API；`-p 6800` 仅用于容器本地 `/health` healthcheck）。
+- `agent`：宿主机运行 dopilot-agent，阶段 1 可在本机拉起 scrapyd 子进程，经 Redis 消费命令 + 推事件/日志、并向 server POST heartbeat。**纯出站**：不开任何入站端口（2.2.7 起无 `-b/-p`、无 `6800`、无 `/health` 端点）；容器健康检查改用本地 exec（`dopilot-agent-healthcheck`，校验本机 scrapyd `daemonstatus.json`），真正存活以 server 侧 heartbeat `nodes.last_seen_at` 为准。
 - `db` / `redis`：本地开发的基础依赖；Redis 是 server↔agent 通信总线，不是业务数据库。
 
 默认 compose 栈是**面向用户的一键部署路径**：直接拉取 CI 构建的 `rabbir/dopilot` 镜像（**无 `build:`**），拉起 server + Web UI + 三个 Scrapy agent + PostgreSQL + Redis 通信总线，可在 `deploy/docker` 下用 `docker compose pull && docker compose up -d` 启动，无需本地构建。本地源码构建/smoke 用 `docker-compose.build.yml` 覆盖文件叠加（见 §7.3）。可执行版本以仓库内 `deploy/docker/docker-compose.yml` 为准；文档只保留关键结构，避免复制后遗漏迁移、健康检查或 compose 网络配置。
 
 ### 2.5 docker-compose 示例
 
-镜像默认 `${DOPILOT_IMAGE:-rabbir/dopilot:latest}`；三个 agent（`scrapy-agent-1/2/3`）对称，仅 `AGENT_ID` 与数据卷不同，共用同一镜像内置的 `/app/configs/agent.toml`（compose env 覆盖 `AGENT_ID` 等字段）。默认配置已**烤进镜像**（`/app/configs/server.toml`、`/app/configs/agent.toml`），默认路径**无需挂载 host 配置**；要定制时把自有 toml 挂到这些路径即可。仅 `scrapy-agent-1` 发布 `6800`（smoke/调试），scrapyd 的 `6801` **永不**发布到 host。
+镜像默认 `${DOPILOT_IMAGE:-rabbir/dopilot:latest}`；三个 agent（`scrapy-agent-1/2/3`）对称，仅 `AGENT_ID` 与数据卷不同，共用同一镜像内置的 `/app/configs/agent.toml`（compose env 覆盖 `AGENT_ID` 等字段）。默认配置已**烤进镜像**（`/app/configs/server.toml`、`/app/configs/agent.toml`），默认路径**无需挂载 host 配置**；要定制时把自有 toml 挂到这些路径即可。**agent 纯出站（2.2.7）：不发布任何端口**（无 `6800`），scrapyd 的 `6801` **永不**发布到 host。
 
 ```yaml
 # 共享 agent 定义；三个 agent 仅 AGENT_ID + 数据卷不同。
 x-agent: &agent
   image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
-  command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
+  command: ["dopilot-agent"]
   init: true
   depends_on:
     redis:
       condition: service_healthy
+  # 纯出站 agent 无入站监听：健康检查是本地 exec（加载配置 + 校验本机 scrapyd
+  # daemonstatus.json），仅作重启提示；真正存活以 server 侧 heartbeat 为准。
   healthcheck:
-    test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:6800/health', timeout=3).status==200 else 1)"]
+    test: ["CMD", "dopilot-agent-healthcheck"]
   restart: unless-stopped
 
 services:
@@ -267,8 +269,7 @@ services:
       DOPILOT_AGENT_TOKEN: ${DOPILOT_AGENT_TOKEN:-change-me-agent-token}
     volumes:
       - dopilot-agent1-data:/agent-data
-    ports:
-      - "6800:6800"   # 仅 scrapy-agent-1 发布 HTTP；scrapyd 6801 永不发布
+    # 纯出站 agent（2.2.7）：不发布任何端口；scrapyd 6801 永不发布到 host。
 
   scrapy-agent-2:
     <<: *agent
@@ -351,9 +352,9 @@ url = "postgresql+psycopg://dopilot:dopilot@db:5432/dopilot"
 #   DOPILOT_SERVER_PORT / DOPILOT_SCHEDULER_ENABLED / DOPILOT_AUTH_DISABLED …
 # 例外（阶段 2.2.2）：token_secret 仅 TOML 可配、无 env 覆盖；它是登录/SSE 的 HMAC 签名密钥，
 #   不作为机器令牌来源；旧的 DOPILOT_ADMIN_API_SECRET 已移除、无兼容别名、无任何作用。
-# 单一机器令牌（阶段 2.2.3）：[agents].agent_token 是唯一机器令牌，同时认证 server↔agent
-# 两个方向（server→agent 部署 egg、agent→server heartbeat）；与每个 agent [agent].agent_token
-# 同值。admin_api_token 仅管理员、仅 server 端，绝不下发给 agent、也不充当机器令牌；旧的拆分令牌
+# 单一机器令牌（阶段 2.2.3）：[agents].agent_token 是 agent 出站调用的机器令牌；
+# agent 在 heartbeat + artifact/wheel 拉取时携带，与每个 agent [agent].agent_token
+# 同值。阶段 2.2.7 起无 server→agent HTTP。admin_api_token 仅管理员、仅 server 端，绝不下发给 agent、也不充当机器令牌；旧的拆分令牌
 # （[agent_auth].shared_token / [agents].server_shared_token 及 DOPILOT_AGENT_SHARED_TOKEN /
 # DOPILOT_SERVER_SHARED_TOKEN）已删除、无任何作用。Token 认证不是传输加密，跨主机加密仍需 TLS/VPN/私有网络。
 [auth]
@@ -386,7 +387,7 @@ require_aof = true                          # 生产启用 AOF
 heartbeat_timeout_seconds = 30              # now - last_seen_at 超此值判 agent 不健康，不再投递新任务
 stalled_attempt_seconds = 300              # heartbeat 正常但 attempt 长时间无状态事件 → operator-visible stalled 告警
 lost_after_stalled_seconds = 900           # event_stall 持续超此值 → 对账 loop 转 lost（同时投 stop intent=reclaim）
-agent_token = ""  # 唯一 server↔agent 机器令牌（阶段 2.2.3，认证两个方向）；compose 经 DOPILOT_AGENT_TOKEN 注入，与 agent 同值
+agent_token = ""  # agent 出站机器令牌；compose 经 DOPILOT_AGENT_TOKEN 注入，与 agent 同值
 
 [scheduler]
 enabled = true
@@ -428,8 +429,8 @@ event_outbox_dir = "/agent-data/outbox"          # 状态事件/日志 outbox（
 agent_id = "agent-01"                            # 稳定标识；command stream 路由 / heartbeat 携带
 server_url = "http://server:5000"                # 主动 POST heartbeat 的目标
 heartbeat_interval_seconds = 10                  # 周期 POST /api/v1/agents/{agent_id}/heartbeat
-# 阶段 2.2.3：唯一机器令牌，同时认证 server↔agent 两个方向；与 server [agents].agent_token 同值。
-# compose 经 DOPILOT_AGENT_TOKEN 注入；agent 绝不接收 DOPILOT_ADMIN_API_TOKEN。
+# 阶段 2.2.3：唯一机器令牌，用于 agent→server 出站调用；与 server [agents].agent_token 同值。
+# compose 经 DOPILOT_AGENT_TOKEN 注入；agent 绝不接收 DOPILOT_ADMIN_API_TOKEN，也不暴露入站 HTTP。
 agent_token = ""
 ```
 
@@ -457,7 +458,7 @@ agent_token = ""
 
 - **Token 认证不是传输加密**：一体栈在单 Docker 网络内自洽；拆分部署下 agent→server 的 Redis 与 heartbeat 端口跨主机，加密传输仍需 TLS/VPN/私有网络。
 
-> 实现要点：`create_app(settings)` 会把传入的 settings 注入 `Depends(get_settings)` 依赖路径，确保**出站 `AgentClient`** 与**入站 heartbeat 鉴权**看到同一个（已写入生成令牌的）settings 对象，避免「egg 部署用生成令牌、heartbeat 仍认为机器认证关闭」的错配。
+> 实现要点：`create_app(settings)` 会把传入的 settings 注入 `Depends(get_settings)` 依赖路径，确保 heartbeat 与 artifact/wheel 下载鉴权看到同一个（已写入生成令牌的）settings 对象，避免 agent 出站调用与 server 校验令牌错配。
 
 ### 2.6 第一版运行参数校对清单
 
@@ -479,22 +480,25 @@ agent_token = ""
 | `redis` | `dopilot-redis:/data` | AOF 数据卷；瞬时传输介质，丢失只影响在途消息（日志 RPO≠0 已接受）。 |
 | `scrapy-agent-1/2/3` | `DOPILOT_REDIS_URL=redis://:...@redis:6379/0` | 消费 `dopilot:agent:{agent_id}:commands` + 推 agent-events / logs。 |
 | `scrapy-agent-1/2/3` | 内置 `/app/configs/agent.toml`（烤进镜像） | 默认无需挂载；`[agent].server_url = "http://server:5000"` 是主动 POST heartbeat 与 artifact/wheel 拉取的 server HTTP 基址（compose 网络内可解析）。agent 单独/跨主机部署时改用 agent 端环境变量 `DOPILOT_SERVER_URL` 覆盖（见 `docker-compose.agent.yml`）。要定制时把自有 toml 挂到该路径。 |
-| `scrapy-agent-1/2/3` | `init: true` | agent 作 PID 1，收割 scrapyd 子进程；本机 scrapyd 内部端口（如 6801）仅本机可见，不再对外暴露 server→agent 调度端口（仅 `scrapy-agent-1` 发布 6800 供 smoke/调试）。 |
+| `scrapy-agent-1/2/3` | `init: true` | agent 作 PID 1，收割 scrapyd 子进程；本机 scrapyd 内部端口（如 6801）仅本机可见。纯出站 agent（2.2.7）不发布任何端口、不监听入站 HTTP。 |
 | `scrapy-agent-1/2/3` | `dopilot-agent{1,2,3}-data:/agent-data` | 每个 agent 各自的数据卷：scrapyd `job.log` + `/agent-data/state/executions/{attempt_id}.json` 映射 + Redis event/log outbox；server drain 完成前不得删 `job.log`。 |
 
 三个对称 agent（`scrapy-agent-1/2/3`，阶段 1 即落地）共用镜像内置的 `/app/configs/agent.toml`（由 `dopilot-agent` 入口的角色默认路径读取，compose 不再注入 `DOPILOT_CONFIG`），仅 `AGENT_ID` 与数据卷不同；compose 为每个 agent 注入稳定 `AGENT_ID`、`AGENT_WORKDIR`、`DOPILOT_REDIS_URL`、`DOPILOT_AGENT_TOKEN`（唯一机器令牌）。heartbeat 目标从 `[agent].server_url` 读取；该字段同时是 agent 拉取 artifact / wheel 的 server HTTP 基址。在 all-in-one compose 网络内烤进的 `http://server:5000` 即可解析，故无需额外注入。**阶段 2.2.6**：agent 端新增环境变量 `DOPILOT_SERVER_URL` 覆盖 `[agent].server_url`（env 优先于 TOML），供 agent 单独部署 / 跨主机 / K3s 场景使用——此时 `http://server:5000` 无法解析，必须显式指向可达的 server HTTP 基址（如 `http://<server-ip-or-dns>:5000`、`http://dopilot-server.dopilot.svc.cluster.local:5000`、`https://dopilot.example.com`）；token 鉴权不等于传输加密，跨主机 HTTP 仍需私网 / VPN / TLS / 反代。agent-only 加入栈见 `deploy/docker/docker-compose.agent.yml`（该文件用 Compose `:?` 语法将 `DOPILOT_SERVER_URL` 设为必填，缺失即快速失败）。agent 绝不接收 `DOPILOT_ADMIN_API_TOKEN`。
 
-> 重构后 server↔agent 经 **Redis 通信总线**：agent 主动消费命令、主动 `XADD` 推状态/日志，并**主动 POST heartbeat**。agent 启动必须携带稳定 `agent_id`（环境变量 `AGENT_ID` 或 `configs/agent.toml`），server 据 heartbeat 写入 `nodes.last_seen_at` 并判健康（不再轮询 `/health`）。机器鉴权（阶段 2.2.3）用**单一** `agent_token` 同时认证 server↔agent 两个方向（config-present-or-off：非空才校验），**不复用** Web 管理员账号密码、也绝不下发 `admin_api_token` 给 agent；agent 仍不直连 PostgreSQL。
+> 重构后 server↔agent 经 **Redis 通信总线**：agent 主动消费命令、主动 `XADD` 推状态/日志，并**主动 POST heartbeat**。agent 启动必须携带稳定 `agent_id`（环境变量 `AGENT_ID` 或 `configs/agent.toml`），server 据 heartbeat 写入 `nodes.last_seen_at` 并判健康（不再轮询 `/health`）。机器鉴权（阶段 2.2.3）用**单一** `agent_token` 认证 agent→server 出站调用（config-present-or-off：非空才校验），**不复用** Web 管理员账号密码、也绝不下发 `admin_api_token` 给 agent；agent 仍不直连 PostgreSQL。
 
 ### 2.7 egg 上传部署链路（第一版仅支持已构建 egg）
 
-第一版**只支持上传已构建 egg**，不做本地/源码/Git/CI 构建。部署链路：
+第一版**只支持上传已构建 egg**，不做本地/源码/Git/CI 构建。部署链路（**阶段 2.2.7 起 agent 纯出站，egg 由 agent 主动拉取，不再有 server→agent HTTP 转发**）：
 
 ```
-用户上传 egg → server（/api/v1 接收）→ 转发 agent（egg 部署仍走 HTTP /addversion.json 转发，不经 Redis command stream；refactor/00 命令类型仅 run/stop/cleanup_logs）→ agent 调本机 scrapyd /addversion.json
+用户上传 egg → server（POST /api/v1/artifacts/scrapy/egg 存为 artifact）
+  → server XADD scrapy `run` 命令 → dopilot:agent:{agent_id}:commands
+  → agent 消费命令时按 fetch_path 从 server 拉取 egg（ScrapyArtifactCache.ensure()，agent→server HTTP GET + agent_token）
+  → agent 调本机 scrapyd /addversion.json 部署 → schedule.json 调度
 ```
 
-> server→agent 已无 HTTP 主路径，部署投递与 run/stop/cleanup_logs 一样经 `dopilot:agent:{agent_id}:commands` 下发，命令类型细化待 `01-gap-executors.md` 与 `docs/refactor/00-redis-streams-agent-communication.md` 对齐。server 与 agent 均不在镜像内构建 egg；scrapyd 仅由 agent 子进程在容器内拉起（内部端口如 6801）。
+> egg 不再经独立 deploy 命令、也不再走 server→agent HTTP 转发；它随 scrapy `run` 命令由 agent 在执行时从 server 拉取（refactor/00 命令类型仅 run/stop/cleanup_logs，不含 deploy_egg）。server 与 agent 均不在镜像内构建 egg；scrapyd 仅由 agent 子进程在容器内拉起（内部端口如 6801、对外不可见）。
 
 ### 2.8 可选反代（SSE 必须关闭缓冲）
 
@@ -653,8 +657,8 @@ scrapydweb 的后台执行分两类，共 3 个单元：
 | P0 | compose 新增 `redis` 服务（AUTH + AOF）作单实例 server↔agent 通信总线；server/agent 配 `DOPILOT_REDIS_URL`，agent 通过 `[agent].server_url` 配置 heartbeat 目标 | refactor §配置/部署 |
 | P1 | 第一版落地自有 `dopilot-agent`：子进程拉起本机 scrapyd（scrapyd 内部端口如 6801 仅本机），运行 **Redis command consumer + status/log publisher + heartbeat worker**（主动消费命令、主动 `XADD` 推状态/日志、主动 POST heartbeat，无 WebSocket）；不再对外暴露 server→agent 调度端口；server 据 heartbeat `last_seen_at` 判健康，调度只选健康 agent | dopilot 决策 11/12 |
 | P1 | server 侧实现 Redis producer/consumer + reconcile：command outbox/producer/dispatcher 写 command stream；event consumer 消费 `agent-events` 更新 attempt（替代 status poll）；log consumer 消费 `logs` stream 落 `/server-data/logs` + 更新 `execution_log_files`（含 `log_integrity`/gap）→ SSE fan-out；reconcile loop 走 heartbeat/event 对账（lost/stalled），不再访问 agent HTTP | 决策 #11/#12 新文本 |
-| P1 | heartbeat API：server 实现 `POST /api/v1/agents/{agent_id}/heartbeat` 写 `nodes.last_seen_at`；机器鉴权用单一 `agent_token`（阶段 2.2.3，认证 server↔agent 两个方向）；删除 server→agent HTTP run/status/tail 主路径与 `AgentTailLogSource` 主路径 | 决策 #12 新文本 |
-| P1 | egg 上传部署链路：用户上传已构建 egg → server → 转发 agent（egg 部署仍走 HTTP `/addversion.json`，**不经 Redis command stream**）→ agent 调本机 scrapyd `/addversion.json`；第一版**不做**本地/源码/Git/CI 构建 | v1 egg spec |
+| P1 | heartbeat API：server 实现 `POST /api/v1/agents/{agent_id}/heartbeat` 写 `nodes.last_seen_at`；机器鉴权用单一 `agent_token` 认证 agent→server 出站调用；删除 server→agent HTTP run/status/tail 主路径与 `AgentTailLogSource` 主路径 | 决策 #12 新文本 |
+| P1 | egg 上传/部署链路（2.2.7 当前口径）：用户上传已构建 egg → server 存为 artifact → agent 执行 Redis `run` 命令时从 server 拉取 egg → agent 调本机 scrapyd `/addversion.json`；第一版**不做**本地/源码/Git/CI 构建 | v1 egg spec |
 | P1 | dopilot 镜像不内置 nginx；若用户自行加反代，SSE 路径必须关闭 buffering；FastAPI SSE 响应加 `X-Accel-Buffering: no` + `Cache-Control: no-cache` | v1 反代 spec |
 | P2 | dopilot 缓存目录设计：在自有 `config`/path 层把 deploy/parse/schedule 类瞬态目录指向 tmpfs，与 database 持久目录隔离（dopilot 新代码，非改 scrapydweb） | （清目录语义参考 scrapydweb `vars.py:51-66`） |
 | P2 | 生产使用 uvicorn，固定 `workers=1`，并明确 scheduler 单实例策略 | dopilot FastAPI 决策 |
@@ -666,7 +670,7 @@ scrapydweb 的后台执行分两类，共 3 个单元：
 1. **配置路径加载**（已决，非开放问题）：dopilot 用 toml 配置 + 环境变量覆盖；Docker 镜像内置 server/agent 角色默认配置路径，compose 无需配置路径变量，进阶部署可把自有 toml 挂载到默认路径；无 cwd 硬编码约束。对比之下 scrapydweb 基线把文件名硬编码 `scrapydweb_settings_v11.py` 且只从 `os.getcwd()` 找（`vars.py:29`、`run.py:124`），dopilot 不沿用该形态。
 2. **单实例约束（已定，非开放问题）**：v1 锁定 server = 单容器 + **uvicorn workers=1** + 单 APScheduler 实例，**不做多副本/多 worker，未来也不做**。不把 scheduler 拆成独立服务、不引入分布式锁/选主或 NATS/PG LISTEN-NOTIFY 多副本 fan-out；**Redis 仅作单实例 server↔agent 通信总线**，不用于多副本 HA/fan-out/选主，server→web SSE fan-out 仍单进程内存完成。
 3. **agent 协议范围**（已定方向，已翻案为 Redis）：server↔agent 经 **Redis 通信总线**——agent 主动消费命令（`run`/`stop`/`cleanup_logs`）、主动 `XADD` 推状态/日志、主动 POST heartbeat，**不使用 WebSocket**；server→agent HTTP run/status/tail 主路径已删除。仍需在 `packages/protocol/.../streams.py` 细化 `AgentCommand`/`AgentEvent`/`AgentLogEvent`/`AgentHeartbeatRequest/Response` 与错误码（既有 tail/status schema 标 legacy；详见 `docs/refactor/00-redis-streams-agent-communication.md`、`01-gap-executors.md` / `03-gap-realtime-logs.md`）。
-4. **通信鉴权边界**（阶段 2.2.3 收敛为单令牌）：server↔agent 机器认证用**单一** `agent_token` 同时认证两个方向（config-present-or-off：非空才校验）；`admin_api_token` 仅管理员、绝不下发给 agent；Redis 启用 AUTH/ACL；agent 仍不直连 PostgreSQL。Token 认证不是传输加密：跨主机加密需把 Redis/heartbeat 端口置于 TLS/VPN/私有网络之后（v1 定位为内网防误操作，非互联网零信任）。
+4. **通信鉴权边界**（阶段 2.2.3 收敛为单令牌，2.2.7 纯出站）：agent 机器认证用**单一** `agent_token` 认证 agent→server 出站调用（heartbeat + artifact/wheel 拉取，config-present-or-off：非空才校验）；`admin_api_token` 仅管理员、绝不下发给 agent；Redis 启用 AUTH/ACL；agent 仍不直连 PostgreSQL。Token 认证不是传输加密：跨主机加密需把 Redis/heartbeat 端口置于 TLS/VPN/私有网络之后（v1 定位为内网防误操作，非互联网零信任）。
 5. **stream 拆分落地**：scrapy/scrapyd 只产 `stream=log`；脚本阶段 `stdout`/`stderr` 如何在 agent 侧采集并各自维护 offset，待 `03-gap-realtime-logs.md` 细化。
 6. **日志回流打通**（已定方向，已翻案为 Redis）：日志由 **agent tail 本地 `job.log` 按字节 offset `XADD dopilot:server:logs`（base64 字节）、server log consumer 消费后落盘**，正文落 server `/server-data/logs`、索引落 PG `execution_log_files`（含 `log_integrity`/gap），web 经 SSE 看；不依赖共享卷。多 agent 各自 publish 到同一 logs stream，server 统一消费聚合。日志 RPO≠0：server 长停或 Redis 裁剪致 partial 是已接受行为、不阻塞业务状态收敛。
 
@@ -681,7 +685,7 @@ scrapydweb 的后台执行分两类，共 3 个单元：
 | 角色 | Docker Hub 镜像 | 启动命令 | Dockerfile |
 |------|----------------|----------|-----------|
 | server（调度中心 + API/SSE + 内置 Web UI） | **`rabbir/dopilot:latest`** | `dopilot-server -b 0.0.0.0 -p 5000` | `deploy/docker/Dockerfile` |
-| agent（worker 执行器） | **`rabbir/dopilot:latest`** | `dopilot-agent -b 0.0.0.0 -p 6800` | `deploy/docker/Dockerfile` |
+| agent（worker 执行器） | **`rabbir/dopilot:latest`** | `dopilot-agent`（纯出站，无端口） | `deploy/docker/Dockerfile` |
 | migrate（一次性迁移） | **`rabbir/dopilot:latest`** | `alembic upgrade head` | `deploy/docker/Dockerfile` |
 
 统一约定：只发布一个应用镜像 `rabbir/dopilot:latest`。镜像内包含 server、agent、protocol、Scrapy/scrapyd 运行时、Alembic 迁移资源，以及构建后的 Web 静态产物（阶段 2.1：Next.js 静态导出 `apps/web/out` → `/app/web`，由 server 同源托管；历史为 Vue SPA）；容器启动时通过 command 选择运行模式。

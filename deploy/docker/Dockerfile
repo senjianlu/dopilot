@@ -129,7 +129,9 @@ ENV AGENT_WORKDIR=/agent-data
 RUN mkdir -p /agent-data /server-data
 VOLUME ["/agent-data", "/server-data"]
 
-EXPOSE 5000 6800
+# Only the server exposes an HTTP port. The agent is outbound-only (phase 2.2.7):
+# it consumes Redis commands and POSTs heartbeats, binding no inbound listener.
+EXPOSE 5000
 
 # Default to server mode for `docker run rabbir/dopilot:latest`; compose
 # overrides this for migrate and agent roles.

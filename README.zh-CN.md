@@ -131,10 +131,10 @@ curl -H "Authorization: Bearer $ACCESS_TOKEN" \
 
 `DOPILOT_ADMIN_API_TOKEN` 是外部提供的静态 admin API token（非空时须 >= 16 字符），
 **仅管理员、仅 server 端**：从不下发给 agent，也不作为机器 token 的来源。
-`DOPILOT_AGENT_TOKEN` 是唯一的 server-agent 机器 token（非空时须 >= 16 字符）：它同时
-认证两个方向（server→agent 部署 egg、agent→server heartbeat），因此 server 与每个
-agent 必须设置**相同的值**；留空则关闭机器认证。登录/stream 的签名密钥
-（`token_secret`）是另一个仅 TOML 配置、已烤进镜像的值。
+`DOPILOT_AGENT_TOKEN` 是 agent 机器 token（非空时须 >= 16 字符）：agent 在出站调用
+server（heartbeat + artifact/wheel 拉取）时携带，因此 server 与每个 agent 必须设置
+**相同的值**；留空则关闭机器认证。agent 不暴露任何入站 HTTP API。登录/stream 的
+签名密钥（`token_secret`）是另一个仅 TOML 配置、已烤进镜像的值。
 
 Token 认证不是传输加密。跨主机要加密时，请把 server、agent、Redis 放在私有网络/VPN
 内，或在反向代理处终止 TLS。
@@ -205,8 +205,8 @@ docker run -d --rm --name dopilot-redis-dev -p 6379:6379 \
 # 4. 运行服务（分别开终端）。
 # agent 需先复制 configs/agent.example.toml 为本地配置，并设置：
 #   [agent].server_url = "http://localhost:5000"
-#   [agent].advertise_endpoint = "localhost:6800"
 #   [redis].url = "redis://localhost:6379/0"
+# agent 为纯出站：不开任何入站端口（无 -b/-p 参数）。
 DOPILOT_CONFIG=configs/server.example.toml dopilot-server
 DOPILOT_CONFIG=configs/agent.local.toml dopilot-agent
 
@@ -220,8 +220,9 @@ NEXT_PUBLIC_API_BASE=http://localhost:5000/api/v1 corepack pnpm --filter web dev
 `DOPILOT_DATABASE_URL` 与 `DOPILOT_REDIS_URL` 可覆盖数据库与 Redis 地址。Web
 管理员认证是 **fail-closed**：除非显式设置 `DOPILOT_AUTH_DISABLED=true`，否则
 `admin_username`、`admin_password`、`token_secret` 必须全部配置。server-agent 机器
-认证使用唯一的 `DOPILOT_AGENT_TOKEN`（server 与每个 agent 设相同值）；留空则关闭机器
-认证。admin API token 绝不充当机器 token。
+认证使用唯一的 `DOPILOT_AGENT_TOKEN`（agent 在出站调用——heartbeat + 拉取 artifact/wheel
+——时携带，server 与每个 agent 设相同值）；留空则关闭机器认证。agent 不暴露任何入站
+HTTP API。admin API token 绝不充当机器 token。
 
 Web 应用是 **Next.js 静态导出**产物（shadcn/ui + react-i18next），由
 `dopilot-server` 在同一容器内托管——没有独立的 Web 容器，也没有 Node 生产运行时。

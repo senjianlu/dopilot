@@ -24,7 +24,6 @@ def _settings(workdir: Path) -> Settings:
             workdir=str(workdir),
             server_url="http://server:5000/",
             agent_token="agent-machine-token",
-            advertise_endpoint="agent:6800",
             heartbeat_interval_seconds=1,
         ),
         capabilities=Capabilities(scrapy=True, script=True, docker=False),
@@ -57,7 +56,8 @@ def test_build_request_reflects_settings_and_load(workdir: Path) -> None:
     assert req.capabilities.scrapy is True and req.capabilities.docker is False
     assert req.load == {"running_attempts": 2}
     assert req.detail["scrapyd"]["port"] == 6801
-    assert req.endpoint == "agent:6800"
+    # Phase 2.2.7: the outbound-only agent advertises no network endpoint.
+    assert req.endpoint is None
 
 
 def test_build_request_includes_redis_status(workdir: Path) -> None:

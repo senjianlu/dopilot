@@ -140,11 +140,12 @@ curl -H "Authorization: Bearer $ACCESS_TOKEN" \
 `DOPILOT_ADMIN_API_TOKEN` is the externally supplied static admin API token
 (must be >= 16 characters). It is **admin-only and server-side only**: it is
 never sent to agents and is not a source for the machine token.
-`DOPILOT_AGENT_TOKEN` is the single server-agent machine token (must be >= 16
-characters): it authenticates both directions (server→agent egg deploy,
-agent→server heartbeat), so the **same value** must be set on the server and
-every agent; leave it unset to disable machine auth. The login/stream signing
-key (`token_secret`) is a separate TOML-only value baked into the image.
+`DOPILOT_AGENT_TOKEN` is the agent machine token (must be >= 16 characters): the
+agent presents it on outbound calls to the server (heartbeat + artifact/wheel
+fetch), so the **same value** must be set on the server and every agent; leave it
+unset to disable machine auth. The agent exposes no inbound HTTP API. The
+login/stream signing key (`token_secret`) is a separate TOML-only value baked
+into the image.
 
 Token auth is not transport encryption. For encrypted cross-host traffic put the
 server, agents, and Redis on a private network/VPN or terminate TLS at a reverse
@@ -225,8 +226,8 @@ docker run -d --rm --name dopilot-redis-dev -p 6379:6379 \
 # 4. Run the services (separate terminals).
 # For the agent, copy configs/agent.example.toml to a local file and set:
 #   [agent].server_url = "http://localhost:5000"
-#   [agent].advertise_endpoint = "localhost:6800"
 #   [redis].url = "redis://localhost:6379/0"
+# The agent is outbound-only: it opens no inbound port (no -b/-p flags).
 DOPILOT_CONFIG=configs/server.example.toml dopilot-server
 DOPILOT_CONFIG=configs/agent.local.toml dopilot-agent
 

@@ -155,10 +155,10 @@ GET /api/v1/executions/{id}/logs/stream?token=...
 
 Agent 不使用管理员账号密码。破坏性重构后 agent 是**主动方**：经 Redis Streams consumer group **主动消费** server 投递的命令（run/stop/cleanup_logs），**主动 XADD** 状态事件与日志事件，并**主动 POST heartbeat** 到 server（需配置 `server_url`）。详见 `refactor/00-redis-streams-agent-communication.md`。
 
-机器鉴权（阶段 2.2.3）用**单一** `agent_token` 同时认证 server↔agent 两个方向：
+机器鉴权（阶段 2.2.3）用**单一** `agent_token`；阶段 2.2.7 后 agent 为纯出站，令牌认证 agent→server 调用：
 
 - **agent → server（heartbeat API）**：agent 携带 `agent_token` 调 `POST /api/v1/agents/{agent_id}/heartbeat`。
-- **server → agent（部署 egg 的 HTTP 路径）**：server 携带同一个 `agent_token`。
+- **agent → server（artifact/wheel fetch）**：agent 携带 `agent_token` 拉取运行所需 artifact。
 - **agent ↔ Redis**：Redis 启用 AUTH/ACL，agent/server 各自以 Redis 凭据连接消息总线。
 
 ```toml

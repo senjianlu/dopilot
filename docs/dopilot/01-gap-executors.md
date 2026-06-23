@@ -204,7 +204,7 @@ assert any(results), "None of your SCRAPYD_SERVERS could be connected. "
 1. 无论 task_type 为何，都**需要一个 `task_type` 多态分派层**，且能最大化复用 `TaskExecutor.main` 的现成编排资产（R1-R3）。
 2. 先按 scrapyd 的 `schedule.json` 调用语义**全新实现 ScrapydExecutor**（以上游 scrapydweb 的 scrapyd 下发行为为对照 oracle，验证其输出契约一致）；注意 dopilot 的 ScrapydExecutor **不直连裸 scrapyd**，而是 `server XADD run 命令 → agent 消费 → 本机 scrapyd`，agent 内部再调 scrapyd `schedule.json`/`addversion.json`。
 3. 实时日志（B-1）由 **agent 经 Redis log 流推送、server 消费落盘** 的链路承载：agent 主动 XADD `dopilot:server:logs`（base64 字节、带逻辑 byte offset）→ server log consumer 按 offset 串行追加写 `/server-data/logs` 正文 + PG 索引（offset gap → 标 `partial` 并插 gap marker，黏性）、经 server→web SSE 推前端，**第一版完全不用 WebSocket**（scrapy 用 scrapyd job.log；脚本阶段用 stdout/stderr 流）。详见 03-gap-realtime-logs。
-4. egg 部署 **第一版仅支持上传已构建 egg**：用户上传 → server → 经 agent（egg 部署仍可走 agent 本地通道）→ agent 调本机 scrapyd `/addversion.json`，不做本地/源码/Git/CI 构建。
+4. egg 部署 **第一版仅支持上传已构建 egg**：用户上传 → server 存为 artifact → agent 执行 Redis `run` 命令时从 server 拉取 egg（`ScrapyArtifactCache`，阶段 2.2.7 起 agent 主动拉取、不再有 server→agent HTTP 转发）→ agent 调本机 scrapyd `/addversion.json`，不做本地/源码/Git/CI 构建。
 5. **务必先加 `Task.task_type` 列并放宽 `project/version/spider/jobid` 的 nullable**，否则三类对象无法共表。
 
 ### 6.2 执行器抽象（方案 A 接口设想）
@@ -272,7 +272,7 @@ executor.run()                                     # 执行编排（遍历节点
                                   │   ├─ scrapy → 本机 scrapyd（agent 子进程拉起，仅听内部端口如 6801）→ tail job.log │
                                   │   ├─ docker → docker SDK                                   │
                                   │   └─ script → subprocess（stdout/stderr）                  │
-                                  │  /health 仅作容器本地 healthcheck（非 server 发现/健康来源）│
+                                  │  容器健康检查=本地 exec(dopilot-agent-healthcheck；2.2.7 无 /health 端点)│
                                   │  attempt_id 执行幂等 + 状态文件两阶段 CAS(reserved/started) │
                                   └────────────────────────────────────────────────────────┘
 ```
@@ -290,14 +290,14 @@ executor.run()                                     # 执行编排（遍历节点
 ① 抽象接口 (apps/server/dopilot_server/executors/base.py：BaseExecutor + EXECUTOR_REGISTRY，
    run_on_node=XADD run / stop=XADD stop / get_status=消费 agent-events)
    + dopilot-agent 骨架 (apps/agent/dopilot_agent/redis/：command consumer / status publisher / log publisher /
-     heartbeat worker / event outbox / attempt lock / state CAS；/health 仅作容器本地 healthcheck)
+     heartbeat worker / event outbox / attempt lock / state CAS；容器健康检查=本地 exec dopilot-agent-healthcheck，2.2.7 无 /health 端点)
         ↓
 ①′ heartbeat 链路：server heartbeat API (POST /api/v1/agents/{agent_id}/heartbeat) + agent heartbeat worker；
    node selection 改为基于 heartbeat（healthy = now - nodes.last_seen_at <= heartbeat_timeout_seconds）
         ↓
 ② command outbox + producer + dispatcher (server apps/server/dopilot_server/redis/) + agent command consumer 接入；
    ScrapydExecutor (server XADD run → agent 调本机 scrapyd schedule.json；agent 子进程拉起 scrapyd；
-   egg 仅上传部署→本机 scrapyd /addversion.json。以 scrapydweb 行为为对照 oracle)
+   egg 由 agent 执行 run 命令时从 server 拉取(ScrapyArtifactCache)→本机 scrapyd /addversion.json。以 scrapydweb 行为为对照 oracle)
         ↓
 ③ Task 模型 (apps/server/dopilot_server/models/) 自带 task_type/node_strategy + 三类对象字段
    + PostgreSQL + SQLAlchemy + 裸 Alembic 迁移 (apps/server/migrations/，0003+：command_outbox /
@@ -326,7 +326,7 @@ executor.run()                                     # 执行编排（遍历节点
 | dopilot 新建文件 | 要实现的行为 + 行为参考（上游 scrapydweb） |
 |------|---------|
 | `apps/server/dopilot_server/executors/base.py` | 定义 `BaseExecutor` 抽象基类（`run_on_node`=经 command outbox + dispatcher XADD `run` 命令；`stop`=XADD `stop` 命令（带 intent）；`get_status`=由 server event consumer 消费 `agent-events` 更新，**非轮询、非 server→agent HTTP**）与 `EXECUTOR_REGISTRY`（`task_type → Executor`），供 scheduler 回调按 `task_type` 分派（缝①）。**日志不在 Executor 接口上**——为 agent XADD `logs` 流 + server 消费落盘（见 03）|
-| `apps/server/dopilot_server/executors/scrapyd.py` | `ScrapydExecutor`：经 Redis 命令流 → dopilot-agent 调**本机** scrapyd（server 不直连裸 scrapyd）。`run_on_node` → XADD `run`(task_type=scrapy) 命令，agent 消费后调本机 scrapyd `schedule.json`；egg 仅上传部署，经 agent 调本机 scrapyd `addversion.json`。行为参考：`schedule_task`（`execute_task.py:75-104`）+ `ScheduleTaskView`（`schedule.py:617`）的 `schedule.json` 下发语义，作对照 oracle 验证输出契约一致 |
+| `apps/server/dopilot_server/executors/scrapyd.py` | `ScrapydExecutor`：经 Redis 命令流 → dopilot-agent 调**本机** scrapyd（server 不直连裸 scrapyd）。`run_on_node` → XADD `run`(task_type=scrapy) 命令，agent 消费后调本机 scrapyd `schedule.json`；egg 由 agent 执行 `run` 命令时从 server 拉取（`ScrapyArtifactCache`，阶段 2.2.7 起 agent 主动拉取、无 server→agent HTTP）后调本机 scrapyd `addversion.json`。行为参考：`schedule_task`（`execute_task.py:75-104`）+ `ScheduleTaskView`（`schedule.py:617`）的 `schedule.json` 下发语义，作对照 oracle 验证输出契约一致 |
 | `apps/server/dopilot_server/executors/docker.py` | `DockerExecutor`：经 Redis 命令流 → dopilot-agent 起/停常驻容器（**docker SDK 调用归 agent，server 不直连各节点 docker daemon**）；容器健康 / 退出码由 agent 采集并主动 XADD `agent-events`、server 消费更新（非轮询）；事件携带 `status/remote_job_id/exit_code` 以复用结果记录（行为参考：`db_insert_task_job_result` `execute_task.py:106-122`）。日志经 agent XADD `logs` 流（非 `docker logs --follow` 直连）|
 | `apps/server/dopilot_server/executors/script.py` | `ScriptExecutor`：经 Redis 命令流 → dopilot-agent 跑 `python3` 脚本（subprocess 在 agent 侧；行为参考：`sub_process.py` 的 `Popen+prctl(PR_SET_PDEATHSIG)+atexit` 子进程生命周期范式 R9），捕获退出码经 `agent-events` 上报；stdout/stderr 经 agent XADD `logs` 流（stream=stdout/stderr）|
 | `apps/server/dopilot_server/scheduler/` | 统一调度回调：读出 task 后按 `task_type` 分派 Executor，执行编排（遍历节点 / 记结果 / 失败延迟 3 秒重试一次）。行为参考：`TaskExecutor.main`（`execute_task.py:42-61`）编排骨架、`execute_task(task_id)`（`execute_task.py:150-172`）作为 APScheduler 统一回调与天然分派单点 |
@@ -340,7 +340,7 @@ executor.run()                                     # 执行编排（遍历节点
 | `packages/protocol/dopilot_protocol/streams.py` | 新增 server↔agent Redis Streams 共享消息 schema：`AgentCommand`/`AgentCommandType`、`AgentEvent`/`AgentEventType`、`AgentLogEvent`、`AgentHeartbeatRequest`/`AgentHeartbeatResponse`（`capabilities` 复用既有 `CapabilitySet`）。既有 `AgentRunRequest`/`AgentStatusResponse`/`TailRequest`/`TailResponse` 标 **legacy**（HTTP server→agent 旧主路径契约，不再代表当前协议）。详见 refactor/00 §代码改动范围 |
 | `apps/server/dopilot_server/redis/`（`client.py`/`streams.py`/`commands.py`/`consumers.py`） | server 侧 Redis 基础设施 + 服务：command producer/outbox/dispatcher（写 `dopilot:agent:{agent_id}:commands`）、event consumer（消费 `dopilot:server:agent-events` 更新 execution/attempt、terminal rollup、lost 软覆盖）、log consumer（消费 `dopilot:server:logs` 按 offset 落盘 + 更新 `execution_log_files`）、event dedupe store、reconcile loop（heartbeat 超时/事件停滞判 lost/stalled，不再轮询 agent HTTP status）。详见 refactor/00 |
 | `apps/server/dopilot_server/api/v1/`（heartbeat） | agent 健康检查入口：`POST /api/v1/agents/{agent_id}/heartbeat`，接收 agent 主动汇报（version/capabilities/load/detail/reported_at）并写 `nodes.last_seen_at`；node selection 据此判健康。**取代 server 轮询 agent `/health`**；鉴权用 `agent_token`。详见 refactor/00 §健康检查 |
-| `apps/agent/dopilot_agent/redis/`（`client.py`/`commands.py`/`events.py`/`logs.py`） | agent 侧 Redis worker：command consumer（consumer group 消费命令 + pending 恢复 + `attempt_id` 幂等 + 状态文件两阶段 CAS reserved/started）、status publisher（XADD `agent-events`）、log publisher（tail 本地日志 XADD `logs`）、heartbeat worker（周期 POST server heartbeat）、event outbox（状态事件 at-least-once）、attempt lock。agent `/health` 降级为容器本地 healthcheck。新增 agent 配置段 `[redis]`（`url`/`command_block_ms`/`pending_idle_ms`/`event_outbox_dir`）与 `[agent]`（`server_url`/`heartbeat_interval_seconds`/`agent_token`）。详见 refactor/00 |
+| `apps/agent/dopilot_agent/redis/`（`client.py`/`commands.py`/`events.py`/`logs.py`） | agent 侧 Redis worker：command consumer（consumer group 消费命令 + pending 恢复 + `attempt_id` 幂等 + 状态文件两阶段 CAS reserved/started）、status publisher（XADD `agent-events`）、log publisher（tail 本地日志 XADD `logs`）、heartbeat worker（周期 POST server heartbeat）、event outbox（状态事件 at-least-once）、attempt lock。agent 无 `/health` 端点（阶段 2.2.7 纯出站）；容器健康检查改用本地 exec `dopilot-agent-healthcheck`。新增 agent 配置段 `[redis]`（`url`/`command_block_ms`/`pending_idle_ms`/`event_outbox_dir`）与 `[agent]`（`server_url`/`heartbeat_interval_seconds`/`agent_token`）。详见 refactor/00 |
 
 ---
 

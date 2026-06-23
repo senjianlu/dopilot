@@ -1,8 +1,8 @@
 """Agent settings models (Pydantic v2).
 
 These mirror the agent-side TOML config. The agent never connects to a
-database; it only knows about itself (id/host/port/workdir), its single
-server<->agent token, and which capabilities it advertises.
+database; it only knows about itself (id/workdir), where to reach the server,
+its single server<->agent token, and which capabilities it advertises.
 """
 
 from __future__ import annotations
@@ -11,29 +11,24 @@ from pydantic import BaseModel, Field
 
 
 class AgentSettings(BaseModel):
-    """Identity and HTTP bind settings for this agent.
+    """Identity and outbound-contact settings for this agent.
 
-    Phase 1.5 adds the agent -> server contact details: ``server_url`` (where the
-    agent POSTs heartbeats) and ``heartbeat_interval_seconds``.
+    The agent is **outbound-only** (phase 2.2.7): it opens no inbound HTTP
+    listener and binds no port. ``server_url`` is the server HTTP base URL the
+    agent uses for heartbeat and artifact/wheel fetch; ``heartbeat_interval_seconds``
+    paces the heartbeat loop.
 
-    Phase 2.2.3 collapses the old split machine tokens (``server_shared_token``
-    agent -> server + ``[auth].shared_token`` server -> agent) into a single
-    ``agent_token`` shared by both directions: the agent presents it on
-    heartbeat / artifact fetches, and requires it on the inbound egg-deploy path.
-    Machine auth is ON iff ``agent_token`` is non-empty.
+    Phase 2.2.3 collapsed the old split machine tokens into a single
+    ``agent_token``. After phase 2.2.7 it authenticates only the agent -> server
+    direction (heartbeat + artifact/wheel fetch); there is no server -> agent
+    HTTP path left to guard. Machine auth is ON iff ``agent_token`` is non-empty.
     """
 
     agent_id: str
-    host: str = "0.0.0.0"
-    port: int = 6800
     workdir: str = "/agent-data"
     server_url: str = ""
     heartbeat_interval_seconds: int = 10
     agent_token: str = ""
-    # The server-reachable base endpoint this agent advertises in its heartbeat
-    # (e.g. "agent:6800" in compose). Used by the surviving egg-deploy HTTP path;
-    # empty => not advertised (the server keeps any previously-known endpoint).
-    advertise_endpoint: str = ""
 
     @property
     def machine_auth_enabled(self) -> bool:

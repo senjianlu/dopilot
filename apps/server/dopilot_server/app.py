@@ -6,8 +6,10 @@ enables CORS for the Next dev origin,
 registers the global :class:`ApiError` -> error-envelope handler, attaches the
 in-memory SSE :class:`SubscriptionManager`, and installs a lifespan that builds
 the async engine/session factory plus the phase-1.5 Redis runtime (command
-dispatcher + event/log consumers + heartbeat/event-stall reconcile loop, and the
-slim egg-deploy HTTP client). The app NEVER creates tables (Alembic owns it).
+dispatcher + event/log consumers + heartbeat/event-stall reconcile loop). The
+server reaches agents only over Redis + agent-initiated heartbeats; there is no
+server -> agent HTTP path (phase 2.2.7). The app NEVER creates tables (Alembic
+owns it).
 
 Entrypoints:
 - console script ``dopilot-server`` -> :func:`run`
@@ -24,7 +26,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -32,7 +33,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from .agent_token import ensure_runtime_agent_token
 from .api.v1.router import router as api_v1_router
-from .clients.agent import DEFAULT_TIMEOUT, AgentClient
 from .config.loader import DEFAULT_CONFIG_PATH, get_settings, load_settings
 from .config.settings import Settings
 from .db.engine import dispose_engines, get_session, get_sessionmaker
@@ -96,10 +96,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     When ``settings`` is injected, it is ALSO wired into the ``get_settings``
     dependency (phase 2.2.4). Without this, FastAPI dependencies that call
     ``Depends(get_settings)`` (e.g. heartbeat auth) would read the cached loader
-    settings — which lacks the runtime-generated agent token — while
-    ``AgentClient`` uses the mutated object, leaving heartbeat auth off while
-    egg-deploy auth is on. Tests set their own ``get_settings`` override after
-    ``create_app`` (it wins over this one).
+    settings — which lacks the runtime-generated agent token — instead of the
+    mutated runtime object, leaving heartbeat auth off. Tests set their own
+    ``get_settings`` override after ``create_app`` (it wins over this one).
     """
 
     @asynccontextmanager
@@ -118,7 +117,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         owns_runtime = get_session not in app.dependency_overrides
         redis_client = None
         bg_engine = None
-        egg_http: httpx.AsyncClient | None = None
         dispatcher: CommandDispatcher | None = None
         event_consumer: EventConsumer | None = None
         log_consumer: LogConsumer | None = None
@@ -137,12 +135,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 active.database.url, pool_pre_ping=True, future=True
             )
             bg_maker = async_sessionmaker(bind=bg_engine, expire_on_commit=False)
-
-            # Surviving server->agent HTTP path: egg deploy only.
-            egg_http = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)
-            app.state.agent_client = AgentClient(
-                egg_http, active.agents.agent_token
-            )
 
             redis_client = build_redis(active.redis.url)
             producer = CommandProducer(redis_client, active.redis)
@@ -182,8 +174,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         await worker.stop()
                 if redis_client is not None:
                     await redis_client.aclose()
-                if egg_http is not None:
-                    await egg_http.aclose()
                 if bg_engine is not None:
                     await bg_engine.dispose()
                 app.dependency_overrides.pop(get_session, None)
@@ -315,9 +305,9 @@ def _serve() -> None:
     # Phase 2.2.4: resolve the single server<->agent token at the runtime
     # boundary (load_settings stays pure). A configured token wins; otherwise a
     # token is read-or-generated under server.data_dir and applied to
-    # settings.agents.agent_token BEFORE create_app, so both the outbound
-    # AgentClient (lifespan) and inbound heartbeat auth (Depends(get_settings),
-    # wired by create_app) see the same value.
+    # settings.agents.agent_token BEFORE create_app, so inbound heartbeat auth
+    # (Depends(get_settings), wired by create_app) sees the same value the agent
+    # presents (the agent uses it for heartbeat + artifact/wheel fetch).
     token_result = ensure_runtime_agent_token(settings)
     if token_result.is_generated_path:
         # Log a concise join hint once, only for the persisted generated-token

@@ -385,8 +385,9 @@ require_aof = true
 heartbeat_timeout_seconds = 30
 stalled_attempt_seconds = 300
 lost_after_stalled_seconds = 900
-# 阶段 2.2.3：单一机器令牌，同时认证 server↔agent 两个方向；与每个 agent
-# [agent].agent_token 同值。admin_api_token 仅管理员、绝不下发给 agent。
+# 阶段 2.2.3：单一机器令牌；阶段 2.2.7 后用于 agent→server 出站调用
+#（heartbeat + artifact/wheel 拉取），与每个 agent [agent].agent_token 同值。
+# admin_api_token 仅管理员、绝不下发给 agent。
 agent_token = "change-me-agent-token"
 
 [logs]
@@ -406,8 +407,8 @@ event_outbox_dir = "/agent-data/outbox"
 agent_id = "agent-01"
 server_url = "http://server:5000"
 heartbeat_interval_seconds = 10
-# 阶段 2.2.3：单一机器令牌，同时认证 server↔agent 两个方向；与 server
-# [agents].agent_token 同值（原拆分的 server_shared_token 已删除）。
+# 阶段 2.2.3：单一机器令牌；阶段 2.2.7 后用于 agent→server 出站调用，
+# 与 server [agents].agent_token 同值（原拆分的 server_shared_token 已删除）。
 agent_token = "change-me-agent-token"
 ```
 
@@ -515,7 +516,7 @@ apps/agent/dopilot_agent/redis/
 - agent `/status` 作为 server 状态来源。
 - agent `/logs/tail` 作为 server 日志来源。
 
-agent `/health` 可保留为容器本地 healthcheck，但不再作为 server 节点发现和健康判断来源。
+agent `/health` 在阶段1.5 降为容器本地 healthcheck（不再作为 server 节点发现/健康来源）。**阶段2.2.7 起 agent 为纯出站守护进程：`/health` 端点与 egg 部署端点一并删除，agent 不再启动 uvicorn、不监听任何端口（`6800` 移除）。** Scrapy egg 改由 agent 在执行 Redis `run` 命令时从 server 拉取（`ScrapyArtifactCache`）后部署到本机 scrapyd；容器健康检查改用本地 exec（`dopilot-agent-healthcheck`，加载配置 + 校验本机 scrapyd `daemonstatus.json`）。机器令牌 `agent_token` 仅认证 agent→server 单向（heartbeat + artifact/wheel 拉取），不存在 server→agent HTTP 方向。
 
 ## 迁移步骤
 

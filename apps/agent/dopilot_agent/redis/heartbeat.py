@@ -1,10 +1,14 @@
 """Agent heartbeat worker (phase 1.5).
 
 Periodically POSTs ``/api/v1/agents/{agent_id}/heartbeat`` to the server with
-the agent's liveness, capabilities, load, and advertised endpoint. This is the
-agent-initiated health signal that replaces the server polling agent ``/health``.
+the agent's liveness, capabilities, and load. This is the agent-initiated health
+signal (server-side ``nodes.last_seen_at``); there is no server -> agent probe.
 Heartbeat goes over HTTP (NOT Redis) and carries the dedicated agent -> server
 token.
+
+Phase 2.2.7: the agent is outbound-only and advertises **no** network endpoint
+(``endpoint=None``). The server upserts the node with the fallback identity
+``agent://{agent_id}``, so the agent is never expected to be reachable inbound.
 """
 
 from __future__ import annotations
@@ -69,7 +73,9 @@ class HeartbeatWorker:
             capabilities=caps,
             load={"running_attempts": running},
             detail=detail,
-            endpoint=s.agent.advertise_endpoint or None,
+            # Outbound-only agent (phase 2.2.7): advertise no network endpoint;
+            # the server falls back to the ``agent://{agent_id}`` node identity.
+            endpoint=None,
             reported_at=datetime.now(UTC).isoformat(),
         )
 
