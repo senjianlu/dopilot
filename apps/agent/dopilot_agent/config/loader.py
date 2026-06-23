@@ -57,6 +57,9 @@ def load_settings(
     passes the baked agent default so the image runs without an explicit
     ``DOPILOT_CONFIG``). Environment overrides applied after parsing:
     ``AGENT_ID`` -> ``[agent].agent_id``, ``AGENT_WORKDIR`` -> ``[agent].workdir``,
+    ``DOPILOT_SERVER_URL`` -> ``[agent].server_url`` (the server HTTP base URL the
+    agent uses for heartbeat and artifact/wheel fetch; needed by agent-only / K3s
+    deployments where the baked ``http://server:5000`` does not resolve),
     ``DOPILOT_REDIS_URL`` -> ``[redis].url``, ``DOPILOT_AGENT_TOKEN`` ->
     ``[agent].agent_token`` (the single server<->agent machine token).
 
@@ -88,6 +91,12 @@ def load_settings(
     env_workdir = os.environ.get("AGENT_WORKDIR")
     if env_workdir:
         agent_section["workdir"] = env_workdir
+    # Server HTTP base URL (heartbeat + artifact/wheel fetch): env wins over TOML.
+    # Agent-only / K3s deployments set this because the baked compose default
+    # ``http://server:5000`` only resolves inside the all-in-one compose network.
+    env_server_url = os.environ.get("DOPILOT_SERVER_URL")
+    if env_server_url:
+        agent_section["server_url"] = env_server_url
     env_redis_url = os.environ.get("DOPILOT_REDIS_URL")
     if env_redis_url:
         redis_section["url"] = env_redis_url

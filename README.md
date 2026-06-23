@@ -166,10 +166,18 @@ docker compose -f docker-compose.server.yml up -d
 docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print          # DOPILOT_AGENT_TOKEN=<token> + hint
 docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print --quiet  # bare token only
 
-# On each agent host: join with that token (required, no dev fallback) and the
-# server's Redis. Agents never receive DOPILOT_ADMIN_API_TOKEN.
-DOPILOT_AGENT_TOKEN=<token-from-server> REDIS_PASSWORD=<server-redis-pass> \
-  REDIS_HOST=<server-host> \
+# On each agent host: join with that token (required, no dev fallback), the
+# server's HTTP base URL, and the server's Redis. DOPILOT_SERVER_URL is an
+# agent-side env var — the server HTTP base URL the agent uses for heartbeat and
+# artifact/wheel fetch; it is REQUIRED here because the baked http://server:5000
+# only resolves inside the all-in-one compose network (examples:
+# http://<server-ip-or-dns>:5000,
+# http://dopilot-server.dopilot.svc.cluster.local:5000,
+# https://dopilot.example.com). Token auth is not transport encryption, so
+# cross-host HTTP still needs a private network / VPN / TLS / reverse proxy.
+# Agents never receive DOPILOT_ADMIN_API_TOKEN.
+DOPILOT_AGENT_TOKEN=<token-from-server> DOPILOT_SERVER_URL=http://<server-host>:5000 \
+  REDIS_PASSWORD=<server-redis-pass> REDIS_HOST=<server-host> \
   docker compose -f docker-compose.agent.yml up -d
 ```
 

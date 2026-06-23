@@ -10,6 +10,14 @@
 #                         the server's token. Retrieve it on the server host with:
 #                           docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print
 #                         A non-empty value must be >= 16 characters.
+#   DOPILOT_SERVER_URL    The server's HTTP base URL the agent uses for heartbeat
+#                         and artifact/wheel fetch. REQUIRED here because the baked
+#                         default http://server:5000 only resolves inside the
+#                         all-in-one compose network, not from a separate host/K3s.
+#                         Examples:
+#                           http://<server-ip-or-dns>:5000
+#                           http://dopilot-server.dopilot.svc.cluster.local:5000
+#                           https://dopilot.example.com
 #   REDIS_PASSWORD        Redis AUTH password of the server's Redis (used to build
 #                         the Redis URL below), OR set DOPILOT_REDIS_URL directly.
 #
@@ -25,8 +33,9 @@
 #
 # Deploy:
 #   cd deploy/docker
-#   DOPILOT_AGENT_TOKEN=<token-from-server> REDIS_PASSWORD=<server-redis-pass> \
-#     REDIS_HOST=<server-host> docker compose -f docker-compose.agent.yml up -d
+#   DOPILOT_AGENT_TOKEN=<token-from-server> DOPILOT_SERVER_URL=http://<server-host>:5000 \
+#     REDIS_PASSWORD=<server-redis-pass> REDIS_HOST=<server-host> \
+#     docker compose -f docker-compose.agent.yml up -d
 #
 # Agents NEVER receive DOPILOT_ADMIN_API_TOKEN (admin-only) and this file sets no
 # DOPILOT_CONFIG (the role default /app/configs/agent.toml is baked in).
@@ -50,6 +59,11 @@ services:
       # The single server<->agent machine token. REQUIRED — no dev fallback. Must
       # match the server's token; agents never get DOPILOT_ADMIN_API_TOKEN.
       DOPILOT_AGENT_TOKEN: ${DOPILOT_AGENT_TOKEN:?set DOPILOT_AGENT_TOKEN to the server's machine token (docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print)}
+      # The server's HTTP base URL for heartbeat + artifact/wheel fetch. REQUIRED —
+      # the baked default http://server:5000 only resolves inside the all-in-one
+      # compose network, so an agent-only/K3s join must point at a reachable URL,
+      # e.g. http://<server-ip-or-dns>:5000 or https://dopilot.example.com.
+      DOPILOT_SERVER_URL: ${DOPILOT_SERVER_URL:?set DOPILOT_SERVER_URL to the server's HTTP base URL, e.g. http://<server-ip-or-dns>:5000}
     volumes:
       - dopilot-agent-remote1-data:/agent-data
     healthcheck:
