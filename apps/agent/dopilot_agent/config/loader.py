@@ -2,7 +2,7 @@
 
 Loads settings from the path given by ``DOPILOT_CONFIG`` (or an explicit path).
 Supports a small set of environment overrides used by container deployments.
-``get_settings()`` is a cached singleton dependency that tests can override.
+``get_settings()`` is a cached singleton helper retained for direct callers.
 """
 
 from __future__ import annotations
@@ -129,9 +129,5 @@ def load_settings(
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Singleton settings dependency.
-
-    Tests override this via FastAPI ``app.dependency_overrides`` so they don't
-    need a real config file on disk.
-    """
+    """Singleton settings helper for direct library callers."""
     return load_settings()

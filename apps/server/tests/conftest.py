@@ -22,10 +22,9 @@ import dopilot_server.models  # noqa: F401 - register tables on Base.metadata
 import fakeredis.aioredis as fakeaioredis
 import pytest
 import pytest_asyncio
-from dopilot_protocol import EggDeployResponse, ExecutionRunRequest
+from dopilot_protocol import ExecutionRunRequest
 from dopilot_server.api.v1.tasks import get_dispatcher, get_request_sessionmaker
 from dopilot_server.app import create_app
-from dopilot_server.clients.agent import get_agent_client
 from dopilot_server.config.loader import get_settings
 from dopilot_server.config.settings import RedisSettings, Settings
 from dopilot_server.db.base import Base
@@ -76,48 +75,6 @@ def make_settings(
     if artifacts_root is not None:
         data["artifacts"] = {"root_dir": artifacts_root}
     return Settings.model_validate(data)
-
-
-# ---------------------------------------------------------------------------
-# fake agent API (duck-types AgentClient; no real agent needed)
-# ---------------------------------------------------------------------------
-
-
-class FakeAgentClient:
-    """Programmable in-process fake of the agent egg-deploy surface.
-
-    Phase 1.5: the server->agent run/stop/status/tail/cleanup HTTP paths are
-    gone; only egg deploy remains, so this fake only models ``deploy_egg``.
-    """
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, Any]] = []
-        self.raises: dict[str, Exception] = {}
-        self.deploy_result: EggDeployResponse | None = None
-
-    def _maybe_raise(self, method: str) -> None:
-        exc = self.raises.get(method)
-        if exc is not None:
-            raise exc
-
-    async def deploy_egg(
-        self,
-        endpoint: str,
-        project: str,
-        version: str,
-        filename: str,
-        egg_bytes: bytes,
-    ) -> EggDeployResponse:
-        self.calls.append(
-            ("deploy_egg", (project, version, filename, len(egg_bytes)))
-        )
-        self._maybe_raise("deploy_egg")
-        if self.deploy_result is not None:
-            return self.deploy_result
-        return EggDeployResponse(project=project, version=version, spiders=["phase1"])
-
-    def call_names(self) -> list[str]:
-        return [name for name, _ in self.calls]
 
 
 # ---------------------------------------------------------------------------
@@ -270,11 +227,6 @@ def exec_settings_auth_on(logs_root: str, artifacts_root: str) -> Settings:
     return make_settings(
         auth_on=True, logs_root=logs_root, artifacts_root=artifacts_root
     )
-
-
-@pytest.fixture
-def fake_agent() -> FakeAgentClient:
-    return FakeAgentClient()
 
 
 @pytest.fixture
@@ -463,7 +415,6 @@ def _build_client(app_settings: Settings, session: AsyncSession) -> AsyncClient:
 def _build_exec_client(
     app_settings: Settings,
     session: AsyncSession,
-    agent: FakeAgentClient,
     subs: SubscriptionManager,
     sessionmaker: async_sessionmaker[AsyncSession],
     redis: Any,
@@ -479,7 +430,6 @@ def _build_exec_client(
     # SSE preflight uses its own short-lived session from this sessionmaker
     # (bound to the same StaticPool engine, so it sees seeded data).
     app.dependency_overrides[get_request_sessionmaker] = lambda: sessionmaker
-    app.dependency_overrides[get_agent_client] = lambda: agent
     app.dependency_overrides[get_subscriptions] = lambda: subs
     # Phase 1.5: the run/cancel path dispatches over the Redis command stream.
     producer = CommandProducer(redis, RedisSettings())
@@ -517,14 +467,13 @@ def exec_redis(fake_redis) -> Any:
 async def exec_client(
     exec_settings: Settings,
     db_session: AsyncSession,
-    fake_agent: FakeAgentClient,
     subscriptions: SubscriptionManager,
     test_sessionmaker: async_sessionmaker[AsyncSession],
     exec_redis: Any,
 ) -> AsyncIterator[AsyncClient]:
     """Auth-OFF client wired to the Redis command stream + a temp log root."""
     async with _build_exec_client(
-        exec_settings, db_session, fake_agent, subscriptions,
+        exec_settings, db_session, subscriptions,
         test_sessionmaker, exec_redis,
     ) as ac:
         yield ac
@@ -534,7 +483,6 @@ async def exec_client(
 async def exec_client_auth_on(
     exec_settings_auth_on: Settings,
     db_session: AsyncSession,
-    fake_agent: FakeAgentClient,
     subscriptions: SubscriptionManager,
     test_sessionmaker: async_sessionmaker[AsyncSession],
     exec_redis: Any,
@@ -543,7 +491,6 @@ async def exec_client_auth_on(
     async with _build_exec_client(
         exec_settings_auth_on,
         db_session,
-        fake_agent,
         subscriptions,
         test_sessionmaker,
         exec_redis,

@@ -8,10 +8,13 @@ Phase 1.5 (``docs/refactor/00-redis-streams-agent-communication.md``) replaces
 the run/status/stop/cleanup main paths with Redis Streams — see
 :mod:`dopilot_protocol.streams`. The types here are retained as **legacy**:
 ``AttemptStatus`` and ``AgentRunRequest`` are still reused (the latter as the
-``run`` command payload shape, the former as the agent-observed status enum);
-``EggDeployResponse`` survives because egg upload stays HTTP ``/addversion.json``.
+``run`` command payload shape, the former as the agent-observed status enum).
 ``AgentRunResponse`` / ``AgentStopResponse`` / ``AgentStatusResponse`` are kept
 as the in-process runner result shapes but no longer represent a live HTTP path.
+
+Phase 2.2.7 removed the agent's inbound egg-deploy HTTP endpoint (eggs are now
+fetched from the server by the agent during Redis command execution), so the old
+``EggDeployResponse`` schema was dropped — it had no remaining producer/consumer.
 
 Naming (phase 2a clean-cut): ``task_id`` is ``Task.id`` and ``execution_id`` is
 the atomic ``Execution.id`` — the same names as the Redis wire and the server
@@ -98,16 +101,4 @@ class AgentStatusResponse(BaseModel):
     remote_job_id: str | None = None
     status: AttemptStatus
     exit_code: int | None = None
-    detail: dict[str, Any] = Field(default_factory=dict)
-
-
-class EggDeployResponse(BaseModel):
-    """agent -> server ``POST /artifacts/scrapy/egg``: scrapyd addversion result.
-
-    ``spiders`` is the spider list scrapyd reports after deploying the egg.
-    """
-
-    project: str
-    version: str
-    spiders: list[str] = Field(default_factory=list)
     detail: dict[str, Any] = Field(default_factory=dict)

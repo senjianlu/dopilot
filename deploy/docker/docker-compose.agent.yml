@@ -47,7 +47,7 @@
 services:
   scrapy-agent-remote-1:
     image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
-    command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
+    command: ["dopilot-agent"]
     init: true
     environment:
       AGENT_ID: ${AGENT_ID:-scrapy-agent-remote-1}
@@ -66,12 +66,12 @@ services:
       DOPILOT_SERVER_URL: ${DOPILOT_SERVER_URL:?set DOPILOT_SERVER_URL to the server's HTTP base URL, e.g. http://<server-ip-or-dns>:5000}
     volumes:
       - dopilot-agent-remote1-data:/agent-data
+    # Outbound-only agent (phase 2.2.7): no inbound HTTP listener, no published
+    # ports. The LOCAL healthcheck loads the agent config and verifies the
+    # container-internal scrapyd answers daemonstatus.json; real liveness is the
+    # agent->server heartbeat (server-side nodes.last_seen_at).
     healthcheck:
-      test:
-        - "CMD"
-        - "python3"
-        - "-c"
-        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:6800/health', timeout=3).status==200 else 1)"
+      test: ["CMD", "dopilot-agent-healthcheck"]
       interval: 5s
       timeout: 5s
       retries: 20

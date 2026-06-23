@@ -20,9 +20,9 @@
 #                     DOPILOT_ADMIN_API_TOKEN. A non-empty value must be >= 16
 #                     characters. It is ADMIN-ONLY: it is NEVER a source for the
 #                     server<->agent machine token.
-#   - [agents].agent_token = the single server<->agent machine token (below). It
-#                     authenticates BOTH directions (server -> agent egg deploy,
-#                     agent -> server heartbeat). No fallback from admin_api_token.
+#   - [agents].agent_token = the agent machine token (below). Agents present it
+#                     on outbound calls to the server (heartbeat + artifact/wheel
+#                     fetch). No fallback from admin_api_token.
 #   - token_secret  = internal HMAC signing key for login access tokens + SSE
 #                     stream tokens. TOML-only, never sent to clients.
 #
@@ -85,9 +85,10 @@ heartbeat_timeout_seconds = 30
 stalled_attempt_seconds = 300
 lost_after_stalled_seconds = 900
 # The single server<->agent machine token (phase 2.2.3). It MUST match the
-# agent's [agent].agent_token and authenticates BOTH directions (server -> agent
-# egg deploy, agent -> server heartbeat). A non-empty value must be >= 16 chars;
-# set via DOPILOT_AGENT_TOKEN or this field.
+# agent's [agent].agent_token. The agent presents it on its outbound calls
+# (agent -> server heartbeat + artifact/wheel fetch) and the server validates
+# them; there is no server -> agent HTTP direction (phase 2.2.7). A non-empty
+# value must be >= 16 chars; set via DOPILOT_AGENT_TOKEN or this field.
 #
 # Phase 2.2.4: leave this EMPTY (and unset DOPILOT_AGENT_TOKEN) to let the server
 # auto-generate + persist a strong token under [server].data_dir on first start
@@ -97,7 +98,10 @@ lost_after_stalled_seconds = 900
 agent_token = "change-me-agent-token"
 
 [nodes]
-agents = ["localhost:6800"]
+# Liveness comes from agent heartbeats, not a configured endpoint list (nodes
+# appear only once an agent heartbeats in), so leave this empty. The agent is
+# outbound-only (phase 2.2.7) — the server never dials an agent endpoint.
+agents = []
 
 [scheduler]
 enabled = true

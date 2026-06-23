@@ -1,25 +1,21 @@
-"""Runtime wiring + FastAPI dependencies for the agent.
+"""Runtime wiring for the agent worker daemon.
 
 The agent holds two long-lived runtime objects: the
 :class:`~dopilot_agent.scrapyd.client.ScrapydClient` (talks to local scrapyd)
 and the :class:`~dopilot_agent.runners.scrapyd.ScrapyRunner` (run/stop/status +
-state). :func:`build_runtime` constructs them from settings and is called in
-``create_app`` so they live on ``app.state`` regardless of whether the lifespan
-ran — important because tests drive the app over httpx ``ASGITransport``, which
-does NOT run the lifespan.
+state). :func:`build_runtime` constructs them — plus the optional managed scrapyd
+subprocess, the artifact/wheel caches, and the heartbeat worker — from settings.
 
-The endpoint dependencies (:func:`get_scrapyd_client`, :func:`get_scrapy_runner`,
-:func:`get_scrapyd_process`) are thin: they read from ``request.app.state``. Tests
-override them via ``app.dependency_overrides`` (mirroring how the server overrides
-``get_session``) to inject a fake-scrapyd-backed client/runner.
+Phase 2.2.7: the agent is outbound-only with no FastAPI app, so there are no
+request-scoped dependencies; :func:`build_runtime` is called directly from
+``run_agent`` (see :mod:`dopilot_agent.main`). The Scrapy runner is driven by the
+Redis command consumer, not by HTTP endpoints.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-
-from fastapi import Request
 
 from . import __version__
 from .artifacts.cache import ScrapyArtifactCache
@@ -36,7 +32,7 @@ from .state.store import StateStore
 
 @dataclass
 class AgentRuntime:
-    """Long-lived runtime objects stored on ``app.state.runtime``."""
+    """Long-lived runtime objects owned by the agent daemon."""
 
     settings: Settings
     process: ScrapydProcess | None
@@ -69,8 +65,8 @@ def build_runtime(settings: Settings) -> AgentRuntime:
     """Construct the agent's runtime objects from settings.
 
     A :class:`ScrapydProcess` is created when ``[scrapyd].start`` is true so the
-    lifespan can start/stop it; the client/runner are always built so the API
-    works under both the real lifespan and the test ASGI transport.
+    daemon can start/stop it; the client/runner are always built so the Redis
+    command consumer can drive local execution.
     """
     workdir = settings.agent.workdir
     base_url = f"http://{settings.scrapyd.host}:{settings.scrapyd.port}"
@@ -108,8 +104,8 @@ def build_runtime(settings: Settings) -> AgentRuntime:
     # The Python-wheel runner needs no server URL (it spawns local shell
     # commands); the cache that fetches the wheel does.
     wheel_runner = PythonWheelRunner(workspace_root=wheel_workspace_dir(workdir))
-    # Heartbeat worker is built only when a server_url is configured; the task
-    # itself is started by the lifespan (not under the test ASGI transport).
+    # Heartbeat worker is built only when a server_url is configured; run_agent
+    # starts/stops the background task.
     heartbeat: HeartbeatWorker | None = None
     if settings.agent.server_url:
         heartbeat = HeartbeatWorker(
@@ -130,35 +126,3 @@ def build_runtime(settings: Settings) -> AgentRuntime:
         wheel_runner=wheel_runner,
         heartbeat=heartbeat,
     )
-
-
-def _runtime(request: Request) -> AgentRuntime:
-    runtime = getattr(request.app.state, "runtime", None)
-    if runtime is None:  # pragma: no cover - create_app always sets this.
-        raise RuntimeError("agent runtime not initialized on app.state")
-    return runtime
-
-
-def get_runtime(request: Request) -> AgentRuntime:
-    """Dependency: the whole runtime (overridable in tests)."""
-    return _runtime(request)
-
-
-def get_scrapyd_client(request: Request) -> ScrapydClient:
-    """Dependency: the scrapyd client (overridable in tests)."""
-    return _runtime(request).client
-
-
-def get_scrapy_runner(request: Request) -> ScrapyRunner:
-    """Dependency: the Scrapy runner (overridable in tests)."""
-    return _runtime(request).runner
-
-
-def get_state_store(request: Request) -> StateStore:
-    """Dependency: the attempt state store (overridable in tests)."""
-    return _runtime(request).store
-
-
-def get_scrapyd_process(request: Request) -> ScrapydProcess | None:
-    """Dependency: the scrapyd subprocess manager (None when not managed)."""
-    return _runtime(request).process

@@ -143,3 +143,11 @@ class ScrapydClient:
     async def listjobs(self, project: str) -> dict[str, Any]:
         """Return scrapyd's pending/running/finished job lists for a project."""
         return await self._get("/listjobs.json", params={"project": project})
+
+    async def daemonstatus(self) -> dict[str, Any]:
+        """Return scrapyd's ``daemonstatus.json`` (raises if unreachable / != ok).
+
+        Used by the agent container healthcheck to verify the local scrapyd the
+        agent manages is answering on its container-internal port.
+        """
+        return await self._get("/daemonstatus.json")

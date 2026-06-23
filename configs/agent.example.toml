@@ -3,20 +3,22 @@
 # Copy to configs/agent.toml and edit, or rely on environment overrides in
 # Docker deployments.
 #
+# The agent is OUTBOUND-ONLY (phase 2.2.7): it consumes Redis commands and POSTs
+# heartbeats to the server. It exposes no inbound HTTP API and binds no port.
+#
 # Single server<->agent token (phase 2.2.3): [agent].agent_token below is the ONE
-# machine secret. It authenticates BOTH directions (server -> agent egg deploy,
-# agent -> server heartbeat) and MUST match the server's [agents].agent_token.
-# Set it via DOPILOT_AGENT_TOKEN or the field; a non-empty value must be >= 16
-# chars; empty keeps machine auth OFF. The agent is NEVER given the admin API
-# token — DOPILOT_ADMIN_API_TOKEN and the old split envs/fields have no effect.
+# machine secret. The agent presents it on its outbound calls (agent -> server
+# heartbeat + artifact/wheel fetch) and it MUST match the server's
+# [agents].agent_token; there is no server -> agent HTTP direction to guard. Set
+# it via DOPILOT_AGENT_TOKEN or the field; a non-empty value must be >= 16 chars;
+# empty keeps machine auth OFF. The agent is NEVER given the admin API token —
+# DOPILOT_ADMIN_API_TOKEN and the old split envs/fields have no effect.
 #
 # Token auth is NOT transport encryption: keep server/agent/Redis on a private
 # network or VPN (or terminate TLS at a proxy) for encrypted cross-host traffic.
 
 [agent]
 agent_id = "scrapy-agent-1"
-host = "0.0.0.0"
-port = 6800
 workdir = "/agent-data"
 # Phase 1.5: the server HTTP base URL the agent uses for heartbeat AND artifact /
 # wheel fetch. The baked "http://server:5000" only resolves inside the all-in-one
@@ -48,10 +50,10 @@ pending_idle_ms = 30000
 event_outbox_dir = "/agent-data/outbox"
 
 # Local scrapyd subprocess the agent owns.
-# host/port are container-internal (NEVER exposed to the host); the server only
-# ever talks to the agent on [agent].port (6800). Data dirs live under
-# {workdir}/scrapyd/{eggs,logs,dbs,items}. Set start = false to point the agent
-# at an externally managed scrapyd instead of spawning a child.
+# host/port are container-internal (NEVER exposed to the host); only the agent
+# (and its local container healthcheck) ever talks to this scrapyd. Data dirs
+# live under {workdir}/scrapyd/{eggs,logs,dbs,items}. Set start = false to point
+# the agent at an externally managed scrapyd instead of spawning a child.
 [scrapyd]
 start = true
 host = "127.0.0.1"

@@ -12,7 +12,6 @@ from .agent import (
     AgentStatusResponse,
     AgentStopResponse,
     AttemptStatus,
-    EggDeployResponse,
 )
 from .common import CapabilitySet, ErrorResponse
 from .execution import (
@@ -73,7 +72,6 @@ __all__ = [
     "AgentRunResponse",
     "AgentStopResponse",
     "AgentStatusResponse",
-    "EggDeployResponse",
     # Redis Streams communication (phase 1.5)
     "AgentCommand",
     "AgentCommandType",

@@ -55,9 +55,9 @@ VERSION="$(date +%s)"          # monotonic-ish egg version for this run
 MARKER_START="phase1 demo spider started"
 MARKER_DONE="phase1 demo spider done"
 
-# Host-facing service URLs (compose publishes these ports).
+# Host-facing service URL. Compose publishes ONLY the server port; since phase
+# 2.2.7 the agent is outbound-only and publishes no HTTP port (no agent 6800).
 SERVER="http://localhost:5000"
-AGENT1="http://localhost:6800"   # only scrapy-agent-1 publishes its HTTP port
 
 # The three agents. agent_id == compose service key (the base compose defines
 # scrapy-agent-1/2/3 symmetrically; the build override only adds `build:`).
@@ -366,11 +366,11 @@ done
 wait_healthy server "${HEALTH_TIMEOUT}"   && pass "server healthy" \
   || { fail "server did not become healthy"; dump_diagnostics "server unhealthy"; exit 1; }
 
-# Direct scrapyd-liveness probe for the one published agent (scrapy-agent-1).
-A1_HEALTH="$(curl -fsS "${AGENT1}/health" || true)"
-[ "$(json_get "${A1_HEALTH}" "detail.scrapyd.running")" = "true" ] \
-  && pass "scrapy-agent-1 /health detail.scrapyd.running == true" \
-  || { fail "scrapy-agent-1 scrapyd not running (got: ${A1_HEALTH})"; dump_diagnostics "scrapyd-1 down"; exit 1; }
+# Scrapyd liveness for each agent is already proven by the container healthcheck
+# (`dopilot-agent-healthcheck` probes the local scrapyd `daemonstatus.json`), which
+# `wait_healthy` waited on above. Phase 2.2.7 made the agent outbound-only with no
+# `/health` HTTP endpoint, so there is no agent-direct probe; server-side liveness
+# is asserted via `/api/v1/health` (nodes.healthy) in Case 2b.
 
 # --- login (web auth ON) ----------------------------------------------------
 step "Authenticate (web auth ON in server.docker.toml)"

@@ -34,12 +34,15 @@
 #                                for the server<->agent machine token. A non-empty
 #                                value must be >= 16 characters.
 #     DOPILOT_AGENT_TOKEN        The single server<->agent machine token
-#                                (phase 2.2.3). It authenticates BOTH directions
-#                                (server -> agent egg deploy, agent -> server
-#                                heartbeat), so the SAME value is injected into the
-#                                server AND every agent. A non-empty value must be
-#                                >= 16 characters; leave unset to disable machine
-#                                auth. Agents never receive DOPILOT_ADMIN_API_TOKEN.
+#                                (phase 2.2.3). The agent presents it on its
+#                                outbound calls (agent -> server heartbeat +
+#                                artifact/wheel fetch); the server validates them
+#                                against the same value, so the SAME token is
+#                                injected into the server AND every agent. There is
+#                                no server -> agent HTTP path (phase 2.2.7). A
+#                                non-empty value must be >= 16 characters; leave
+#                                unset to disable machine auth. Agents never
+#                                receive DOPILOT_ADMIN_API_TOKEN.
 #     REDIS_PASSWORD             Redis AUTH password (used in the redis URL).
 #
 #   The login/SSE signing key (server [auth].token_secret) is TOML-only and is
@@ -65,21 +68,18 @@
 # becomes the distinct `agent://{agent_id}` => three distinct nodes.
 x-agent: &agent
   image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
-  command: ["dopilot-agent", "-b", "0.0.0.0", "-p", "6800"]
+  command: ["dopilot-agent"]
   init: true
   depends_on:
     redis:
       condition: service_healthy
-  # /health is unauthenticated and reports the scrapyd subprocess status under
-  # detail.scrapyd.running. We only gate on HTTP 200 here (service_healthy);
-  # smoke separately asserts detail.scrapyd.running == true. Uses python3 (the
-  # image has no curl) and a short timeout so a hung agent fails fast.
+  # The agent is outbound-only (phase 2.2.7): no inbound HTTP listener. The
+  # healthcheck is a LOCAL exec (dopilot-agent-healthcheck): it loads the agent
+  # config and, since [scrapyd].start=true, verifies the container-internal
+  # scrapyd answers daemonstatus.json. It is only a restart hint — real liveness
+  # is the agent->server heartbeat (server-side nodes.last_seen_at).
   healthcheck:
-    test:
-      - "CMD"
-      - "python3"
-      - "-c"
-      - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:6800/health', timeout=3).status==200 else 1)"
+    test: ["CMD", "dopilot-agent-healthcheck"]
     interval: 5s
     timeout: 5s
     retries: 20
@@ -156,12 +156,9 @@ services:
       DOPILOT_AGENT_TOKEN: ${DOPILOT_AGENT_TOKEN:-change-me-agent-token}
     volumes:
       - dopilot-agent1-data:/agent-data
-    ports:
-      # ONLY scrapy-agent-1 publishes its HTTP API (6800) for smoke/debug. The
-      # internal scrapyd port (6801) is NEVER published to the host (scrapyd has
-      # no auth and must stay container-internal). scrapy-agent-2/3 keep all
-      # ports container-internal.
-      - "6800:6800"
+    # No published ports: the agent is outbound-only (phase 2.2.7) and the
+    # internal scrapyd port (6801) is NEVER published to the host (scrapyd has no
+    # auth and must stay container-internal).
 
   scrapy-agent-2:
     <<: *agent

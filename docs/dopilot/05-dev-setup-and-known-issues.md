@@ -30,7 +30,7 @@ dopilot/                                  # 仓库根 = Docker 构建上下文(o
 │   │   ├── migrations/  tests/  pyproject.toml
 │   ├── agent/                            # worker 执行节点:经 Redis Streams 主动消费命令、主动推状态/日志、主动 POST heartbeat,实际跑 Scrapy/Python/Docker
 │   │   ├── dopilot_agent/
-│   │   │   ├── api/                       # /health 仅容器本地 healthcheck(不再作 server 节点发现/健康来源)
+│   │   │   ├── healthcheck.py               # 容器本地 exec 健康检查(dopilot-agent-healthcheck;阶段2.2.7 起 agent 纯出站、无 api/ 入站面、不监听端口)
 │   │   │   ├── redis/                     # server↔agent Redis Streams 基础设施:client/commands/events/logs(command consumer、event/log publisher、event outbox)
 │   │   │   ├── runners/                   # base.py scrapyd.py script.py docker.py
 │   │   │   ├── logs/  workspace/  heartbeat/  config/  main.py

@@ -1,11 +1,13 @@
 """Server-side resolution + persistence of the single server<->agent token.
 
 Phase 2.2.4: reduce server-first deployment friction. The single
-``[agents].agent_token`` (phase 2.2.3) authenticates BOTH directions
-(server -> agent egg deploy, agent -> server heartbeat). When an operator does
-NOT supply one, the **server** can generate and persist a strong token under its
-data volume and reuse it on every restart; operators retrieve it with
-``dopilot-server agent-token print``.
+``[agents].agent_token`` (phase 2.2.3) is the secret the agent presents on its
+outbound calls (agent -> server heartbeat + artifact/wheel fetch); the server
+validates them against it. The agent is outbound-only (phase 2.2.7) — there is no
+server -> agent HTTP direction. When an operator does NOT supply a token, the
+**server** can generate and persist a strong one under its data volume and reuse
+it on every restart; operators retrieve it with ``dopilot-server agent-token
+print``.
 
 This is a RUNTIME concern, not a config-load concern: :func:`loader.load_settings`
 stays pure (no file creation, no token generation). Generation/persistence lives

@@ -95,13 +95,14 @@ class RedisSettings(BaseModel):
 class AgentsSettings(BaseModel):
     """``[agents]`` — agent-fleet behavior + the single server<->agent token.
 
-    ``agent_token`` (phase 2.2.3) is the ONE machine secret. It authenticates
-    BOTH directions: server -> agent (the surviving egg-deploy HTTP path) and
-    agent -> server (heartbeat / artifact fetches). It replaced the old split
-    ``[agent_auth].shared_token`` + ``[agents].server_shared_token`` pair; there
-    is no fallback from the admin API token. Machine auth is ON iff
-    ``agent_token`` is set; this is distinct from Web admin auth, which is
-    fail-closed (see the module docstring).
+    ``agent_token`` (phase 2.2.3) is the ONE machine secret. The agent presents
+    it on its outbound calls — agent -> server heartbeat and artifact/wheel
+    fetches — and the server validates them against this value. After phase 2.2.7
+    the agent is outbound-only, so there is no server -> agent HTTP direction to
+    authenticate. It replaced the old split ``[agent_auth].shared_token`` +
+    ``[agents].server_shared_token`` pair; there is no fallback from the admin API
+    token. Machine auth is ON iff ``agent_token`` is set; this is distinct from
+    Web admin auth, which is fail-closed (see the module docstring).
 
     Phase 2.2.4 relaxed the strict "config-present-or-off" rule at the SERVER
     runtime boundary only: when no ``agent_token`` is configured, the server

@@ -1,9 +1,10 @@
 """Agent -> server auth dependency (phase 1.5; single token in phase 2.2.3).
 
-Authenticates agent-initiated calls (heartbeat) with the single server<->agent
-``[agents].agent_token``. This is a SEPARATE secret from the web admin token;
-it is the SAME secret used by the server -> agent egg-deploy path (the split
-tokens were collapsed into one in phase 2.2.3).
+Authenticates agent-initiated calls (heartbeat + artifact/wheel fetch) with the
+single server<->agent ``[agents].agent_token``. This is a SEPARATE secret from
+the web admin token. After phase 2.2.7 the agent is outbound-only, so this token
+guards only the agent -> server direction (there is no server -> agent HTTP path;
+the split tokens were collapsed into one in phase 2.2.3).
 
 Follows the repo's "config-present-or-off" idiom: when ``agent_token`` is unset,
 machine auth is OFF (dev convenience); when set, a matching Bearer token is

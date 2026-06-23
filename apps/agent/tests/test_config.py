@@ -10,8 +10,6 @@ from dopilot_agent.config.loader import ConfigError, load_settings
 TOML = """\
 [agent]
 agent_id = "from-toml"
-host = "0.0.0.0"
-port = 6810
 workdir = "/agent-data"
 server_url = "http://server:5000"
 heartbeat_interval_seconds = 7

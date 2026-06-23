@@ -1,8 +1,8 @@
-"""dopilot agent - worker executor HTTP service.
+"""dopilot agent - outbound-only worker executor daemon.
 
-Phase 0 skeleton: a runnable/testable/extensible base only. Real execution
-(scrapyd runner, plain-script runner, docker runner) and the log tail provider
-are added in phase 1+.
+The agent consumes commands from Redis, publishes status events / log increments
+to the server's Redis streams, and POSTs heartbeats to the server. It exposes no
+inbound HTTP API and binds no listening port (phase 2.2.7).
 """
 
 __version__ = "0.0.0"

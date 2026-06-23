@@ -1,23 +1,19 @@
 """Shared pytest fixtures for the agent test suite.
 
-Provides an in-process ASGI client (httpx + ASGITransport) wired to a test
-:class:`Settings` (scrapyd subprocess disabled, workdir in a tmp dir), plus
-helpers to:
+The agent is an outbound-only worker daemon (no FastAPI app), so the suite
+exercises the runtime objects directly:
 
-- build clients for both auth modes (agent_token set vs empty);
-- inject a **fake scrapyd** by overriding the scrapyd-client dependency with a
-  :class:`ScrapydClient` whose httpx transport is an ``httpx.MockTransport``
-  driven by an in-process :class:`FakeScrapyd` — no real scrapyd binary needed.
-
-Tests that don't need scrapyd (auth/health/validation) use the plain ``client``
-fixtures; tests that exercise run/stop/status/egg use the
-``app_with_fake_scrapyd`` factory.
+- a **fake scrapyd** (:class:`FakeScrapyd`) served via ``httpx.MockTransport``,
+  wired into a real :class:`ScrapydClient` / :class:`ScrapyRunner` by
+  :func:`make_runner` — no real scrapyd binary needed;
+- an in-memory Redis Streams double (:class:`FakeRedisStreams`) for the command
+  consumer / log publisher / event outbox tests.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -26,45 +22,11 @@ import fakeredis.aioredis as fakeaioredis
 import httpx
 import pytest
 import pytest_asyncio
-from dopilot_agent.config.loader import get_settings
-from dopilot_agent.config.settings import (
-    AgentSettings,
-    Capabilities,
-    ScrapydSettings,
-    Settings,
-)
-from dopilot_agent.deps import (
-    get_scrapy_runner,
-    get_scrapyd_client,
-    get_state_store,
-    scrapyd_logs_dir,
-    state_dir,
-)
-from dopilot_agent.main import create_app
+from dopilot_agent.deps import scrapyd_logs_dir, state_dir
 from dopilot_agent.runners.scrapyd import ScrapyRunner
 from dopilot_agent.scrapyd.client import ScrapydClient
 from dopilot_agent.state.store import StateStore
-from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
 from redis.exceptions import ConnectionError as RedisConnectionError
-
-BASE_URL = "http://agent.test"
-TEST_TOKEN = "test-shared-token"
-
-
-def make_settings(workdir: str, agent_token: str = "") -> Settings:
-    return Settings(
-        agent=AgentSettings(
-            agent_id="agent-test-1",
-            host="127.0.0.1",
-            port=6810,
-            workdir=workdir,
-            agent_token=agent_token,
-        ),
-        capabilities=Capabilities(scrapy=True, script=True, docker=False),
-        # No real scrapyd subprocess in tests.
-        scrapyd=ScrapydSettings(start=False, host="127.0.0.1", port=6801),
-    )
 
 
 class FakeScrapyd:
@@ -291,49 +253,11 @@ async def fake_redis() -> AsyncIterator[Any]:
         await fr.aclose()
 
 
-def _build_app(settings: Settings) -> FastAPI:
-    app = create_app(settings)
-    app.dependency_overrides[get_settings] = lambda: settings
-    return app
-
-
-def build_client(settings: Settings) -> AsyncClient:
-    app = _build_app(settings)
-    transport = ASGITransport(app=app)
-    return AsyncClient(transport=transport, base_url=BASE_URL)
-
-
 @pytest.fixture
 def workdir(tmp_path: Path) -> Path:
     d = tmp_path / "agent-data"
     d.mkdir()
     return d
-
-
-@pytest_asyncio.fixture
-async def client(workdir: Path) -> AsyncIterator[AsyncClient]:
-    """Default client: auth OFF (empty agent token)."""
-    async with build_client(make_settings(str(workdir), agent_token="")) as ac:
-        yield ac
-
-
-@pytest_asyncio.fixture
-async def client_auth(workdir: Path) -> AsyncIterator[AsyncClient]:
-    """Client with agent-token auth ENABLED."""
-    async with build_client(
-        make_settings(str(workdir), agent_token=TEST_TOKEN)
-    ) as ac:
-        yield ac
-
-
-@pytest.fixture
-def client_factory(workdir: Path) -> Callable[[str], AsyncClient]:
-    """Factory to build a client for an arbitrary agent token."""
-
-    def _factory(agent_token: str = "") -> AsyncClient:
-        return build_client(make_settings(str(workdir), agent_token=agent_token))
-
-    return _factory
 
 
 def make_runner(workdir: Path, fake: FakeScrapyd) -> ScrapyRunner:
@@ -342,32 +266,6 @@ def make_runner(workdir: Path, fake: FakeScrapyd) -> ScrapyRunner:
     )
     store = StateStore(state_dir(workdir))
     return ScrapyRunner(client=client, store=store, logs_dir=scrapyd_logs_dir(workdir))
-
-
-def app_with_fake_scrapyd(
-    workdir: Path, fake: FakeScrapyd, *, agent_token: str = ""
-) -> FastAPI:
-    """Build an app whose scrapyd client/runner are backed by ``fake``."""
-    settings = make_settings(str(workdir), agent_token=agent_token)
-    app = _build_app(settings)
-
-    fake_client = ScrapydClient(
-        base_url="http://scrapyd.test", transport=fake.transport()
-    )
-    store = StateStore(state_dir(workdir))
-    runner = ScrapyRunner(
-        client=fake_client, store=store, logs_dir=scrapyd_logs_dir(workdir)
-    )
-
-    app.dependency_overrides[get_scrapyd_client] = lambda: fake_client
-    app.dependency_overrides[get_state_store] = lambda: store
-    app.dependency_overrides[get_scrapy_runner] = lambda: runner
-    return app
-
-
-def client_for_app(app: FastAPI) -> AsyncClient:
-    transport = ASGITransport(app=app)
-    return AsyncClient(transport=transport, base_url=BASE_URL)
 
 
 def write_log(workdir: Path, project: str, spider: str, job_id: str, body: str) -> Path:

@@ -1,150 +1,145 @@
-"""Agent application factory and entrypoint.
+"""Agent worker daemon entrypoint (phase 2.2.7).
 
-``create_app()`` builds the FastAPI app: it constructs the agent runtime
-(scrapyd client + Scrapy runner + state store, and optionally the scrapyd
-subprocess manager) from settings and stores it on ``app.state.runtime`` so the
-API works even under the test ASGI transport (which does NOT run the lifespan).
-The lifespan only owns the scrapyd subprocess: it starts the child on enter and
-stops/reaps it on exit. It also includes the root API router and registers a
-global handler that renders ``AgentError`` as the frozen ``ErrorResponse``
-envelope ``{code, message_key, detail}``.
+The agent is an **outbound-only** worker: it consumes commands from its Redis
+command stream, publishes status events / log increments to the server's Redis
+streams, and POSTs heartbeats to the server. It exposes **no** inbound HTTP API
+and binds no listening port (port ``6800`` is gone). Scrapy eggs are fetched
+from the server during Redis command execution via ``ScrapyArtifactCache``.
+
+``run_agent(settings)`` is the single source of truth for the runtime start/stop
+ordering (it replaces the old FastAPI lifespan):
+
+1. build the runtime (scrapyd client + runner + state store, and the managed
+   scrapyd subprocess when ``[scrapyd].start``);
+2. start the managed scrapyd subprocess when configured;
+3. when Redis is configured, build the Redis client + command consumer + event
+   publisher + log publisher and start the consumer/publisher;
+4. start the heartbeat worker when ``server_url`` is configured;
+5. block until SIGTERM/SIGINT;
+6. stop, in reverse order, the log publisher, command consumer, Redis client,
+   heartbeat worker, and scrapyd subprocess.
 
 ``main()`` loads settings from ``DOPILOT_CONFIG`` (falling back to the baked
-``DEFAULT_CONFIG_PATH``) and injects them into ``create_app`` so request-time
-dependencies share them, then runs uvicorn with ``workers=1`` (single-instance
-hard constraint).
+``DEFAULT_CONFIG_PATH``) and runs the daemon with ``asyncio.run``.
 """
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+import asyncio
+import logging
+import signal
 
-import uvicorn
-from dopilot_protocol import ErrorResponse
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-
-from . import __version__
-from .api.router import api_router
-from .config.loader import DEFAULT_CONFIG_PATH, get_settings, load_settings
+from .config.loader import DEFAULT_CONFIG_PATH, load_settings
 from .config.settings import Settings
 from .deps import build_runtime
-from .errors import AgentError
 from .redis.client import build_redis
 from .redis.commands import CommandConsumer
 from .redis.events import EventPublisher
 from .redis.logs import LogPublisher
 
+logger = logging.getLogger("dopilot_agent")
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Build the FastAPI app.
 
-    ``settings`` may be injected (tests / explicit run); otherwise they are
-    resolved via the cached ``get_settings`` dependency. The runtime objects are
-    built eagerly here (not only in the lifespan) so tests that drive the app
-    over httpx ``ASGITransport`` still get a wired runtime on ``app.state``.
+async def run_agent(settings: Settings, *, stop: asyncio.Event | None = None) -> None:
+    """Run the agent worker daemon until ``stop`` is set (or SIGTERM/SIGINT).
 
-    When ``settings`` is injected, the same object is also wired into the
-    ``get_settings`` dependency path so request handlers (``/health``, agent
-    auth) share it. ``main()`` injects the baked default config this way, so an
-    agent container with no ``DOPILOT_CONFIG`` does not fall back to a bare
-    ``load_settings()`` at request time (which would raise ``ConfigError``).
+    This is the non-HTTP replacement for the old ASGI lifespan: it starts the
+    same set of background workers, in the same order, and tears them down in
+    reverse order. When ``stop`` is not provided, SIGTERM/SIGINT handlers are
+    installed to set an internal stop event; pass an explicit ``stop`` event in
+    tests to drive shutdown without signals.
     """
+    runtime = build_runtime(settings)
+    s = runtime.settings
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        runtime = app.state.runtime
-        s = runtime.settings
-        if runtime.process is not None:
-            runtime.process.start()
+    own_stop = stop is None
+    stop_event = stop if stop is not None else asyncio.Event()
+    if own_stop:
+        _install_signal_handlers(stop_event)
 
-        # Redis-backed command consumer + event publisher are built HERE (not in
-        # build_runtime) so the test ASGI path never constructs a real client.
-        redis_client = None
-        consumer: CommandConsumer | None = None
-        log_publisher: LogPublisher | None = None
-        if s.redis.url:
-            redis_client = build_redis(s.redis.url)
-            publisher = EventPublisher(
-                redis=redis_client,
-                agent_id=s.agent.agent_id,
-                runner=runtime.runner,
-                store=runtime.store,
-                outbox_dir=s.redis.event_outbox_dir or None,
-                status=runtime.redis_status,
-            )
-            consumer = CommandConsumer(
-                redis=redis_client,
-                agent_id=s.agent.agent_id,
-                runner=runtime.runner,
-                store=runtime.store,
-                events=publisher,
-                pending_idle_ms=s.redis.pending_idle_ms,
-                command_block_ms=s.redis.command_block_ms,
-                status=runtime.redis_status,
-                artifact_cache=runtime.artifact_cache,
-                wheel_runner=runtime.wheel_runner,
-                wheel_cache=runtime.wheel_cache,
-            )
-            log_publisher = LogPublisher(
-                redis=redis_client,
-                agent_id=s.agent.agent_id,
-                store=runtime.store,
-                cursor_dir=str(runtime.store.dir / "logpos"),
-                status=runtime.redis_status,
-            )
-            consumer.start()
-            log_publisher.start()
-            app.state.command_consumer = consumer
-        if runtime.heartbeat is not None:
-            runtime.heartbeat.start()
-        try:
-            yield
-        finally:
-            if log_publisher is not None:
-                await log_publisher.stop()
-            if consumer is not None:
-                await consumer.stop()
-            if redis_client is not None:
-                await redis_client.aclose()
-            if runtime.heartbeat is not None:
-                await runtime.heartbeat.stop()
-            if runtime.process is not None:
-                runtime.process.stop()
+    if runtime.process is not None:
+        runtime.process.start()
 
-    app = FastAPI(title="dopilot-agent", version=__version__, lifespan=lifespan)
-
-    active = settings or get_settings()
-    app.state.runtime = build_runtime(active)
-    if settings is not None:
-        app.dependency_overrides[get_settings] = lambda: settings
-
-    @app.exception_handler(AgentError)
-    async def _agent_error_handler(_: Request, exc: AgentError) -> JSONResponse:
-        envelope = ErrorResponse(
-            code=exc.code, message_key=exc.message_key, detail=exc.detail
+    redis_client = None
+    consumer: CommandConsumer | None = None
+    log_publisher: LogPublisher | None = None
+    if s.redis.url:
+        redis_client = build_redis(s.redis.url)
+        publisher = EventPublisher(
+            redis=redis_client,
+            agent_id=s.agent.agent_id,
+            runner=runtime.runner,
+            store=runtime.store,
+            outbox_dir=s.redis.event_outbox_dir or None,
+            status=runtime.redis_status,
         )
-        return JSONResponse(status_code=exc.status_code, content=envelope.model_dump())
+        consumer = CommandConsumer(
+            redis=redis_client,
+            agent_id=s.agent.agent_id,
+            runner=runtime.runner,
+            store=runtime.store,
+            events=publisher,
+            pending_idle_ms=s.redis.pending_idle_ms,
+            command_block_ms=s.redis.command_block_ms,
+            status=runtime.redis_status,
+            artifact_cache=runtime.artifact_cache,
+            wheel_runner=runtime.wheel_runner,
+            wheel_cache=runtime.wheel_cache,
+        )
+        log_publisher = LogPublisher(
+            redis=redis_client,
+            agent_id=s.agent.agent_id,
+            store=runtime.store,
+            cursor_dir=str(runtime.store.dir / "logpos"),
+            status=runtime.redis_status,
+        )
+        consumer.start()
+        log_publisher.start()
+    if runtime.heartbeat is not None:
+        runtime.heartbeat.start()
 
-    app.include_router(api_router)
-    return app
+    logger.info(
+        "dopilot-agent worker started (agent_id=%s, redis=%s, server_url=%s); "
+        "no inbound HTTP listener",
+        s.agent.agent_id,
+        bool(s.redis.url),
+        bool(s.agent.server_url),
+    )
+    try:
+        await stop_event.wait()
+    finally:
+        if log_publisher is not None:
+            await log_publisher.stop()
+        if consumer is not None:
+            await consumer.stop()
+        if redis_client is not None:
+            await redis_client.aclose()
+        if runtime.heartbeat is not None:
+            await runtime.heartbeat.stop()
+        if runtime.process is not None:
+            runtime.process.stop()
+        logger.info("dopilot-agent worker stopped")
+
+
+def _install_signal_handlers(stop_event: asyncio.Event) -> None:
+    """Set ``stop_event`` on SIGTERM/SIGINT (graceful container shutdown)."""
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except NotImplementedError:  # pragma: no cover - non-Unix fallback
+            signal.signal(sig, lambda *_: stop_event.set())
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="dopilot-agent")
-    parser.add_argument("-b", "--bind", default=None, help="host to bind")
-    parser.add_argument("-p", "--port", type=int, default=None, help="port to bind")
-    args = parser.parse_args()
+    # No bind/port flags: the agent is outbound-only and opens no HTTP listener.
+    argparse.ArgumentParser(prog="dopilot-agent").parse_args()
 
     # load_settings reads DOPILOT_CONFIG itself when no path is passed, then
     # falls back to the baked agent default so the image needs no DOPILOT_CONFIG.
     settings = load_settings(default_path=DEFAULT_CONFIG_PATH)
-    host = args.bind or settings.agent.host
-    port = args.port or settings.agent.port
-
-    uvicorn.run(create_app(settings), host=host, port=port, workers=1)
+    asyncio.run(run_agent(settings))
 
 
 if __name__ == "__main__":

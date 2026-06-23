@@ -8,7 +8,6 @@ from dopilot_protocol import (
     AgentStatusResponse,
     AgentStopResponse,
     AttemptStatus,
-    EggDeployResponse,
 )
 
 
@@ -78,12 +77,3 @@ def test_agent_status_response_roundtrip() -> None:
     )
     assert minimal.remote_job_id is None
     assert minimal.exit_code is None
-
-
-def test_egg_deploy_response_roundtrip() -> None:
-    resp = EggDeployResponse(
-        project="demo", version="1700000000", spiders=["phase1"]
-    )
-    assert EggDeployResponse.model_validate(resp.model_dump()) == resp
-    empty = EggDeployResponse(project="demo", version="1")
-    assert empty.spiders == []

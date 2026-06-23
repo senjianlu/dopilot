@@ -5,14 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "dopilot-agent"
 version = "0.0.0"
-description = "dopilot agent - worker executor HTTP service"
+description = "dopilot agent - outbound-only worker executor daemon"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.110",
-    "uvicorn[standard]>=0.27",
     "pydantic>=2.6,<3",
+    # Outbound HTTP: agent -> server heartbeat + artifact/wheel fetch. The agent
+    # is outbound-only (phase 2.2.7): no FastAPI/uvicorn, no inbound listener.
     "httpx>=0.27",
-    "python-multipart>=0.0.9",
     # Redis Streams server<->agent transport (phase 1.5).
     "redis>=5,<9",
     "dopilot-protocol",
@@ -29,6 +28,7 @@ dev = [
 
 [project.scripts]
 dopilot-agent = "dopilot_agent.main:main"
+dopilot-agent-healthcheck = "dopilot_agent.healthcheck:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dopilot_agent"]

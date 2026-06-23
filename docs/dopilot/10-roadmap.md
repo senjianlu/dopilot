@@ -25,7 +25,7 @@
                 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-> **节点形态（阶段1 已交付；v1 最终主路径见阶段1.5）**：阶段1 的「节点」= **dopilot-agent**（内部子进程拉起本机 scrapyd，scrapyd 仅监听容器内部端口如 6801、对外不可见），**不是裸 scrapyd**。执行链路 `server → dopilot-agent → 本机 scrapyd → scrapy process`，agent tail scrapyd 的 `job.log`。dopilot-agent 阶段1 即落地。**阶段1 交付的 server↔agent 通信为 HTTP**（agent 对外 `agent:6800` 暴露 tail/status/cleanup/addversion API、server pull 日志）——既定事实；**阶段1.5 起 v1 最终主路径翻案为 Redis Streams + agent 主动 heartbeat**（仅 egg `/addversion.json` 转发与容器本地 healthcheck 仍走 HTTP），见 §3.5、`refactor/00-redis-streams-agent-communication.md`。
+> **节点形态（阶段1 已交付；v1 最终主路径见阶段1.5）**：阶段1 的「节点」= **dopilot-agent**（内部子进程拉起本机 scrapyd，scrapyd 仅监听容器内部端口如 6801、对外不可见），**不是裸 scrapyd**。执行链路 `server → dopilot-agent → 本机 scrapyd → scrapy process`，agent tail scrapyd 的 `job.log`。dopilot-agent 阶段1 即落地。**阶段1 交付的 server↔agent 通信为 HTTP**（agent 对外 `agent:6800` 暴露 tail/status/cleanup/addversion API、server pull 日志）——既定事实；**阶段1.5 起 v1 最终主路径翻案为 Redis Streams + agent 主动 heartbeat**（阶段1.5 时仅剩 egg 部署转发与容器本地 healthcheck 走 HTTP；**阶段2.2.7 进一步删除 agent 全部入站 HTTP——egg 改由 agent 执行 Redis `run` 命令时从 server 拉取、`/health` 端点删除、`6800` 移除，agent 成为纯出站守护进程**），见 §3.5、`refactor/00-redis-streams-agent-communication.md`。
 >
 > **日志主线（阶段1 已交付；v1 最终主路径见阶段1.5）**：第一版**完全不使用 WebSocket**。**阶段1 交付**为 server 主动 **pull**（后台 reconcile loop 每 30s 低频 drain、开窗升到 1s、结束 final drain）——既定事实。**阶段1.5 起 v1 最终主路径翻案为 agent 经 Redis log stream 主动推增量、server 消费后落盘**。两者均：正文落 server 本地文件 `/server-data/logs`，索引/offset/状态落 **PostgreSQL**，再经 **SSE** 单向推给 Vue。详见决策 #11、`03-gap-realtime-logs.md`、§3.5。
 
