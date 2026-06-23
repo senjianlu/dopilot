@@ -67,7 +67,6 @@ async def apply_log_event(
     if event.offset < log_file.last_pulled_offset:
         return OUTCOME_DROPPED_DUP
 
-    physical_start = files.size(log_file.storage_path)
     outcome = OUTCOME_APPENDED
     marker = b""
 
@@ -80,13 +79,18 @@ async def apply_log_event(
             log_file.first_gap_expected_offset = log_file.last_pulled_offset
             log_file.first_gap_actual_offset = event.offset
         marker = _gap_marker(log_file.last_pulled_offset, event.offset)
-        files.append(log_file.storage_path, marker)
 
-    # write bytes to disk BEFORE advancing the DB offset (at-most-a-duplicate)
-    files.append(log_file.storage_path, raw)
+    # Write marker+raw to disk in ONE offloaded thread hop BEFORE advancing the
+    # DB offset (at-most-a-duplicate). The blocking open/write/getsize stays off
+    # the event loop; ``physical_start``/``physical_end`` span exactly the bytes
+    # written. Race-free because the single log consumer serializes writes (see
+    # files.append_increment's single-writer invariant).
+    physical_start, physical_end = await files.aappend_increment(
+        log_file.storage_path, marker, raw
+    )
     log_file.last_pulled_offset = event.offset + event.size_bytes
-    log_file.size_bytes = files.size(log_file.storage_path)
-    log_file.final_offset = log_file.size_bytes
+    log_file.size_bytes = physical_end
+    log_file.final_offset = physical_end
 
     if manager is not None:
         # The SSE content spans EXACTLY [physical_start, physical_end] — it
@@ -100,7 +104,7 @@ async def apply_log_event(
             {
                 "type": "log",
                 "start_offset": physical_start,
-                "end_offset": log_file.size_bytes,
+                "end_offset": physical_end,
                 "content": (marker + raw).decode("utf-8", errors="replace"),
             },
         )

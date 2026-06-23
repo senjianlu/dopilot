@@ -12,6 +12,7 @@ file is shorter than the offset we are resuming from (truncated/lost), it raises
 
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime
 from pathlib import Path
@@ -157,3 +158,72 @@ def tail_screen(
             byte_start = fsize - len(trimmed)
             chunk = trimmed
     return byte_start, fsize, chunk.decode("utf-8", errors="replace")
+
+
+def append_increment(path: str, marker: bytes, raw: bytes) -> tuple[int, int]:
+    """Append an optional gap ``marker`` then ``raw`` in ONE file open.
+
+    Returns ``(physical_start, physical_end)``: the server-file byte offsets that
+    span exactly the bytes just written (``marker + raw``). These are the offsets
+    the log consumer needs for the DB index (``size_bytes`` / ``final_offset``)
+    and the SSE ``start_offset`` / ``end_offset``.
+
+    Single-writer invariant: this read-size-then-append is race-free ONLY because
+    the Redis :class:`~dopilot_server.redis.consumers.LogConsumer` is the sole
+    writer and applies events serially (``_apply_one`` is awaited one at a time);
+    snapshot/SSE paths only read, and ``write_increment`` has no live caller. Do
+    NOT introduce a second concurrent writer to the same body file without adding
+    a lock — the size/append split would then drop or overlap bytes.
+    """
+    physical_start = size(path)
+    if marker or raw:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "ab") as fh:
+            if marker:
+                fh.write(marker)
+            if raw:
+                fh.write(raw)
+    physical_end = physical_start + len(marker) + len(raw)
+    return physical_start, physical_end
+
+
+# --- async boundary -------------------------------------------------------
+#
+# Named async wrappers so callers on the single ``dopilot-server`` asyncio event
+# loop (request handlers, the Redis log consumer, the SSE generator, maintenance)
+# never run the blocking ``open``/``read``/``write``/``getsize``/``remove``
+# syscalls or the UTF-8 decode directly on the loop. Each offloads the matching
+# synchronous helper above to the default thread executor via
+# :func:`asyncio.to_thread`. The synchronous helpers stay public for unit tests
+# and any non-async use; the async variants are the boundary async code must use.
+
+
+async def asize(path: str) -> int:
+    """Async :func:`size` (offloaded to a thread)."""
+    return await asyncio.to_thread(size, path)
+
+
+async def aread_slice(
+    path: str, offset: int, max_bytes: int
+) -> tuple[int, int, str]:
+    """Async :func:`read_slice` (offloaded to a thread)."""
+    return await asyncio.to_thread(read_slice, path, offset, max_bytes)
+
+
+async def atail_screen(
+    path: str, max_lines: int, max_bytes: int
+) -> tuple[int, int, str]:
+    """Async :func:`tail_screen` (offloaded to a thread)."""
+    return await asyncio.to_thread(tail_screen, path, max_lines, max_bytes)
+
+
+async def aremove(path: str) -> bool:
+    """Async :func:`remove` (offloaded to a thread)."""
+    return await asyncio.to_thread(remove, path)
+
+
+async def aappend_increment(
+    path: str, marker: bytes, raw: bytes
+) -> tuple[int, int]:
+    """Async :func:`append_increment`: marker+raw append + offsets in ONE hop."""
+    return await asyncio.to_thread(append_increment, path, marker, raw)
