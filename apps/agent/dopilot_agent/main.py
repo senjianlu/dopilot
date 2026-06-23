@@ -9,8 +9,10 @@ stops/reaps it on exit. It also includes the root API router and registers a
 global handler that renders ``AgentError`` as the frozen ``ErrorResponse``
 envelope ``{code, message_key, detail}``.
 
-``main()`` loads settings from ``DOPILOT_CONFIG`` and runs uvicorn with
-``workers=1`` (single-instance hard constraint).
+``main()`` loads settings from ``DOPILOT_CONFIG`` (falling back to the baked
+``DEFAULT_CONFIG_PATH``) and injects them into ``create_app`` so request-time
+dependencies share them, then runs uvicorn with ``workers=1`` (single-instance
+hard constraint).
 """
 
 from __future__ import annotations
@@ -43,6 +45,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved via the cached ``get_settings`` dependency. The runtime objects are
     built eagerly here (not only in the lifespan) so tests that drive the app
     over httpx ``ASGITransport`` still get a wired runtime on ``app.state``.
+
+    When ``settings`` is injected, the same object is also wired into the
+    ``get_settings`` dependency path so request handlers (``/health``, agent
+    auth) share it. ``main()`` injects the baked default config this way, so an
+    agent container with no ``DOPILOT_CONFIG`` does not fall back to a bare
+    ``load_settings()`` at request time (which would raise ``ConfigError``).
     """
 
     @asynccontextmanager
@@ -110,6 +118,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     active = settings or get_settings()
     app.state.runtime = build_runtime(active)
+    if settings is not None:
+        app.dependency_overrides[get_settings] = lambda: settings
 
     @app.exception_handler(AgentError)
     async def _agent_error_handler(_: Request, exc: AgentError) -> JSONResponse:
