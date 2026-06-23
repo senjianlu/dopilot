@@ -263,6 +263,36 @@ async def test_finalize_cleans_reclaimed_lost(db_session, exec_settings):
     assert len(cleanups) == 1
 
 
+async def test_apply_log_event_uses_async_file_boundary(
+    db_session, exec_settings, monkeypatch
+):
+    """Regression: ``apply_log_event`` (an async path) must reach disk through
+    the named async boundary ``files.aappend_increment`` (offloaded to a thread),
+    never via a direct synchronous ``files.append`` call on the event loop."""
+    from dopilot_server.logs import files as files_mod
+    from dopilot_server.services import logs as logs_mod
+
+    calls: list[tuple[bytes, bytes]] = []
+    real = files_mod.aappend_increment
+
+    async def spy(path, marker, raw):
+        calls.append((marker, raw))
+        return await real(path, marker, raw)
+
+    # Patch the symbol the service module resolves at call time.
+    monkeypatch.setattr(logs_mod.files, "aappend_increment", spy)
+
+    _t, execution, lf = await _seed(db_session, exec_settings)
+    out = await _apply(db_session, exec_settings, execution, 0, b"hi\n")
+    await db_session.commit()
+
+    assert out == OUTCOME_APPENDED
+    assert calls == [(b"", b"hi\n")]  # one offloaded write, no marker
+    lf = await _reload_lf(db_session, lf)
+    assert lf.last_pulled_offset == 3
+    assert Path(lf.storage_path).read_bytes() == b"hi\n"
+
+
 async def test_log_consumer_drains_stream(db_session, exec_settings, fake_redis, test_sessionmaker):
     fake = fake_redis()
     _t, execution, lf = await _seed(db_session, exec_settings)

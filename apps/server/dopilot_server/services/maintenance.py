@@ -145,9 +145,10 @@ async def cleanup_terminal_data(
     if dry_run:
         return summary
 
-    # 1) on-disk log bodies (before the index rows that point at them).
+    # 1) on-disk log bodies (before the index rows that point at them). Offloaded
+    # so the manual cleanup's blocking unlink/rmdir never runs on the event loop.
     for lf in log_files:
-        if files.remove(lf.storage_path):
+        if await files.aremove(lf.storage_path):
             summary.log_files_removed += 1
 
     # 2) log index, 3) executions, 4) outbox, 5) tasks — FK-safe order.

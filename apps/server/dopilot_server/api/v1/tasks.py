@@ -215,7 +215,9 @@ async def get_logs(
             status=states.LOG_MISSING,
             finished=finished,
         )
-    start, end, content = files.read_slice(log_file.storage_path, offset, cap)
+    start, end, content = await files.aread_slice(
+        log_file.storage_path, offset, cap
+    )
     return LogSnapshot(
         task_id=task_id,
         execution_id=execution.id,
@@ -332,7 +334,7 @@ async def stream_logs(
                     cursor = resume_from
                 else:
                     # first screen: last N lines / M bytes.
-                    s, e, text = files.tail_screen(
+                    s, e, text = await files.atail_screen(
                         path,
                         settings.logs.first_screen_max_lines,
                         settings.logs.first_screen_max_bytes,
@@ -345,9 +347,9 @@ async def stream_logs(
                         )
                     cursor = e
                 # backfill any bytes between cursor and current size.
-                size_now = files.size(path)
+                size_now = await files.asize(path)
                 while cursor < size_now:
-                    s, e, text = files.read_slice(
+                    s, e, text = await files.aread_slice(
                         path, cursor, settings.logs.max_tail_bytes_per_pull
                     )
                     if e <= cursor:
@@ -358,8 +360,13 @@ async def stream_logs(
                         event_id=e,
                     )
                     cursor = e
+                    # Yield to the loop between chunks so a large backfill does
+                    # not monopolize the single event loop (whole-site stalls).
+                    await asyncio.sleep(0)
 
-            if already_terminal and (path is None or cursor >= files.size(path)):
+            if already_terminal and (
+                path is None or cursor >= await files.asize(path)
+            ):
                 yield _sse_event("complete", {"status": exec_status})
                 return
 
