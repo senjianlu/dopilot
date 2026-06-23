@@ -210,6 +210,47 @@ async def test_list_tasks_page_build_artifact_filter(db_session, exec_settings):
     )
 
 
+async def test_list_tasks_page_status_filter(db_session, exec_settings):
+    tasks = await _seed_tasks(db_session, exec_settings, [("a", 0), ("b", 0), ("c", 0)])
+    tasks[0].status = states.TASK_COMPLETE
+    tasks[1].status = states.TASK_FAILED
+    tasks[2].status = states.TASK_COMPLETE
+    await db_session.commit()
+    rows, total = await svc.list_tasks_page(
+        db_session, page=1, page_size=20, status=states.TASK_COMPLETE
+    )
+    assert total == 2
+    assert all(t.status == states.TASK_COMPLETE for t in rows)
+
+
+async def test_list_tasks_page_status_combines_with_build_artifact(
+    db_session, exec_settings
+):
+    created = await _seed_artifact_tasks(
+        db_session,
+        [
+            ("art-1", "demo", "scrapy"),
+            ("art-1", "demo", "scrapy"),
+            ("art-2", "wheelpkg", "python_wheel"),
+        ],
+    )
+    created[0].status = states.TASK_COMPLETE
+    created[1].status = states.TASK_FAILED
+    created[2].status = states.TASK_COMPLETE
+    await db_session.commit()
+    # status AND build-artifact compose: only the art-1 task that is complete.
+    rows, total = await svc.list_tasks_page(
+        db_session,
+        page=1,
+        page_size=20,
+        build_artifact_id="art-1",
+        status=states.TASK_COMPLETE,
+    )
+    assert total == 1
+    assert rows[0].status == states.TASK_COMPLETE
+    assert rows[0].template_snapshot["build_artifact"]["id"] == "art-1"
+
+
 async def test_legacy_task_without_snapshot_yields_no_option(
     db_session, exec_settings
 ):
@@ -296,6 +337,34 @@ async def test_get_tasks_legacy_spider_filter_still_works(exec_client, seeder):
 async def test_get_tasks_invalid_page_400(exec_client):
     r = await exec_client.get("/api/v1/tasks?page=0&page_size=20")
     assert r.status_code == 422  # FastAPI ge=1 validation
+
+
+async def test_get_tasks_status_filter(exec_client, seeder, db_session):
+    await seeder.healthy_node()
+    _, run = await _run_artifact(exec_client, seeder, "phase1")
+    task_id = run.json()["task_id"]
+    # Force a known terminal status so the filter is deterministic.
+    task = await svc.get_task(db_session, task_id)
+    task.status = states.TASK_COMPLETE
+    await db_session.commit()
+
+    r = await exec_client.get(f"/api/v1/tasks?status={states.TASK_COMPLETE}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1
+    assert all(row["status"] == states.TASK_COMPLETE for row in body["tasks"])
+
+    # A status with no matching task returns an empty page (still 200).
+    r2 = await exec_client.get(f"/api/v1/tasks?status={states.TASK_CANCELED}")
+    assert r2.status_code == 200
+    assert r2.json()["total"] == 0
+
+
+async def test_get_tasks_invalid_status_400(exec_client, seeder):
+    await seeder.healthy_node()
+    r = await exec_client.get("/api/v1/tasks?status=bogus")
+    assert r.status_code == 400
+    assert r.json()["code"] == "task.invalid_status"
 
 
 # ---- template run with all selected nodes unschedulable -> no_target -------

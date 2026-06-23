@@ -45,6 +45,9 @@ TASK_ACTIVE = frozenset({TASK_QUEUED, TASK_RUNNING, TASK_FINALIZING})
 TASK_TERMINAL = frozenset(
     {TASK_COMPLETE, TASK_FAILED, TASK_CANCELED, TASK_LOST, TASK_NO_TARGET}
 )
+# Every valid task status (active + terminal). Backs the tasks-list status
+# filter validation (phase task-web-ui-followups).
+TASK_STATUSES = TASK_ACTIVE | TASK_TERMINAL
 
 # ---- build artifact type (core-domain discriminator; phase 1.8) ----
 # Replaces the misleading ``task_type``. Phase 2b makes ``python_wheel`` runnable
