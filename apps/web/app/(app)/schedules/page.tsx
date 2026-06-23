@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -85,6 +86,8 @@ export default function SchedulesPage() {
   const [nodes, setNodes] = React.useState<NodeInfo[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [triggeringId, setTriggeringId] = React.useState("");
+  // The row whose enable/disable toggle is in flight; blocks duplicate submits.
+  const [togglingId, setTogglingId] = React.useState("");
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState("");
   const [creating, setCreating] = React.useState(false);
@@ -92,6 +95,7 @@ export default function SchedulesPage() {
   const [estimatedNextRun, setEstimatedNextRun] = React.useState("");
 
   const [name, setName] = React.useState("");
+  const [enabled, setEnabled] = React.useState(false);
   const [templateId, setTemplateId] = React.useState("");
   const [triggerType, setTriggerType] = React.useState<TriggerType>("interval");
   const [intervalSeconds, setIntervalSeconds] = React.useState(60);
@@ -178,6 +182,8 @@ export default function SchedulesPage() {
   function openCreate() {
     setEditingId("");
     setName("");
+    // Match the backend: a new schedule is created disabled by default.
+    setEnabled(false);
     setTemplateId(templates[0]?.id ?? "");
     setTriggerType("interval");
     setIntervalSeconds(60);
@@ -201,6 +207,7 @@ export default function SchedulesPage() {
     const cronExpr = schedule.cron ?? "";
     setEditingId(schedule.id);
     setName(schedule.name);
+    setEnabled(schedule.enabled);
     setTemplateId(schedule.execution_template_id);
     setTriggerType(schedule.trigger_type);
     setIntervalSeconds(seconds);
@@ -245,6 +252,7 @@ export default function SchedulesPage() {
     setCreateError("");
     const payload = {
       name,
+      enabled,
       execution_template_id: templateId,
       trigger_type: triggerType,
       interval_seconds: triggerType === "interval" ? intervalSeconds : null,
@@ -263,6 +271,19 @@ export default function SchedulesPage() {
       setCreateError(t("schedules.createError"));
     } finally {
       setCreating(false);
+    }
+  }
+
+  // Quick enable/disable from the table: send only { enabled } and reload on
+  // success. A pending row id blocks duplicate submits; no optimistic UI.
+  async function onToggleEnabled(schedule: Schedule, next: boolean) {
+    if (togglingId) return;
+    setTogglingId(schedule.id);
+    try {
+      await updateSchedule(schedule.id, { enabled: next });
+      await load();
+    } finally {
+      setTogglingId("");
     }
   }
 
@@ -309,6 +330,7 @@ export default function SchedulesPage() {
           <TableHeader>
             <TableRow>
               <TableHead>{t("schedules.name")}</TableHead>
+              <TableHead>{t("schedules.enabled")}</TableHead>
               <TableHead>{t("schedules.template")}</TableHead>
               <TableHead>{t("schedules.triggerType")}</TableHead>
               <TableHead>{t("schedules.triggerTime")}</TableHead>
@@ -322,7 +344,7 @@ export default function SchedulesPage() {
             {schedules.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={6}
+                  colSpan={7}
                   className="text-muted-foreground text-center"
                 >
                   {loading ? "…" : t("schedules.empty")}
@@ -333,6 +355,18 @@ export default function SchedulesPage() {
                 <TableRow key={schedule.id}>
                   <TableCell data-testid={`schedule-name-${schedule.name}`}>
                     {schedule.name}
+                  </TableCell>
+                  <TableCell>
+                    <Switch
+                      size="sm"
+                      checked={schedule.enabled}
+                      disabled={togglingId === schedule.id}
+                      data-testid={`schedule-enabled-${schedule.name}`}
+                      aria-label={t("schedules.enabled")}
+                      onCheckedChange={(next) =>
+                        onToggleEnabled(schedule, next)
+                      }
+                    />
                   </TableCell>
                   <TableCell>
                     {templateName(schedule.execution_template_id)}
@@ -393,6 +427,17 @@ export default function SchedulesPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
+            </Field>
+            <Field orientation="horizontal">
+              <Switch
+                id="sch-enabled"
+                checked={enabled}
+                data-testid="schedule-enabled-input"
+                onCheckedChange={setEnabled}
+              />
+              <FieldLabel htmlFor="sch-enabled">
+                {t("schedules.enabled")}
+              </FieldLabel>
             </Field>
             <Field>
               <FieldLabel>{t("schedules.template")}</FieldLabel>

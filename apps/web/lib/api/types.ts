@@ -194,6 +194,7 @@ export interface ListTasksParams {
   page?: number;
   pageSize?: TaskPageSize;
   buildArtifactId?: string | null;
+  status?: TaskStatus | null;
 }
 
 // A single atomic execution against an agent/node.
@@ -282,6 +283,9 @@ export interface Schedule {
   id: string;
   name: string;
   description: string | null;
+  // Phase 2.2: row-level timer gate. Disabled schedules stay editable and
+  // remain manually runnable via trigger-now.
+  enabled: boolean;
   execution_template_id: string;
   trigger_type: TriggerType;
   interval_seconds: number | null;
@@ -310,6 +314,8 @@ export interface NextRunPreviewResponse {
 export interface CreateScheduleRequest {
   name: string;
   description?: string | null;
+  // Phase 2.2: new schedules default disabled; pass true to enable timer firing.
+  enabled?: boolean;
   execution_template_id: string;
   trigger_type?: TriggerType;
   interval_seconds?: number | null;

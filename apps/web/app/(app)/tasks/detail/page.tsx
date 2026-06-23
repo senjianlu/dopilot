@@ -33,7 +33,7 @@ import { LogViewer } from "@/components/features/log-viewer";
 import { cancelTask, getTask } from "@/lib/api/tasks";
 import { markTaskLost } from "@/lib/api/maintenance";
 import { formatDateTime } from "@/lib/format";
-import type { TaskStatus, TaskView } from "@/lib/api/types";
+import type { ExecutionView, TaskStatus, TaskView } from "@/lib/api/types";
 import { useConfirm } from "@/hooks/use-confirm";
 
 const STATUS_TONE: Record<TaskStatus, Tone> = {
@@ -47,6 +47,23 @@ const STATUS_TONE: Record<TaskStatus, Tone> = {
   no_target: "amber",
 };
 
+// Deterministic execution order for display, default selection, and log tabs:
+// by agent_id ascending, then id ascending as a tie-breaker. Executions with a
+// null/empty agent_id sort after those with one. Sorts a COPY — the API
+// response is never mutated.
+function sortedExecutions(executions: ExecutionView[]): ExecutionView[] {
+  return [...executions].sort((a, b) => {
+    const aid = a.agent_id ?? "";
+    const bid = b.agent_id ?? "";
+    if (aid !== bid) {
+      if (!aid) return 1;
+      if (!bid) return -1;
+      return aid < bid ? -1 : 1;
+    }
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
+
 function TaskDetail() {
   const { t } = useTranslation();
   const confirm = useConfirm();
@@ -59,6 +76,11 @@ function TaskDetail() {
   const [markingLost, setMarkingLost] = React.useState(false);
   const [errorMsg, setErrorMsg] = React.useState("");
   const [selectedExecutionId, setSelectedExecutionId] = React.useState("");
+
+  const executions = React.useMemo(
+    () => (task ? sortedExecutions(task.executions) : []),
+    [task],
+  );
 
   const load = React.useCallback(async () => {
     if (!taskId) return;
@@ -80,12 +102,12 @@ function TaskDetail() {
       return;
     }
     setSelectedExecutionId((current) => {
-      if (current && task.executions.some((ex) => ex.id === current)) {
+      if (current && executions.some((ex) => ex.id === current)) {
         return current;
       }
-      return task.executions[0]?.id ?? "";
+      return executions[0]?.id ?? "";
     });
-  }, [task]);
+  }, [task, executions]);
 
   const cancelable =
     task?.status === "queued" ||
@@ -249,7 +271,7 @@ function TaskDetail() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {task.executions.map((ex) => (
+                  {executions.map((ex) => (
                     <TableRow key={ex.id}>
                       <TableCell>{ex.id}</TableCell>
                       <TableCell>
@@ -272,13 +294,13 @@ function TaskDetail() {
 
           <Card>
             <CardContent className="flex flex-col gap-4 pt-6">
-              {task.executions.length > 1 && (
+              {executions.length > 1 && (
                 <Tabs
                   value={selectedExecutionId}
                   onValueChange={setSelectedExecutionId}
                 >
                   <TabsList className="h-auto max-w-full flex-wrap justify-start">
-                    {task.executions.map((ex) => (
+                    {executions.map((ex) => (
                       <TabsTrigger
                         key={ex.id}
                         value={ex.id}

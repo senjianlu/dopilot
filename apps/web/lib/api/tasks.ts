@@ -20,6 +20,9 @@ export async function listTasks(
   if (params.buildArtifactId) {
     query.build_artifact_id = params.buildArtifactId;
   }
+  if (params.status) {
+    query.status = params.status;
+  }
   const { data } = await client.get<TasksResponse>("/tasks", {
     params: query,
   });

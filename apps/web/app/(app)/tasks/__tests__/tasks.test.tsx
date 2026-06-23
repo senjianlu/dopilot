@@ -120,3 +120,70 @@ describe("TasksPage build-artifact filter", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("TasksPage status filter", () => {
+  it("sends status null on the first load (all statuses)", async () => {
+    renderWithProviders(<TasksPage />);
+    await screen.findByTestId("task-build-artifact-task-1");
+    expect(listTasks).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: null }),
+    );
+  });
+
+  it("selecting a status calls listTasks with status and resets to page 1", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TasksPage />);
+    await screen.findByTestId("task-build-artifact-task-1");
+
+    await user.click(screen.getByTestId("tasks-status-filter"));
+    const option = await screen.findByRole("option", { name: "running" });
+    await user.click(option);
+
+    await waitFor(() =>
+      expect(listTasks).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 1, status: "running" }),
+      ),
+    );
+  });
+
+  it("preserves status across refresh, pagination, and page-size changes", async () => {
+    const user = userEvent.setup();
+    // Two pages so the next button is enabled.
+    listTasks.mockResolvedValue(makeResponse({ total: 40 }));
+    renderWithProviders(<TasksPage />);
+    await screen.findByTestId("task-build-artifact-task-1");
+
+    await user.click(screen.getByTestId("tasks-status-filter"));
+    await user.click(await screen.findByRole("option", { name: "failed" }));
+    await waitFor(() =>
+      expect(listTasks).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: "failed" }),
+      ),
+    );
+
+    // Refresh keeps the status filter.
+    await user.click(screen.getByText("Refresh"));
+    await waitFor(() =>
+      expect(listTasks).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: "failed" }),
+      ),
+    );
+
+    // Next page keeps the status filter.
+    await user.click(screen.getByTestId("tasks-next"));
+    await waitFor(() =>
+      expect(listTasks).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 2, status: "failed" }),
+      ),
+    );
+
+    // Page-size change keeps the status filter and resets to page 1.
+    await user.click(screen.getByTestId("tasks-page-size"));
+    await user.click(await screen.findByRole("option", { name: "50 / Per page" }));
+    await waitFor(() =>
+      expect(listTasks).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 1, pageSize: 50, status: "failed" }),
+      ),
+    );
+  });
+});

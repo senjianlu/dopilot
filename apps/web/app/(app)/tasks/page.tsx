@@ -59,6 +59,20 @@ const STATUS_TONE: Record<TaskStatus, Tone> = {
 // the backend, and the options come from the tasks' distinct build artifacts.
 const BUILD_ALL = "__all__";
 
+// "All statuses" sentinel (same Radix empty-string constraint). The backend
+// validates a concrete status against its known task statuses.
+const STATUS_ALL = "__all__";
+const STATUS_OPTIONS: TaskStatus[] = [
+  "queued",
+  "running",
+  "finalizing",
+  "complete",
+  "failed",
+  "canceled",
+  "lost",
+  "no_target",
+];
+
 // A build artifact's display text in the row/dropdown (label, then name, id).
 function buildArtifactText(art: BuildArtifactOption): string {
   return art.label || art.name || art.id;
@@ -88,9 +102,15 @@ export default function TasksPage() {
   const [total, setTotal] = React.useState(0);
   const [builds, setBuilds] = React.useState<BuildArtifactOption[]>([]);
   const [buildFilter, setBuildFilter] = React.useState(BUILD_ALL);
+  const [statusFilter, setStatusFilter] = React.useState(STATUS_ALL);
 
   const load = React.useCallback(
-    async (nextPage: number, size: TaskPageSize, buildFilterValue: string) => {
+    async (
+      nextPage: number,
+      size: TaskPageSize,
+      buildFilterValue: string,
+      statusFilterValue: string,
+    ) => {
       setLoading(true);
       try {
         const res = await listTasks({
@@ -98,6 +118,10 @@ export default function TasksPage() {
           pageSize: size,
           buildArtifactId:
             buildFilterValue === BUILD_ALL ? null : buildFilterValue,
+          status:
+            statusFilterValue === STATUS_ALL
+              ? null
+              : (statusFilterValue as TaskStatus),
         });
         setTasks(res.tasks);
         setTotal(res.total);
@@ -114,20 +138,26 @@ export default function TasksPage() {
   React.useEffect(() => {
     const size = pickPageSizeFromHeight();
     setPageSize(size);
-    void load(1, size, BUILD_ALL);
+    void load(1, size, BUILD_ALL, STATUS_ALL);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
+  // Changing either filter resets to page 1; pagination/size/refresh keep both.
   function onBuildChange(value: string) {
     setBuildFilter(value);
-    void load(1, pageSize, value);
+    void load(1, pageSize, value, statusFilter);
+  }
+
+  function onStatusChange(value: string) {
+    setStatusFilter(value);
+    void load(1, pageSize, buildFilter, value);
   }
 
   function onSizeChange(value: string) {
     const size = Number(value) as TaskPageSize;
-    void load(1, size, buildFilter);
+    void load(1, size, buildFilter, statusFilter);
   }
 
   return (
@@ -136,6 +166,26 @@ export default function TasksPage() {
         <CardTitle>{t("tasks.title")}</CardTitle>
         <CardAction>
           <div className="flex items-center gap-2">
+            <Select value={statusFilter} onValueChange={onStatusChange}>
+              <SelectTrigger
+                className="min-w-36"
+                data-testid="tasks-status-filter"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value={STATUS_ALL}>
+                    {t("tasks.statusAll")}
+                  </SelectItem>
+                  {STATUS_OPTIONS.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {status}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             <Select value={buildFilter} onValueChange={onBuildChange}>
               <SelectTrigger
                 className="min-w-40"
@@ -156,7 +206,9 @@ export default function TasksPage() {
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <Button onClick={() => load(page, pageSize, buildFilter)}>
+            <Button
+              onClick={() => load(page, pageSize, buildFilter, statusFilter)}
+            >
               {t("tasks.refresh")}
             </Button>
           </div>
@@ -249,7 +301,9 @@ export default function TasksPage() {
                   size="sm"
                   data-testid="tasks-prev"
                   disabled={page <= 1 || loading}
-                  onClick={() => load(page - 1, pageSize, buildFilter)}
+                  onClick={() =>
+                    load(page - 1, pageSize, buildFilter, statusFilter)
+                  }
                 >
                   ‹
                 </Button>
@@ -265,7 +319,9 @@ export default function TasksPage() {
                   size="sm"
                   data-testid="tasks-next"
                   disabled={page >= totalPages || loading}
-                  onClick={() => load(page + 1, pageSize, buildFilter)}
+                  onClick={() =>
+                    load(page + 1, pageSize, buildFilter, statusFilter)
+                  }
                 >
                   ›
                 </Button>

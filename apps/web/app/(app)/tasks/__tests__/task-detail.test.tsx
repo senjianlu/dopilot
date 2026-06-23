@@ -149,6 +149,57 @@ describe("TaskDetailPage", () => {
     );
   });
 
+  it("orders executions/log tabs by agent_id, then id, with null agent last", async () => {
+    function ex(id: string, agentId: string | null) {
+      return {
+        id,
+        task_id: "task-1",
+        agent_id: agentId,
+        node_id: null,
+        endpoint: null,
+        remote_job_id: null,
+        status: "running",
+        started_at: null,
+        finished_at: null,
+        exit_code: null,
+        error_code: null,
+        error_detail: null,
+      };
+    }
+    // Deliberately unsorted: agent-c, null, agent-a, plus a duplicate agent-a
+    // (id tie-breaker). Expected order: agent-a/ex-a1, agent-a/ex-a2, agent-c,
+    // then the null-agent execution last.
+    getTask.mockResolvedValue(
+      makeTask({
+        executions: [
+          ex("ex-c", "agent-c"),
+          ex("ex-null", null),
+          ex("ex-a2", "agent-a"),
+          ex("ex-a1", "agent-a"),
+        ],
+      }),
+    );
+
+    renderWithProviders(<TaskDetailPage />);
+    // Default selection is the first sorted execution (agent-a, id ex-a1).
+    await waitFor(() =>
+      expect(screen.getByTestId("log-viewer")).toHaveAttribute(
+        "data-execution-id",
+        "ex-a1",
+      ),
+    );
+
+    const tabs = screen
+      .getAllByTestId(/^execution-log-tab-/)
+      .map((el) => el.getAttribute("data-testid"));
+    expect(tabs).toEqual([
+      "execution-log-tab-ex-a1",
+      "execution-log-tab-ex-a2",
+      "execution-log-tab-ex-c",
+      "execution-log-tab-ex-null",
+    ]);
+  });
+
   it("cancels an active task after confirmation", async () => {
     const user = userEvent.setup();
     renderWithProviders(<TaskDetailPage />);

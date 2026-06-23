@@ -50,6 +50,7 @@ const schedule: Schedule = {
   id: "sch-1",
   name: "demo-schedule",
   description: null,
+  enabled: false,
   execution_template_id: "tpl-1",
   trigger_type: "interval",
   interval_seconds: 60,
@@ -119,6 +120,7 @@ describe("SchedulesPage", () => {
     await waitFor(() =>
       expect(updateSchedule).toHaveBeenCalledWith("sch-1", {
         name: "demo-schedule",
+        enabled: false,
         execution_template_id: "tpl-1",
         trigger_type: "interval",
         interval_seconds: 60,
@@ -127,6 +129,67 @@ describe("SchedulesPage", () => {
       }),
     );
     expect(createSchedule).not.toHaveBeenCalled();
+  });
+
+  it("creates a schedule with enabled true when the modal switch is on", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("schedule-create")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId("schedule-create"));
+    await waitFor(() =>
+      expect(screen.getByTestId("schedule-dialog")).toBeInTheDocument(),
+    );
+    await user.type(screen.getByTestId("schedule-name-input"), "nightly");
+    // The create dialog defaults to disabled; turning the switch on enables it.
+    await user.click(screen.getByTestId("schedule-enabled-input"));
+    await user.click(screen.getByTestId("schedule-submit"));
+    await waitFor(() =>
+      expect(createSchedule).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "nightly", enabled: true }),
+      ),
+    );
+    expect(updateSchedule).not.toHaveBeenCalled();
+  });
+
+  it("pre-fills the edit dialog switch from an enabled schedule", async () => {
+    const user = userEvent.setup();
+    listSchedules.mockResolvedValue([{ ...schedule, enabled: true }]);
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("schedule-edit-demo-schedule"),
+      ).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId("schedule-edit-demo-schedule"));
+    await waitFor(() =>
+      expect(screen.getByTestId("schedule-enabled-input")).toBeChecked(),
+    );
+    await user.click(screen.getByTestId("schedule-submit"));
+    await waitFor(() =>
+      expect(updateSchedule).toHaveBeenCalledWith(
+        "sch-1",
+        expect.objectContaining({ enabled: true }),
+      ),
+    );
+  });
+
+  it("quick-toggles a row through updateSchedule and reloads", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("schedule-enabled-demo-schedule"),
+      ).toBeInTheDocument(),
+    );
+    listSchedules.mockClear();
+    await user.click(screen.getByTestId("schedule-enabled-demo-schedule"));
+    await waitFor(() =>
+      expect(updateSchedule).toHaveBeenCalledWith("sch-1", { enabled: true }),
+    );
+    // Reload-on-success: the table re-fetches after the toggle resolves.
+    await waitFor(() => expect(listSchedules).toHaveBeenCalled());
   });
 
   it("deletes a schedule only after confirmation", async () => {

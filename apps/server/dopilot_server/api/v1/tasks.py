@@ -88,6 +88,7 @@ async def list_tasks(
     page_size: int = Query(default=20),
     build_artifact_id: str | None = Query(default=None),
     spider: str | None = Query(default=None),
+    status: str | None = Query(default=None),
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> TasksResponse:
@@ -95,8 +96,10 @@ async def list_tasks(
 
     The product filter is ``build_artifact_id`` (works for scrapy +
     python_wheel); the legacy ``spider`` query param is kept for compatibility.
-    ``page_size`` must be one of :data:`svc.ALLOWED_PAGE_SIZES`; child execution
-    counts for the page are fetched in ONE aggregate query (no per-row N+1).
+    The optional ``status`` filter is validated against
+    :data:`states.TASK_STATUSES`. ``page_size`` must be one of
+    :data:`svc.ALLOWED_PAGE_SIZES`; child execution counts for the page are
+    fetched in ONE aggregate query (no per-row N+1).
     """
     if page_size not in svc.ALLOWED_PAGE_SIZES:
         raise ApiError(
@@ -105,12 +108,20 @@ async def list_tasks(
             "errors.invalidPageSize",
             {"page_size": page_size, "allowed": list(svc.ALLOWED_PAGE_SIZES)},
         )
+    if status and status not in states.TASK_STATUSES:
+        raise ApiError(
+            400,
+            "task.invalid_status",
+            "errors.invalidStatus",
+            {"status": status, "allowed": sorted(states.TASK_STATUSES)},
+        )
     tasks, total = await svc.list_tasks_page(
         session,
         page=page,
         page_size=page_size,
         build_artifact_id=build_artifact_id or None,
         spider=spider or None,
+        status=status or None,
     )
     counts = await svc.child_execution_counts(session, [t.id for t in tasks])
     summaries = [

@@ -18,7 +18,6 @@ import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -81,7 +80,6 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>{t("common.appName")}</SidebarGroupLabel>
           <SidebarMenu>
             {NAV_ITEMS.map((item) => {
               // A nav item is active for its exact route or any nested route

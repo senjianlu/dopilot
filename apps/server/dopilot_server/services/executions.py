@@ -313,14 +313,15 @@ async def list_tasks_page(
     page_size: int,
     spider: str | None = None,
     build_artifact_id: str | None = None,
+    status: str | None = None,
 ) -> tuple[list[Task], int]:
     """Return one page of tasks (newest first) + the total matching count.
 
     The product filter is ``build_artifact_id`` (matched against the immutable
     snapshot build artifact), which works for scrapy and python_wheel alike.
     The legacy ``spider`` filter (indexed task-level column) is kept for
-    compatibility; both filters AND together when supplied. Caller validates
-    ``page`` / ``page_size``.
+    compatibility. ``status`` filters by the task status column. All supplied
+    filters AND together. Caller validates ``page`` / ``page_size`` / ``status``.
     """
     from sqlalchemy import func as _func
 
@@ -333,6 +334,9 @@ async def list_tasks_page(
     if spider:
         base = base.where(Task.spider == spider)
         count_q = count_q.where(Task.spider == spider)
+    if status:
+        base = base.where(Task.status == status)
+        count_q = count_q.where(Task.status == status)
 
     total = int((await session.execute(count_q)).scalar_one())
     rows = await session.execute(
