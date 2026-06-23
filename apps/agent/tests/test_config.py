@@ -43,6 +43,7 @@ def _write_config(tmp_path: Path) -> Path:
 def test_loads_from_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_ID", raising=False)
     monkeypatch.delenv("AGENT_WORKDIR", raising=False)
+    monkeypatch.delenv("DOPILOT_SERVER_URL", raising=False)
     monkeypatch.delenv("DOPILOT_AGENT_TOKEN", raising=False)
     cfg = _write_config(tmp_path)
 
@@ -94,6 +95,37 @@ def test_redis_url_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("DOPILOT_REDIS_URL", "redis://envhost:6399/8")
     settings = load_settings(cfg)
     assert settings.redis.url == "redis://envhost:6399/8"
+
+
+def test_server_url_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Phase 2.2.6: DOPILOT_SERVER_URL overrides TOML [agent].server_url so
+    # agent-only / K3s deployments can point at a reachable server HTTP base URL.
+    cfg = _write_config(tmp_path)  # TOML: server_url = "http://server:5000"
+    monkeypatch.delenv("AGENT_ID", raising=False)
+    monkeypatch.delenv("AGENT_WORKDIR", raising=False)
+    monkeypatch.delenv("DOPILOT_AGENT_TOKEN", raising=False)
+    monkeypatch.setenv(
+        "DOPILOT_SERVER_URL",
+        "http://dopilot-server.dopilot.svc.cluster.local:5000",
+    )
+    settings = load_settings(cfg)
+    assert (
+        settings.agent.server_url
+        == "http://dopilot-server.dopilot.svc.cluster.local:5000"
+    )
+
+
+def test_server_url_keeps_toml_without_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No DOPILOT_SERVER_URL => the baked/TOML server_url is unchanged.
+    cfg = _write_config(tmp_path)
+    monkeypatch.delenv("AGENT_ID", raising=False)
+    monkeypatch.delenv("AGENT_WORKDIR", raising=False)
+    monkeypatch.delenv("DOPILOT_SERVER_URL", raising=False)
+    monkeypatch.delenv("DOPILOT_AGENT_TOKEN", raising=False)
+    settings = load_settings(cfg)
+    assert settings.agent.server_url == "http://server:5000"
 
 
 def test_scrapyd_defaults_when_section_absent(

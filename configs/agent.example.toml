@@ -18,8 +18,16 @@ agent_id = "scrapy-agent-1"
 host = "0.0.0.0"
 port = 6800
 workdir = "/agent-data"
-# Phase 1.5: where the agent POSTs heartbeats. Phase 2.2.3: agent_token is the
-# single server<->agent machine token (see the header). Empty => machine auth OFF.
+# Phase 1.5: the server HTTP base URL the agent uses for heartbeat AND artifact /
+# wheel fetch. The baked "http://server:5000" only resolves inside the all-in-one
+# compose network; for an agent-only / K3s deployment on another host, override it
+# with the agent-side env DOPILOT_SERVER_URL (env wins over this field), e.g.
+#   http://<server-ip-or-dns>:5000
+#   http://dopilot-server.dopilot.svc.cluster.local:5000
+#   https://dopilot.example.com
+# Token auth is NOT transport encryption: cross-host HTTP still needs a private
+# network / VPN / TLS / reverse proxy. Phase 2.2.3: agent_token is the single
+# server<->agent machine token (see the header). Empty => machine auth OFF.
 server_url = "http://server:5000"
 heartbeat_interval_seconds = 10
 agent_token = ""

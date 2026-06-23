@@ -153,10 +153,15 @@ docker compose -f docker-compose.server.yml up -d
 docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print          # DOPILOT_AGENT_TOKEN=<token> + 提示
 docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print --quiet  # 仅打印裸令牌
 
-# 在每个 agent 主机：用该令牌（必填、无开发回退）+ server 的 Redis 接入。
+# 在每个 agent 主机：用该令牌（必填、无开发回退）+ server 的 HTTP 基址 + server 的 Redis 接入。
+# DOPILOT_SERVER_URL 是 agent 端环境变量——agent 用于 heartbeat 与 artifact/wheel 拉取的
+# server HTTP 基址；此处必填，因为烤进的 http://server:5000 只在一体栈 compose 网络内可解析
+# （例：http://<server-ip-or-dns>:5000、
+#   http://dopilot-server.dopilot.svc.cluster.local:5000、https://dopilot.example.com）。
+# token 鉴权不等于传输加密，跨主机 HTTP 仍需私网 / VPN / TLS / 反代。
 # agent 绝不接收 DOPILOT_ADMIN_API_TOKEN。
-DOPILOT_AGENT_TOKEN=<token-from-server> REDIS_PASSWORD=<server-redis-pass> \
-  REDIS_HOST=<server-host> \
+DOPILOT_AGENT_TOKEN=<token-from-server> DOPILOT_SERVER_URL=http://<server-host>:5000 \
+  REDIS_PASSWORD=<server-redis-pass> REDIS_HOST=<server-host> \
   docker compose -f docker-compose.agent.yml up -d
 ```
 
