@@ -13,6 +13,8 @@ so they can be unit-tested directly against a session.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from dopilot_protocol import ExecutionRunRequest
@@ -298,35 +300,80 @@ async def artifact_type_for_template(
     return artifact.artifact_type if artifact else states.ARTIFACT_SCRAPY
 
 
-async def artifact_types_for_templates(
+@dataclass(frozen=True)
+class TemplateArtifactMeta:
+    """The live, artifact-derived bits the template view needs.
+
+    Resolved from the bound :class:`BuildArtifact` (not frozen on the template):
+    ``artifact_type`` plus reversible archive state. A legacy/dangling binding
+    (no ``build_artifact_id`` or a missing artifact) falls back to the default
+    ``scrapy`` type and unarchived state.
+    """
+
+    artifact_type: str = states.ARTIFACT_SCRAPY
+    archived_at: datetime | None = None
+
+
+async def artifact_meta_for_template(
+    session: AsyncSession, template: ExecutionTemplate
+) -> TemplateArtifactMeta:
+    """Resolve the live artifact meta (type + archive state) for one template.
+
+    The artifact row is loaded once here, so the single-row create/get/update
+    template views get archive state for free (no extra round-trip).
+    """
+    if not template.build_artifact_id:
+        return TemplateArtifactMeta()
+    artifact = await artifact_svc.get_build_artifact(
+        session, template.build_artifact_id
+    )
+    if artifact is None:
+        return TemplateArtifactMeta()
+    return TemplateArtifactMeta(artifact.artifact_type, artifact.archived_at)
+
+
+async def artifact_meta_for_templates(
     session: AsyncSession, templates: list[ExecutionTemplate]
-) -> dict[str, str]:
-    """Batch ``build_artifact_id -> artifact_type`` map for a template list."""
+) -> dict[str, TemplateArtifactMeta]:
+    """Batch ``build_artifact_id -> TemplateArtifactMeta`` for a template list.
+
+    One ``IN (...)`` query over the referenced artifacts, so the list endpoint
+    never does a per-template artifact lookup (no N+1).
+    """
     ids = {t.build_artifact_id for t in templates if t.build_artifact_id}
     if not ids:
         return {}
     rows = await session.execute(
-        select(BuildArtifact.id, BuildArtifact.artifact_type).where(
-            BuildArtifact.id.in_(ids)
-        )
+        select(
+            BuildArtifact.id,
+            BuildArtifact.artifact_type,
+            BuildArtifact.archived_at,
+        ).where(BuildArtifact.id.in_(ids))
     )
-    return {row[0]: row[1] for row in rows.all()}
+    return {
+        row[0]: TemplateArtifactMeta(row[1], row[2]) for row in rows.all()
+    }
 
 
 def template_view(
-    template: ExecutionTemplate, artifact_type: str = "scrapy"
+    template: ExecutionTemplate, meta: TemplateArtifactMeta | None = None
 ) -> dict[str, Any]:
+    meta = meta or TemplateArtifactMeta()
     return {
         "id": template.id,
         "name": template.name,
         "description": template.description,
         "build_artifact_id": template.build_artifact_id,
-        "artifact_type": artifact_type,
+        "artifact_type": meta.artifact_type,
         "project": template.project,
         "version": template.version,
         "command": template.command,
         "node_strategy": template.node_strategy,
         "node_ids": list(template.node_ids or []),
+        # Live archive state of the bound artifact (not a frozen snapshot). A
+        # dangling/legacy binding serializes as not-archived.
+        "build_artifact_archived": meta.archived_at is not None,
+        "build_artifact_archived_at": _iso(meta.archived_at),
         "created_at": _iso(template.created_at),
         "updated_at": _iso(template.updated_at),
     }

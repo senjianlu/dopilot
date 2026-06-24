@@ -83,6 +83,7 @@ const zh = {
     archived: "已归档",
     archive: "归档",
     unarchive: "取消归档",
+    archivedWarning: "该构建已经归档",
   },
   tasks: {
     title: "任务",
@@ -108,6 +109,7 @@ const zh = {
   templates: {
     title: "执行模板",
     create: "新建模板",
+    search: "按名称搜索",
     name: "名称",
     description: "描述",
     project: "项目",
@@ -145,6 +147,7 @@ const zh = {
   schedules: {
     title: "定时调度",
     create: "新建调度",
+    search: "按名称搜索",
     name: "名称",
     enabled: "启用",
     template: "执行模板",

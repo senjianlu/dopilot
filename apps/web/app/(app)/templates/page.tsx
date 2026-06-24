@@ -48,6 +48,8 @@ import {
   NODE_BADGE_TONE,
   ToneBadge,
 } from "@/components/features/status-badge";
+import { ArchivedIndicator } from "@/components/features/archived-indicator";
+import { matchesPrefix } from "@/lib/search";
 import { listBuildArtifacts } from "@/lib/api/artifacts";
 import { listNodes } from "@/lib/api/nodes";
 import {
@@ -78,6 +80,7 @@ export default function TemplatesPage() {
   const confirm = useConfirm();
 
   const [templates, setTemplates] = React.useState<ExecutionTemplate[]>([]);
+  const [search, setSearch] = React.useState("");
   const [artifacts, setArtifacts] = React.useState<BuildArtifact[]>([]);
   const [nodes, setNodes] = React.useState<NodeInfo[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -113,6 +116,12 @@ export default function TemplatesPage() {
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  // Client-side prefix search over the loaded templates (see lib/search).
+  const visibleTemplates = React.useMemo(
+    () => templates.filter((tpl) => matchesPrefix(tpl.name, search)),
+    [templates, search],
+  );
 
   const schedulableNodes = React.useMemo(
     () => schedulableNodesOf(nodes),
@@ -279,6 +288,13 @@ export default function TemplatesPage() {
         <CardTitle>{t("templates.title")}</CardTitle>
         <CardAction>
           <div className="flex items-center gap-2">
+            <Input
+              data-testid="template-search"
+              className="h-9 w-48"
+              placeholder={t("templates.search")}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
             <Button data-testid="template-create" onClick={openCreate}>
               {t("templates.create")}
             </Button>
@@ -302,7 +318,7 @@ export default function TemplatesPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {templates.length === 0 ? (
+            {visibleTemplates.length === 0 ? (
               <TableRow>
                 <TableCell
                   colSpan={5}
@@ -312,7 +328,7 @@ export default function TemplatesPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              templates.map((tpl) => (
+              visibleTemplates.map((tpl) => (
                 <TableRow key={tpl.id}>
                   <TableCell data-testid={`template-name-${tpl.name}`}>
                     {tpl.name}
@@ -325,7 +341,12 @@ export default function TemplatesPage() {
                       {tpl.command ?? "-"}
                     </code>
                   </TableCell>
-                  <TableCell>{tpl.version ?? "-"}</TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center gap-1">
+                      {tpl.version ?? "-"}
+                      {tpl.build_artifact_archived && <ArchivedIndicator />}
+                    </span>
+                  </TableCell>
                   <TableCell>{tpl.node_strategy}</TableCell>
                   <TableCell className="text-right">
                     <Button

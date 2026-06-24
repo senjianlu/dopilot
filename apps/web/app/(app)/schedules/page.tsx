@@ -48,6 +48,8 @@ import {
   NODE_BADGE_TONE,
   ToneBadge,
 } from "@/components/features/status-badge";
+import { ArchivedIndicator } from "@/components/features/archived-indicator";
+import { matchesPrefix } from "@/lib/search";
 import {
   createSchedule,
   deleteSchedule,
@@ -82,6 +84,7 @@ export default function SchedulesPage() {
   const confirm = useConfirm();
 
   const [schedules, setSchedules] = React.useState<Schedule[]>([]);
+  const [search, setSearch] = React.useState("");
   const [templates, setTemplates] = React.useState<ExecutionTemplate[]>([]);
   const [nodes, setNodes] = React.useState<NodeInfo[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -120,8 +123,23 @@ export default function SchedulesPage() {
         )
       : "";
 
+  // Client-side prefix search over the loaded schedules (see lib/search).
+  const visibleSchedules = React.useMemo(
+    () => schedules.filter((sch) => matchesPrefix(sch.name, search)),
+    [schedules, search],
+  );
+
   function templateName(id: string): string {
     return templates.find((tpl) => tpl.id === id)?.name ?? id;
+  }
+
+  // Resolve archive state from the already-loaded templates list (no extra API
+  // call, no ScheduleView change). A schedule whose template is missing/stale
+  // simply shows no indicator.
+  function templateArchived(id: string): boolean {
+    return (
+      templates.find((tpl) => tpl.id === id)?.build_artifact_archived ?? false
+    );
   }
 
   function triggerTimeText(schedule: Schedule): string {
@@ -316,6 +334,13 @@ export default function SchedulesPage() {
         <CardTitle>{t("schedules.title")}</CardTitle>
         <CardAction>
           <div className="flex items-center gap-2">
+            <Input
+              data-testid="schedule-search"
+              className="h-9 w-48"
+              placeholder={t("schedules.search")}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
             <Button data-testid="schedule-create" onClick={openCreate}>
               {t("schedules.create")}
             </Button>
@@ -341,7 +366,7 @@ export default function SchedulesPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {schedules.length === 0 ? (
+            {visibleSchedules.length === 0 ? (
               <TableRow>
                 <TableCell
                   colSpan={7}
@@ -351,7 +376,7 @@ export default function SchedulesPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              schedules.map((schedule) => (
+              visibleSchedules.map((schedule) => (
                 <TableRow key={schedule.id}>
                   <TableCell data-testid={`schedule-name-${schedule.name}`}>
                     {schedule.name}
@@ -369,7 +394,12 @@ export default function SchedulesPage() {
                     />
                   </TableCell>
                   <TableCell>
-                    {templateName(schedule.execution_template_id)}
+                    <span className="inline-flex items-center gap-1">
+                      {templateName(schedule.execution_template_id)}
+                      {templateArchived(schedule.execution_template_id) && (
+                        <ArchivedIndicator />
+                      )}
+                    </span>
                   </TableCell>
                   <TableCell>{schedule.trigger_type}</TableCell>
                   <TableCell>{triggerTimeText(schedule)}</TableCell>

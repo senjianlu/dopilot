@@ -42,6 +42,8 @@ const template: ExecutionTemplate = {
   command: "scrapy crawl phase1",
   node_strategy: "all",
   node_ids: [],
+  build_artifact_archived: false,
+  build_artifact_archived_at: null,
   created_at: null,
   updated_at: null,
 };
@@ -190,6 +192,75 @@ describe("SchedulesPage", () => {
     );
     // Reload-on-success: the table re-fetches after the toggle resolves.
     await waitFor(() => expect(listSchedules).toHaveBeenCalled());
+  });
+
+  it("shows the archived indicator when the resolved template is archived", async () => {
+    // Archive state is derived from the loaded templates list (no schedule API
+    // change): the referenced template carries build_artifact_archived.
+    listTemplates.mockResolvedValue([
+      { ...template, build_artifact_archived: true },
+    ]);
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("schedule-name-demo-schedule"),
+      ).toBeInTheDocument(),
+    );
+    const indicator = screen.getByTestId("archived-indicator");
+    expect(indicator).toBeInTheDocument();
+    expect(indicator).toHaveAccessibleName("This build is archived");
+  });
+
+  it("shows no archived indicator when the resolved template is not archived", async () => {
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("schedule-name-demo-schedule"),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("archived-indicator")).not.toBeInTheDocument();
+  });
+
+  it("filters schedules by name prefix (trim, case-insensitive, startsWith)", async () => {
+    const user = userEvent.setup();
+    listSchedules.mockResolvedValue([
+      schedule,
+      { ...schedule, id: "sch-2", name: "other-schedule" },
+    ]);
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("schedule-name-demo-schedule"),
+      ).toBeInTheDocument(),
+    );
+    const search = screen.getByTestId("schedule-search");
+
+    await user.type(search, "  DEMO");
+    expect(
+      screen.getByTestId("schedule-name-demo-schedule"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("schedule-name-other-schedule"),
+    ).not.toBeInTheDocument();
+
+    // A non-prefix substring matches nothing.
+    await user.clear(search);
+    await user.type(search, "chedule");
+    expect(
+      screen.queryByTestId("schedule-name-demo-schedule"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("schedule-name-other-schedule"),
+    ).not.toBeInTheDocument();
+
+    // Empty query shows all rows again.
+    await user.clear(search);
+    expect(
+      screen.getByTestId("schedule-name-demo-schedule"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("schedule-name-other-schedule"),
+    ).toBeInTheDocument();
   });
 
   it("deletes a schedule only after confirmation", async () => {

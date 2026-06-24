@@ -4,6 +4,8 @@ run-from-template, snapshot immutability, and zero-node no_target via a run."""
 from __future__ import annotations
 
 from dopilot_protocol import AgentCommand, command_stream, from_stream_entry
+from dopilot_server.models.scheduling import ExecutionTemplate
+from dopilot_server.services import templates as templates_svc
 
 
 async def _commands(redis, agent_id="agent-1") -> list[AgentCommand]:
@@ -344,6 +346,96 @@ async def test_rename_template_to_same_name_ok(exec_client, seeder):
     )
     assert r.status_code == 200, r.text
     assert r.json()["description"] == "edited"
+
+
+async def test_template_view_reports_unarchived_artifact(exec_client, seeder):
+    # A freshly bound (unarchived) artifact -> archived=false / archived_at=null
+    # on every read path (create response + get + list).
+    created = await _create_template(exec_client, seeder)
+    assert created["build_artifact_archived"] is False
+    assert created["build_artifact_archived_at"] is None
+
+    got = (
+        await exec_client.get(f"/api/v1/templates/{created['id']}")
+    ).json()
+    assert got["build_artifact_archived"] is False
+    assert got["build_artifact_archived_at"] is None
+
+    rows = (await exec_client.get("/api/v1/templates")).json()["templates"]
+    row = next(t for t in rows if t["id"] == created["id"])
+    assert row["build_artifact_archived"] is False
+    assert row["build_artifact_archived_at"] is None
+
+
+async def test_template_view_reflects_live_archive_state(exec_client, seeder):
+    # Live property: archiving the bound artifact AFTER binding flips the
+    # template view to archived=true (get + list + the update response), while
+    # the template stays editable for other fields.
+    artifact = await seeder.build_artifact(spiders=("phase1", "phase2"))
+    template = await _create_template(exec_client, seeder, _artifact=artifact)
+    archived = await exec_client.post(f"/api/v1/artifacts/{artifact.id}/archive")
+    assert archived.status_code == 200, archived.text
+    archived_at = archived.json()["archived_at"]
+    assert archived_at is not None
+
+    got = (
+        await exec_client.get(f"/api/v1/templates/{template['id']}")
+    ).json()
+    assert got["build_artifact_archived"] is True
+    assert got["build_artifact_archived_at"] == archived_at
+
+    rows = (await exec_client.get("/api/v1/templates")).json()["templates"]
+    row = next(t for t in rows if t["id"] == template["id"])
+    assert row["build_artifact_archived"] is True
+    assert row["build_artifact_archived_at"] == archived_at
+
+    # Editing a non-binding field keeps the (now archived) binding and still
+    # reports the live archive state in the update response.
+    upd = await exec_client.put(
+        f"/api/v1/templates/{template['id']}",
+        json={"command": "scrapy crawl phase2"},
+    )
+    assert upd.status_code == 200, upd.text
+    assert upd.json()["build_artifact_archived"] is True
+    assert upd.json()["build_artifact_archived_at"] == archived_at
+
+
+async def test_template_list_mixed_archive_state(exec_client, seeder):
+    # A multi-template list with mixed archived/unarchived bindings resolves
+    # each row's archive state independently (batched, no N+1).
+    art_archived = await seeder.build_artifact(sha256="a" * 64)
+    art_live = await seeder.build_artifact(sha256="b" * 64)
+    t_archived = await _create_template(
+        exec_client, seeder, _artifact=art_archived, name="archived-tpl"
+    )
+    t_live = await _create_template(
+        exec_client, seeder, _artifact=art_live, name="live-tpl"
+    )
+    await exec_client.post(f"/api/v1/artifacts/{art_archived.id}/archive")
+
+    rows = (await exec_client.get("/api/v1/templates")).json()["templates"]
+    by_id = {t["id"]: t for t in rows}
+    assert by_id[t_archived["id"]]["build_artifact_archived"] is True
+    assert by_id[t_archived["id"]]["build_artifact_archived_at"] is not None
+    assert by_id[t_live["id"]]["build_artifact_archived"] is False
+    assert by_id[t_live["id"]]["build_artifact_archived_at"] is None
+
+
+def test_template_view_dangling_binding_defaults():
+    # A legacy/dangling binding (no resolvable artifact -> default meta) must
+    # serialize as not-archived, never raising on a missing artifact.
+    template = ExecutionTemplate(
+        id="t-dangling",
+        name="dangling",
+        build_artifact_id=None,
+        command="scrapy crawl phase1",
+        node_strategy="all",
+        node_ids=[],
+    )
+    view = templates_svc.template_view(template)
+    assert view["build_artifact_archived"] is False
+    assert view["build_artifact_archived_at"] is None
+    assert view["artifact_type"] == "scrapy"
 
 
 async def test_delete_template(exec_client, seeder):

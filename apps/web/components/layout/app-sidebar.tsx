@@ -4,15 +4,6 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslation } from "react-i18next";
-import {
-  CalendarClock,
-  LayoutDashboard,
-  ListChecks,
-  Package,
-  ScrollText,
-  Server,
-  Wrench,
-} from "lucide-react";
 
 import {
   Sidebar,
@@ -24,18 +15,7 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
-
-// dopilot's flat navigation. `key` drives the stable `nav-<key>` testid the
-// Playwright flow and the old Element Plus menu both relied on.
-const NAV_ITEMS = [
-  { key: "dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { key: "nodes", href: "/nodes", icon: Server },
-  { key: "artifacts", href: "/artifacts", icon: Package },
-  { key: "templates", href: "/templates", icon: ScrollText },
-  { key: "schedules", href: "/schedules", icon: CalendarClock },
-  { key: "tasks", href: "/tasks", icon: ListChecks },
-  { key: "maintenance", href: "/maintenance", icon: Wrench },
-] as const;
+import { NAV_ITEMS } from "@/components/layout/nav";
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const { t } = useTranslation();
@@ -48,7 +28,11 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
               <Link href="/dashboard">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                {/* shrink-0 keeps the brand mark square in the collapsed icon
+                    rail: the menu button becomes size-8 with p-0, so without it
+                    the flex row (gap + hidden label) would squash the box and
+                    clip the logo. */}
+                <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                   {/* Brand mark from the committed public asset. The logo is a
                       currentColor monochrome SVG, so we render it as a mask
                       tinted with the foreground color to stay legible in both

@@ -256,6 +256,13 @@ export interface ExecutionTemplate {
   command: string | null;
   node_strategy: NodeStrategy;
   node_ids: string[];
+  // Phase task-web-archive-indicators: LIVE archive state of the bound build
+  // artifact (derived from the artifact, not a frozen snapshot). Required to
+  // mirror the backend, which always populates it. A dangling/legacy binding
+  // is reported as archived=false / archived_at=null. Archiving never blocks an
+  // already-bound template's runs or schedule dispatch.
+  build_artifact_archived: boolean;
+  build_artifact_archived_at: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
