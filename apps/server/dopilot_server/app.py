@@ -44,6 +44,7 @@ from .redis.consumers import EventConsumer, LogConsumer
 from .redis.dispatcher import CommandDispatcher
 from .redis.reconcile import RedisReconcileLoop
 from .scheduler.runner import ScheduleRunner, build_schedule_runner
+from .services.builtin_artifacts import seed_builtin_artifacts
 
 # Dev-only browser origins. Production is same-origin (the server hosts the
 # exported static web assets), so CORS only matters when a developer runs the
@@ -135,6 +136,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 active.database.url, pool_pre_ping=True, future=True
             )
             bg_maker = async_sessionmaker(bind=bg_engine, expire_on_commit=False)
+
+            async with bg_maker() as session:
+                await seed_builtin_artifacts(session, active)
 
             redis_client = build_redis(active.redis.url)
             producer = CommandProducer(redis_client, active.redis)

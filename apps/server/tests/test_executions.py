@@ -82,6 +82,17 @@ async def test_run_dispatches_command_execution_queued(
     assert view["build_artifact"]["project"] == "demo"
     assert view["source"] == "template"
 
+    ctx = cmds[0].payload["runtime_context"]
+    assert ctx["task_id"] == tid
+    assert ctx["execution_id"] == execution["id"]
+    assert ctx["agent_id"] == "agent-1"
+    assert ctx["artifact_type"] == "scrapy"
+    assert ctx["task_type"] == "scrapy"
+    assert ctx["source"] == "template"
+    assert ctx["execution_template_id"] == view["execution_template_id"]
+    assert view["execution_template_id"]
+    assert ctx["schedule_id"] is None
+
 
 async def test_run_carries_artifact_context_in_payload(
     exec_client, exec_redis, seeder

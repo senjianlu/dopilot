@@ -15,6 +15,7 @@ from .agent import (
 )
 from .common import CapabilitySet, ErrorResponse
 from .execution import (
+    DopilotRuntimeContext,
     ExecutionRunRequest,
     ExecutionRunResponse,
     PythonWheelRunPayload,
@@ -58,6 +59,7 @@ __all__ = [
     "LogStream",
     "ExecutionRunRequest",
     "ExecutionRunResponse",
+    "DopilotRuntimeContext",
     "ScrapyRunPayload",
     "PythonWheelRunPayload",
     # shared Scrapy command parser/validator (phase 1.8.1, command-first)

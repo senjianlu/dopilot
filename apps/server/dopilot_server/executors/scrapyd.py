@@ -75,14 +75,22 @@ class ScrapydExecutor(BaseExecutor):
             return ExecutionRunResponse(task_id=task.id, status=task.status)
 
         outboxes = []
-        # Command-first run payload: the agent parses ``command`` and resolves
-        # project/version from the build-artifact ``artifact`` context.
-        payload = ScrapyRunPayload(
-            command=scrapy["command"],
-            artifact=scrapy["artifact"],
-        ).model_dump()
         for node in nodes:
             execution = svc.create_execution(ctx.session, task, node)
+            # Command-first run payload: the agent parses ``command`` and
+            # resolves project/version from the build-artifact ``artifact``
+            # context. Runtime context is per concrete execution, so it is built
+            # after ``create_execution`` and inside the per-node loop.
+            payload = ScrapyRunPayload(
+                command=scrapy["command"],
+                artifact=scrapy["artifact"],
+                runtime_context=svc.runtime_context_for(
+                    task=task,
+                    execution=execution,
+                    artifact_type=self.artifact_type,
+                    task_type="scrapy",
+                ),
+            ).model_dump()
             outbox = create_run_outbox(
                 ctx.session,
                 task_id=task.id,

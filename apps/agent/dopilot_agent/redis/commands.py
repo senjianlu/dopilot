@@ -31,6 +31,7 @@ from dopilot_protocol import (
     AgentEventType,
     AgentRunRequest,
     AttemptStatus,
+    DopilotRuntimeContext,
     LostReason,
     ScrapyCommandError,
     StopIntent,
@@ -57,6 +58,20 @@ _STATUS_TO_TERMINAL = {
     AttemptStatus.failed: AgentEventType.failed,
     AttemptStatus.canceled: AgentEventType.canceled,
 }
+
+
+def _runtime_context_env(payload: dict) -> dict[str, str]:
+    raw = payload.get("runtime_context")
+    if raw is None:
+        return {}
+    return DopilotRuntimeContext.model_validate(raw).to_env_map()
+
+
+def _runtime_context_scrapy_settings(payload: dict) -> dict[str, str]:
+    raw = payload.get("runtime_context")
+    if raw is None:
+        return {}
+    return DopilotRuntimeContext.model_validate(raw).to_scrapy_settings()
 
 
 class CommandConsumer:
@@ -377,7 +392,12 @@ class CommandConsumer:
             project=project,
             spider=parsed.spider,
             version=version,
-            settings=dict(parsed.settings),
+            # Platform runtime context is applied after parsed command settings
+            # so user-supplied ``-s DOPILOT_*`` values cannot forge it.
+            settings={
+                **dict(parsed.settings),
+                **_runtime_context_scrapy_settings(payload),
+            },
             args=dict(parsed.args),
         )
         try:
@@ -431,6 +451,7 @@ class CommandConsumer:
         shell_command = str(payload.get("shell_command") or "").strip()
         working_dir = payload.get("working_dir")
         env = payload.get("env") if isinstance(payload.get("env"), dict) else {}
+        runtime_context = _runtime_context_env(payload)
 
         reserved = self._store.create_reserved(
             task_id=cmd.task_id,
@@ -503,6 +524,7 @@ class CommandConsumer:
                 install_path=install_path,
                 working_dir=working_dir,
                 env={str(k): str(v) for k, v in (env or {}).items()},
+                runtime_context=runtime_context,
             )
         except WheelRunnerError as exc:
             self._store.mark_done(

@@ -129,6 +129,7 @@ class PythonWheelRunner:
         install_path: str,
         working_dir: str | None = None,
         env: dict[str, str] | None = None,
+        runtime_context: dict[str, str] | None = None,
     ) -> StartedWheel:
         """Spawn the shell command and begin reaping it. Returns process info."""
         workspace = self.workspace_for(execution_id)
@@ -150,6 +151,9 @@ class PythonWheelRunner:
         # may override it (the server currently emits ``env={}``).
         child_env["PYTHONUNBUFFERED"] = "1"
         for key, value in (env or {}).items():
+            child_env[str(key)] = str(value)
+        # Dopilot-owned context wins at the final child-environment merge point.
+        for key, value in (runtime_context or {}).items():
             child_env[str(key)] = str(value)
 
         try:

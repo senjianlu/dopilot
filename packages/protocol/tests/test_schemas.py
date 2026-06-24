@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dopilot_protocol import (
     CapabilitySet,
+    DopilotRuntimeContext,
     ErrorResponse,
     ExecutionRunRequest,
     ExecutionRunResponse,
@@ -112,10 +113,59 @@ def test_execution_run_response_roundtrip() -> None:
     assert ExecutionRunResponse.model_validate(resp.model_dump()) == resp
 
 
+def test_runtime_context_serialization_and_carriers() -> None:
+    ctx = DopilotRuntimeContext(
+        task_id="task-1",
+        execution_id="exec-1",
+        agent_id="agent-1",
+        artifact_type="scrapy",
+        task_type="scrapy",
+        source="template",
+        execution_template_id="tpl-1",
+        schedule_id=None,
+    )
+
+    expected_json = (
+        '{"agent_id":"agent-1","artifact_type":"scrapy",'
+        '"execution_id":"exec-1","execution_template_id":"tpl-1",'
+        '"schedule_id":null,"source":"template","task_id":"task-1",'
+        '"task_type":"scrapy"}'
+    )
+    env = ctx.to_env_map()
+    assert env == {
+        "DOPILOT_TASK_ID": "task-1",
+        "DOPILOT_EXECUTION_ID": "exec-1",
+        "DOPILOT_AGENT_ID": "agent-1",
+        "DOPILOT_ARTIFACT_TYPE": "scrapy",
+        "DOPILOT_TASK_TYPE": "scrapy",
+        "DOPILOT_TASK_SOURCE": "template",
+        "DOPILOT_EXECUTION_TEMPLATE_ID": "tpl-1",
+        "DOPILOT_SCHEDULE_ID": "",
+        "DOPILOT_RUNTIME_CONTEXT": expected_json,
+    }
+    assert ctx.to_json() == expected_json
+    assert ctx.to_scrapy_settings() == env
+
+
 def test_scrapy_run_payload_discriminator_default() -> None:
     payload = ScrapyRunPayload(command="scrapy crawl s1")
     assert payload.task_type == "scrapy"
     assert payload.artifact == {}
+    assert payload.runtime_context is None
+
+
+def test_scrapy_run_payload_runtime_context_roundtrip() -> None:
+    ctx = DopilotRuntimeContext(
+        task_id="task-1",
+        execution_id="exec-1",
+        agent_id="agent-1",
+        artifact_type="scrapy",
+        task_type="scrapy",
+        source="direct",
+    )
+    payload = ScrapyRunPayload(command="scrapy crawl s1", runtime_context=ctx)
+    restored = ScrapyRunPayload.model_validate(payload.model_dump())
+    assert restored.runtime_context == ctx
 
 
 def test_python_wheel_run_payload_defaults_and_roundtrip() -> None:
@@ -125,6 +175,7 @@ def test_python_wheel_run_payload_defaults_and_roundtrip() -> None:
     assert payload.artifact == {}
     assert payload.env == {}
     assert payload.working_dir is None
+    assert payload.runtime_context is None
 
     # default_factory must yield independent containers.
     other = PythonWheelRunPayload(shell_command="python -m other")
@@ -141,5 +192,14 @@ def test_python_wheel_run_payload_defaults_and_roundtrip() -> None:
         artifact={"sha256": "a" * 64, "fetch_path": "/x"},
         env={"PYTHONUNBUFFERED": "1"},
         working_dir="sub/dir",
+        runtime_context=DopilotRuntimeContext(
+            task_id="task-1",
+            execution_id="exec-1",
+            agent_id="agent-1",
+            artifact_type="python_wheel",
+            task_type="python_wheel",
+            source="schedule",
+            schedule_id="sched-1",
+        ),
     )
     assert PythonWheelRunPayload.model_validate(explicit.model_dump()) == explicit

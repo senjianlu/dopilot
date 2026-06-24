@@ -20,6 +20,7 @@ from dopilot_protocol import (
     AgentCommandType,
     AgentEvent,
     AgentEventType,
+    DopilotRuntimeContext,
     StopIntent,
     command_stream,
     from_stream_entry,
@@ -200,6 +201,39 @@ async def test_run_parses_command_args_and_settings(workdir, fake_redis):
     assert sched["spider"] == "phase1"
     assert sched["args"].get("page") == "2"
     assert sched["settings"].get("LOG_LEVEL") == "DEBUG"
+
+
+async def test_run_injects_runtime_context_as_scrapy_settings(workdir, fake_redis):
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    _store, _runner, consumer = _build(workdir, scrapyd, fake)
+    await consumer.setup()
+
+    ctx = DopilotRuntimeContext(
+        task_id="t-runtime",
+        execution_id="a-runtime",
+        agent_id=AGENT_ID,
+        artifact_type="scrapy",
+        task_type="scrapy",
+        source="template",
+        execution_template_id="tpl-1",
+    )
+    cmd = _run_cmd(
+        execution_id="a-runtime",
+        task_id="t-runtime",
+        command="scrapy crawl phase1 -s DOPILOT_TASK_ID=forged",
+    )
+    cmd.payload["runtime_context"] = ctx.model_dump()
+    await fake.xadd(STREAM, to_stream_entry(cmd))
+    await consumer.drain_once()
+
+    settings = scrapyd.schedules[0]["settings"]
+    assert settings["DOPILOT_TASK_ID"] == "t-runtime"
+    assert settings["DOPILOT_EXECUTION_ID"] == "a-runtime"
+    assert settings["DOPILOT_AGENT_ID"] == AGENT_ID
+    assert settings["DOPILOT_EXECUTION_TEMPLATE_ID"] == "tpl-1"
+    assert settings["DOPILOT_SCHEDULE_ID"] == ""
+    assert settings["DOPILOT_RUNTIME_CONTEXT"] == ctx.to_json()
 
 
 async def test_run_invalid_command_emits_failed(workdir, fake_redis):

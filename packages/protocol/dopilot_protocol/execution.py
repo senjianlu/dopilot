@@ -2,9 +2,57 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+_RUNTIME_CONTEXT_ENV_KEYS = {
+    "task_id": "DOPILOT_TASK_ID",
+    "execution_id": "DOPILOT_EXECUTION_ID",
+    "agent_id": "DOPILOT_AGENT_ID",
+    "artifact_type": "DOPILOT_ARTIFACT_TYPE",
+    "task_type": "DOPILOT_TASK_TYPE",
+    "source": "DOPILOT_TASK_SOURCE",
+    "execution_template_id": "DOPILOT_EXECUTION_TEMPLATE_ID",
+    "schedule_id": "DOPILOT_SCHEDULE_ID",
+}
+
+
+class DopilotRuntimeContext(BaseModel):
+    """Canonical per-run context exposed to user workloads.
+
+    Individual carrier keys use empty strings for nullable values; the compact
+    JSON carrier preserves JSON nulls and is deterministic for tests/workloads.
+    """
+
+    task_id: str
+    execution_id: str
+    agent_id: str
+    artifact_type: str
+    task_type: str
+    source: str
+    execution_template_id: str | None = None
+    schedule_id: str | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            self.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def to_env_map(self) -> dict[str, str]:
+        values = self.model_dump(mode="json")
+        mapped = {
+            env_key: "" if values[field] is None else str(values[field])
+            for field, env_key in _RUNTIME_CONTEXT_ENV_KEYS.items()
+        }
+        mapped["DOPILOT_RUNTIME_CONTEXT"] = self.to_json()
+        return mapped
+
+    def to_scrapy_settings(self) -> dict[str, str]:
+        return self.to_env_map()
 
 
 class ExecutionRunRequest(BaseModel):
@@ -50,6 +98,7 @@ class ScrapyRunPayload(BaseModel):
 
     command: str
     artifact: dict[str, Any] = Field(default_factory=dict)
+    runtime_context: DopilotRuntimeContext | None = None
     task_type: str = "scrapy"
 
 
@@ -72,6 +121,7 @@ class PythonWheelRunPayload(BaseModel):
     artifact: dict[str, Any] = Field(default_factory=dict)
     env: dict[str, str] = Field(default_factory=dict)
     working_dir: str | None = None
+    runtime_context: DopilotRuntimeContext | None = None
     task_type: str = "python_wheel"
 
 

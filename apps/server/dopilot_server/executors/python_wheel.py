@@ -71,17 +71,24 @@ class PythonWheelExecutor(BaseExecutor):
             return ExecutionRunResponse(task_id=task.id, status=task.status)
 
         outboxes = []
-        # Command-first wheel payload: the agent fetches + installs the wheel
-        # from ``artifact`` and runs ``shell_command`` (packet 2b-2). The server
-        # currently emits ``env={}`` and ``working_dir=None``.
-        payload = PythonWheelRunPayload(
-            shell_command=wheel["shell_command"],
-            artifact=wheel["artifact"],
-            env=wheel["env"],
-            working_dir=wheel["working_dir"],
-        ).model_dump()
         for node in nodes:
             execution = svc.create_execution(ctx.session, task, node)
+            # Command-first wheel payload: the agent fetches + installs the wheel
+            # from ``artifact`` and runs ``shell_command`` (packet 2b-2). Runtime
+            # context is per concrete execution, so it is built after
+            # ``create_execution`` and inside the per-node loop.
+            payload = PythonWheelRunPayload(
+                shell_command=wheel["shell_command"],
+                artifact=wheel["artifact"],
+                env=wheel["env"],
+                working_dir=wheel["working_dir"],
+                runtime_context=svc.runtime_context_for(
+                    task=task,
+                    execution=execution,
+                    artifact_type=self.artifact_type,
+                    task_type="python_wheel",
+                ),
+            ).model_dump()
             outbox = create_run_outbox(
                 ctx.session,
                 task_id=task.id,

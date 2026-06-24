@@ -221,6 +221,16 @@ async def test_wheel_run_dispatches_python_wheel_command(
     view = detail.json()
     assert view["artifact_type"] == "python_wheel"
     assert len(view["executions"]) == 1
+    execution = view["executions"][0]
+    ctx = cmds[0].payload["runtime_context"]
+    assert ctx["task_id"] == body["task_id"]
+    assert ctx["execution_id"] == execution["id"]
+    assert ctx["agent_id"] == "agent-1"
+    assert ctx["artifact_type"] == "python_wheel"
+    assert ctx["task_type"] == "python_wheel"
+    assert ctx["source"] == "template"
+    assert ctx["execution_template_id"] == view["execution_template_id"]
+    assert ctx["schedule_id"] is None
 
 
 async def test_wheel_run_creates_log_row(exec_client, exec_redis, seeder, db_session):
