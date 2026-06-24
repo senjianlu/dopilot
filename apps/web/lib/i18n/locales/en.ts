@@ -72,6 +72,7 @@ const en = {
     hash: "Hash",
     size: "Size",
     status: "Status",
+    uploadedAt: "Uploaded",
     actions: "Actions",
     details: "Details",
     detailsTitle: "Build artifact details",

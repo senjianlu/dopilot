@@ -70,6 +70,7 @@ const zh = {
     hash: "Hash",
     size: "大小",
     status: "状态",
+    uploadedAt: "上传时间",
     actions: "操作",
     details: "详情",
     detailsTitle: "构建产物详情",
