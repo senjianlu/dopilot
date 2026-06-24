@@ -42,6 +42,8 @@ const template: ExecutionTemplate = {
   command: "scrapy crawl phase1",
   node_strategy: "all",
   node_ids: [],
+  build_artifact_archived: false,
+  build_artifact_archived_at: null,
   created_at: null,
   updated_at: null,
 };
@@ -203,6 +205,84 @@ describe("TemplatesPage", () => {
     // The non-archived artifact IS offered as a selectable option.
     const freshOption = screen.getByText("fresh · fresh.egg");
     expect(freshOption).not.toHaveAttribute("data-disabled");
+  });
+
+  it("shows the archived indicator after the version for an archived binding", async () => {
+    listTemplates.mockResolvedValue([
+      { ...template, build_artifact_archived: true },
+    ]);
+    renderWithProviders(<TemplatesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("template-name-demo-template"),
+      ).toBeInTheDocument(),
+    );
+    const indicator = screen.getByTestId("archived-indicator");
+    expect(indicator).toBeInTheDocument();
+    expect(indicator).toHaveAccessibleName("This build is archived");
+  });
+
+  it("renders the archived indicator even when the version is '-'", async () => {
+    listTemplates.mockResolvedValue([
+      { ...template, version: null, build_artifact_archived: true },
+    ]);
+    renderWithProviders(<TemplatesPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("archived-indicator")).toBeInTheDocument(),
+    );
+  });
+
+  it("does not show the archived indicator for an unarchived binding", async () => {
+    renderWithProviders(<TemplatesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("template-name-demo-template"),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("archived-indicator")).not.toBeInTheDocument();
+  });
+
+  it("filters templates by name prefix (trim, case-insensitive, startsWith)", async () => {
+    const user = userEvent.setup();
+    listTemplates.mockResolvedValue([
+      template,
+      { ...template, id: "tpl-2", name: "other-template" },
+    ]);
+    renderWithProviders(<TemplatesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("template-name-demo-template"),
+      ).toBeInTheDocument(),
+    );
+    const search = screen.getByTestId("template-search");
+
+    // Prefix match (case-insensitive + trimmed) keeps only demo-template.
+    await user.type(search, "  DEMO");
+    expect(
+      screen.getByTestId("template-name-demo-template"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("template-name-other-template"),
+    ).not.toBeInTheDocument();
+
+    // A non-prefix substring matches nothing.
+    await user.clear(search);
+    await user.type(search, "emplate");
+    expect(
+      screen.queryByTestId("template-name-demo-template"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("template-name-other-template"),
+    ).not.toBeInTheDocument();
+
+    // Empty query shows all rows again.
+    await user.clear(search);
+    expect(
+      screen.getByTestId("template-name-demo-template"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("template-name-other-template"),
+    ).toBeInTheDocument();
   });
 
   it("deletes a template only after confirmation", async () => {

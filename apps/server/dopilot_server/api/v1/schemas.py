@@ -245,6 +245,9 @@ class ExecutionTemplateView(BaseModel):
     command: str | None = None
     node_strategy: str = "all"
     node_ids: list[str] = Field(default_factory=list)
+    # Live state of the bound artifact; archiving never blocks bound runs.
+    build_artifact_archived: bool
+    build_artifact_archived_at: str | None
     created_at: str | None = None
     updated_at: str | None = None
 

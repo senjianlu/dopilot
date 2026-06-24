@@ -85,6 +85,7 @@ const en = {
     archived: "Archived",
     archive: "Archive",
     unarchive: "Unarchive",
+    archivedWarning: "This build is archived",
   },
   tasks: {
     title: "Tasks",
@@ -110,6 +111,7 @@ const en = {
   templates: {
     title: "Execution templates",
     create: "New template",
+    search: "Search by name",
     name: "Name",
     description: "Description",
     project: "Project",
@@ -147,6 +149,7 @@ const en = {
   schedules: {
     title: "Schedules",
     create: "New schedule",
+    search: "Search by name",
     name: "Name",
     enabled: "Enabled",
     template: "Execution template",
