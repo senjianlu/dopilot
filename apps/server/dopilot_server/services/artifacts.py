@@ -15,6 +15,7 @@ egg bodies.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -214,6 +215,42 @@ async def get_runnable_artifact_or_404(
     return artifact
 
 
+async def get_bindable_artifact_or_404(
+    session: AsyncSession, artifact_id: str
+) -> BuildArtifact:
+    """Resolve an artifact that may be bound by a NEW/CHANGED template binding.
+
+    A bindable artifact must be runnable AND unarchived. This is intentionally
+    SEPARATE from :func:`get_runnable_artifact_or_404` (runnable-only): template
+    run and schedule dispatch resolve runnable-only and must NOT re-check archive
+    state, so an artifact archived after a template was bound to it keeps running.
+    """
+    artifact = await get_runnable_artifact_or_404(session, artifact_id)
+    if artifact.archived_at is not None:
+        raise ApiError(
+            400,
+            "artifact.archived",
+            "errors.artifactArchived",
+            {"artifact_id": artifact_id},
+        )
+    return artifact
+
+
+def archive_artifact(artifact: BuildArtifact) -> BuildArtifact:
+    """Idempotently archive ``artifact``. A no-op (and stable ``archived_at``)
+    if it is already archived. The caller commits."""
+    if artifact.archived_at is None:
+        artifact.archived_at = datetime.now(UTC)
+    return artifact
+
+
+def unarchive_artifact(artifact: BuildArtifact) -> BuildArtifact:
+    """Idempotently unarchive ``artifact``. A no-op if it is not archived. The
+    caller commits."""
+    artifact.archived_at = None
+    return artifact
+
+
 def artifact_snapshot(artifact: BuildArtifact) -> dict[str, Any]:
     """The immutable build-artifact descriptor frozen onto a task snapshot."""
     meta = dict(artifact.artifact_metadata or {})
@@ -249,6 +286,8 @@ def build_artifact_view(artifact: BuildArtifact) -> dict[str, Any]:
         "spiders": list(meta.get("spiders") or []),
         "fetch_path": meta.get("fetch_path"),
         "runnable": artifact.artifact_type in states.RUNNABLE_ARTIFACT_TYPES,
+        "archived": artifact.archived_at is not None,
+        "archived_at": _iso(artifact.archived_at),
         "created_at": _iso(artifact.created_at),
         "updated_at": _iso(artifact.updated_at),
     }

@@ -94,6 +94,91 @@ async def test_upload_rejects_invalid_zip(exec_client):
     assert r.json()["code"] == "artifact.invalid_egg"
 
 
+async def _upload_egg(exec_client, *, extra: str = "") -> dict:
+    r = await exec_client.post(
+        "/api/v1/artifacts/scrapy/egg",
+        files={"file": ("demo.egg", _egg(extra=extra), "application/octet-stream")},
+        data={"project": "demo"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["artifact"]
+
+
+async def test_new_artifact_is_not_archived(exec_client):
+    artifact = await _upload_egg(exec_client)
+    assert artifact["archived"] is False
+    assert artifact["archived_at"] is None
+
+
+async def test_archive_then_unarchive_is_idempotent(exec_client):
+    artifact = await _upload_egg(exec_client)
+    aid = artifact["id"]
+
+    # Archive: derived flag + aware-UTC timestamp set.
+    first = await exec_client.post(f"/api/v1/artifacts/{aid}/archive")
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["id"] == aid
+    assert body["archived"] is True
+    assert body["archived_at"] is not None
+    # runnable is orthogonal to archived: still runnable.
+    assert body["runnable"] is True
+    stamp = body["archived_at"]
+
+    # Re-archiving keeps the ORIGINAL timestamp (stable, idempotent 200).
+    again = await exec_client.post(f"/api/v1/artifacts/{aid}/archive")
+    assert again.status_code == 200
+    assert again.json()["archived_at"] == stamp
+
+    # Unarchive clears it; unarchiving again is a no-op 200.
+    un = await exec_client.post(f"/api/v1/artifacts/{aid}/unarchive")
+    assert un.status_code == 200
+    assert un.json()["archived"] is False
+    assert un.json()["archived_at"] is None
+    un2 = await exec_client.post(f"/api/v1/artifacts/{aid}/unarchive")
+    assert un2.status_code == 200
+    assert un2.json()["archived"] is False
+
+
+async def test_archive_unknown_artifact_404(exec_client):
+    r = await exec_client.post("/api/v1/artifacts/nope/archive")
+    assert r.status_code == 404
+    assert r.json()["code"] == "artifact.not_found"
+
+
+async def test_archived_state_visible_in_list(exec_client):
+    artifact = await _upload_egg(exec_client)
+    await exec_client.post(f"/api/v1/artifacts/{artifact['id']}/archive")
+    rows = (await exec_client.get("/api/v1/artifacts")).json()["artifacts"]
+    match = next(a for a in rows if a["id"] == artifact["id"])
+    assert match["archived"] is True
+
+
+async def test_archive_reserved_non_runnable_artifact(exec_client, seeder):
+    # Archive is orthogonal to runnable: a reserved/non-runnable type can be
+    # archived too.
+    artifact = await seeder.build_artifact(
+        artifact_type="docker_image", package_format="image", sha256="d" * 64
+    )
+    r = await exec_client.post(f"/api/v1/artifacts/{artifact.id}/archive")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["archived"] is True
+    assert body["runnable"] is False
+
+
+async def test_reupload_identical_bytes_preserves_archive_state(exec_client):
+    artifact = await _upload_egg(exec_client)
+    aid = artifact["id"]
+    await exec_client.post(f"/api/v1/artifacts/{aid}/archive")
+
+    # Same-content re-upload reuses the row and must NOT clear archived_at.
+    reuploaded = await _upload_egg(exec_client)
+    assert reuploaded["id"] == aid
+    assert reuploaded["archived"] is True
+    assert reuploaded["archived_at"] is not None
+
+
 async def test_upload_rejects_egg_without_spiders(exec_client):
     buf = BytesIO()
     with ZipFile(buf, "w") as zf:

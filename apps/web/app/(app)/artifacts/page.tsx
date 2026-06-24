@@ -27,7 +27,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ToneBadge } from "@/components/features/status-badge";
-import { listBuildArtifacts, uploadEgg, uploadWheel } from "@/lib/api/artifacts";
+import {
+  archiveArtifact,
+  listBuildArtifacts,
+  unarchiveArtifact,
+  uploadEgg,
+  uploadWheel,
+} from "@/lib/api/artifacts";
 import type { BuildArtifact } from "@/lib/api/types";
 import { formatBytes, formatDateTime } from "@/lib/format";
 
@@ -44,6 +50,7 @@ export default function BuildArtifactsPage() {
   const [uploadingWheel, setUploadingWheel] = React.useState(false);
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [selected, setSelected] = React.useState<BuildArtifact | null>(null);
+  const [archivingId, setArchivingId] = React.useState("");
   const eggInput = React.useRef<HTMLInputElement | null>(null);
   const wheelInput = React.useRef<HTMLInputElement | null>(null);
 
@@ -89,6 +96,20 @@ export default function BuildArtifactsPage() {
   function openDetails(artifact: BuildArtifact) {
     setSelected(artifact);
     setDetailsOpen(true);
+  }
+
+  async function onToggleArchive(artifact: BuildArtifact) {
+    setArchivingId(artifact.id);
+    try {
+      if (artifact.archived) {
+        await unarchiveArtifact(artifact.id);
+      } else {
+        await archiveArtifact(artifact.id);
+      }
+      await load();
+    } finally {
+      setArchivingId("");
+    }
   }
 
   const isWheel = selected?.artifact_type === "python_wheel";
@@ -184,11 +205,21 @@ export default function BuildArtifactsPage() {
                     {formatBytes(a.size_bytes)}
                   </TableCell>
                   <TableCell>
-                    <ToneBadge tone={a.runnable ? "green" : "gray"}>
-                      {a.runnable
-                        ? t("artifacts.runnable")
-                        : t("artifacts.notRunnable")}
-                    </ToneBadge>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <ToneBadge tone={a.runnable ? "green" : "gray"}>
+                        {a.runnable
+                          ? t("artifacts.runnable")
+                          : t("artifacts.notRunnable")}
+                      </ToneBadge>
+                      {a.archived && (
+                        <ToneBadge
+                          tone="amber"
+                          data-testid={`artifact-archived-${a.name}`}
+                        >
+                          {t("artifacts.archived")}
+                        </ToneBadge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell data-testid={`artifact-uploaded-${a.name}`}>
                     {formatDateTime(a.created_at)}
@@ -201,6 +232,20 @@ export default function BuildArtifactsPage() {
                       onClick={() => openDetails(a)}
                     >
                       {t("artifacts.details")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      data-testid={`artifact-archive-${a.name}`}
+                      disabled={archivingId === a.id}
+                      onClick={() => onToggleArchive(a)}
+                    >
+                      {archivingId === a.id && (
+                        <Spinner data-icon="inline-start" />
+                      )}
+                      {a.archived
+                        ? t("artifacts.unarchive")
+                        : t("artifacts.archive")}
                     </Button>
                   </TableCell>
                 </TableRow>

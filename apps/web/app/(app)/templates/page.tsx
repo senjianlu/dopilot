@@ -124,14 +124,26 @@ export default function TemplatesPage() {
   );
   const isSelectedStrategy = nodeStrategy === "selected";
 
-  const runnableArtifacts = React.useMemo(
-    () => artifacts.filter((a) => a.runnable),
+  // Selectable for a NEW/CHANGED binding = runnable AND not archived. An
+  // archived artifact stays usable by templates already bound to it, but is not
+  // offered as a fresh option.
+  const selectableArtifacts = React.useMemo(
+    () => artifacts.filter((a) => a.runnable && !a.archived),
     [artifacts],
   );
   const selectedArtifact = React.useMemo(
     () => artifacts.find((a) => a.id === buildArtifactId),
     [artifacts, buildArtifactId],
   );
+  // When editing a template whose current binding is archived, keep showing it
+  // (so the Select trigger is not blank) as a disabled, non-selectable item.
+  const archivedCurrentBinding = React.useMemo(() => {
+    if (!selectedArtifact?.archived) return null;
+    if (selectableArtifacts.some((a) => a.id === selectedArtifact.id)) {
+      return null;
+    }
+    return selectedArtifact;
+  }, [selectedArtifact, selectableArtifacts]);
   const availableSpiders = selectedArtifact?.spiders ?? [];
   const isWheel = selectedArtifact?.artifact_type === "python_wheel";
   const resolvedProject = selectedArtifact?.project ?? "-";
@@ -171,7 +183,7 @@ export default function TemplatesPage() {
   const canSubmit = !!command && commandCheck.valid && !!selectedArtifact;
 
   function openCreate() {
-    const first = runnableArtifacts[0];
+    const first = selectableArtifacts[0];
     setEditingId("");
     setName("");
     setBuildArtifactId(first?.id ?? "");
@@ -380,11 +392,24 @@ export default function TemplatesPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
-                    {runnableArtifacts.map((a) => (
+                    {selectableArtifacts.map((a) => (
                       <SelectItem key={a.id} value={a.id}>
                         {`${a.name} · ${a.filename ?? a.id}`}
                       </SelectItem>
                     ))}
+                    {archivedCurrentBinding && (
+                      <SelectItem
+                        key={archivedCurrentBinding.id}
+                        value={archivedCurrentBinding.id}
+                        disabled
+                        data-testid="template-artifact-archived-current"
+                      >
+                        {`${archivedCurrentBinding.name} · ${
+                          archivedCurrentBinding.filename ??
+                          archivedCurrentBinding.id
+                        } (${t("artifacts.archived")})`}
+                      </SelectItem>
+                    )}
                   </SelectGroup>
                 </SelectContent>
               </Select>

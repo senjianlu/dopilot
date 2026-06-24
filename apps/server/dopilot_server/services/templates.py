@@ -76,7 +76,13 @@ async def _ensure_unique_name(
 
 
 async def _require_artifact(session: AsyncSession, build_artifact_id: str | None):
-    """Resolve + validate the mandatory runnable build artifact binding."""
+    """Resolve + validate the mandatory runnable build artifact binding.
+
+    Runnable-ONLY: this is the runtime resolution used by template run / schedule
+    dispatch (:func:`build_run_request`). It deliberately does NOT check archive
+    state, so a template bound before its artifact was archived keeps running. New
+    or changed bindings use :func:`_require_bindable_artifact` instead.
+    """
     if not (build_artifact_id or "").strip():
         raise ApiError(
             400,
@@ -85,6 +91,27 @@ async def _require_artifact(session: AsyncSession, build_artifact_id: str | None
             {},
         )
     return await artifact_svc.get_runnable_artifact_or_404(
+        session, build_artifact_id
+    )
+
+
+async def _require_bindable_artifact(
+    session: AsyncSession, build_artifact_id: str | None
+):
+    """Resolve + validate a build artifact for a NEW or CHANGED template binding.
+
+    Bindable = runnable AND unarchived. Used by create + rebind-on-update only;
+    NEVER by the run/dispatch path, so archiving an artifact does not break runs
+    of templates already bound to it.
+    """
+    if not (build_artifact_id or "").strip():
+        raise ApiError(
+            400,
+            "template.build_artifact_required",
+            "errors.buildArtifactRequired",
+            {},
+        )
+    return await artifact_svc.get_bindable_artifact_or_404(
         session, build_artifact_id
     )
 
@@ -108,7 +135,10 @@ async def create_template(
     _validate_basics(data)
     name = str(data["name"]).strip()
     await _ensure_unique_name(session, name)
-    artifact = await _require_artifact(session, data.get("build_artifact_id"))
+    # A brand-new binding must be runnable AND unarchived.
+    artifact = await _require_bindable_artifact(
+        session, data.get("build_artifact_id")
+    )
     meta = dict(artifact.artifact_metadata or {})
     # Once the artifact is known, validate the command for its type.
     _validate_command_for_artifact(artifact, str(data["command"]).strip())
@@ -141,9 +171,18 @@ async def update_template(
     new_name = str(merged["name"]).strip()
     await _ensure_unique_name(session, new_name, exclude_id=template.id)
     # build_artifact_id is mandatory on every update; default to the current one.
-    artifact = await _require_artifact(
-        session, data.get("build_artifact_id", template.build_artifact_id)
-    )
+    # Only a CHANGE of binding must be runnable AND unarchived — keeping the
+    # current binding (even if it was archived after binding) stays editable, so
+    # the template remains editable for other fields. The empty/unknown/
+    # not-runnable cases are still validated for both paths.
+    new_artifact_id = data.get("build_artifact_id", template.build_artifact_id)
+    is_rebind = (new_artifact_id or "").strip() != (
+        template.build_artifact_id or ""
+    ).strip()
+    if is_rebind:
+        artifact = await _require_bindable_artifact(session, new_artifact_id)
+    else:
+        artifact = await _require_artifact(session, new_artifact_id)
     meta = dict(artifact.artifact_metadata or {})
     # Once the artifact is known, validate the command for its type.
     _validate_command_for_artifact(artifact, str(merged["command"]).strip())

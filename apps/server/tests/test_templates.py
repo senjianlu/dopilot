@@ -132,6 +132,107 @@ async def test_create_template_reserved_artifact_not_runnable_400(
     assert r.json()["code"] == "artifact.not_runnable"
 
 
+async def test_create_template_with_archived_artifact_400(exec_client, seeder):
+    artifact = await seeder.build_artifact()
+    archived = await exec_client.post(f"/api/v1/artifacts/{artifact.id}/archive")
+    assert archived.status_code == 200, archived.text
+    r = await exec_client.post(
+        "/api/v1/templates",
+        json={
+            "name": "x",
+            "build_artifact_id": artifact.id,
+            "command": "scrapy crawl phase1",
+        },
+    )
+    assert r.status_code == 400
+    assert r.json()["code"] == "artifact.archived"
+
+
+async def test_rebind_template_to_archived_artifact_400(exec_client, seeder):
+    template = await _create_template(exec_client, seeder)
+    other = await seeder.build_artifact(sha256="b" * 64)
+    await exec_client.post(f"/api/v1/artifacts/{other.id}/archive")
+    r = await exec_client.put(
+        f"/api/v1/templates/{template['id']}",
+        json={"build_artifact_id": other.id, "command": "scrapy crawl phase1"},
+    )
+    assert r.status_code == 400
+    assert r.json()["code"] == "artifact.archived"
+
+
+async def test_edit_template_bound_to_archived_artifact_allowed(
+    exec_client, seeder
+):
+    # A template already bound to an artifact that was archived AFTER binding
+    # stays editable for other fields (no rebind) — archive must not block edits.
+    artifact = await seeder.build_artifact(spiders=("phase1", "phase2"))
+    template = await _create_template(exec_client, seeder, _artifact=artifact)
+    await exec_client.post(f"/api/v1/artifacts/{artifact.id}/archive")
+
+    # Edit a non-binding field (command); keep the same (now archived) binding.
+    r = await exec_client.put(
+        f"/api/v1/templates/{template['id']}",
+        json={"command": "scrapy crawl phase2"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["command"] == "scrapy crawl phase2"
+
+    # Even an explicit re-send of the SAME archived binding is not a rebind.
+    r2 = await exec_client.put(
+        f"/api/v1/templates/{template['id']}",
+        json={
+            "build_artifact_id": artifact.id,
+            "command": "scrapy crawl phase1",
+        },
+    )
+    assert r2.status_code == 200, r2.text
+
+
+async def test_run_template_bound_to_archived_artifact_still_runs(
+    exec_client, exec_redis, seeder
+):
+    # The core invariant: archiving never blocks runs of an already-bound
+    # template. Run + schedule dispatch resolve runnable-ONLY, no archive check.
+    await seeder.healthy_node()
+    artifact = await seeder.build_artifact()
+    template = await _create_template(exec_client, seeder, _artifact=artifact)
+    await exec_client.post(f"/api/v1/artifacts/{artifact.id}/archive")
+
+    r = await exec_client.post(f"/api/v1/templates/{template['id']}/run")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "queued"
+    cmds = await _commands(exec_redis)
+    assert len(cmds) == 1
+
+
+async def test_schedule_dispatch_archived_artifact_still_fires(
+    exec_client, exec_redis, seeder
+):
+    # Schedule trigger-now goes through the same runnable-only resolution; an
+    # archived binding must still dispatch.
+    await seeder.healthy_node()
+    artifact = await seeder.build_artifact()
+    template = await _create_template(exec_client, seeder, _artifact=artifact)
+    schedule = await exec_client.post(
+        "/api/v1/schedules",
+        json={
+            "name": "arch-sched",
+            "execution_template_id": template["id"],
+            "trigger_type": "interval",
+            "interval_seconds": 30,
+        },
+    )
+    assert schedule.status_code == 200, schedule.text
+    await exec_client.post(f"/api/v1/artifacts/{artifact.id}/archive")
+
+    fired = await exec_client.post(
+        f"/api/v1/schedules/{schedule.json()['id']}/trigger-now"
+    )
+    assert fired.status_code == 200, fired.text
+    cmds = await _commands(exec_redis)
+    assert len(cmds) == 1
+
+
 async def test_get_template_404(exec_client):
     r = await exec_client.get("/api/v1/templates/nope")
     assert r.status_code == 404

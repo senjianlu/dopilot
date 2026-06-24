@@ -77,6 +77,12 @@ class BuildArtifactView(BaseModel):
     distribution: str | None = None
     fetch_path: str | None = None
     runnable: bool = False
+    # Phase task-artifact-archive: reversible archive state. ``archived`` is
+    # derived from ``archived_at`` (NULL => false). Archived artifacts stay
+    # visible and runnable by existing bindings, but are not selectable for new
+    # template bindings. Orthogonal to ``runnable`` (selectable != runnable).
+    archived: bool = False
+    archived_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 

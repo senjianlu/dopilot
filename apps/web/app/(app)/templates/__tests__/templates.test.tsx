@@ -59,6 +59,8 @@ const artifact: BuildArtifact = {
   spiders: ["phase1", "phase2"],
   fetch_path: null,
   runnable: true,
+  archived: false,
+  archived_at: null,
   created_at: null,
   updated_at: null,
 };
@@ -160,6 +162,47 @@ describe("TemplatesPage", () => {
       }),
     );
     expect(createTemplate).not.toHaveBeenCalled();
+  });
+
+  it("edit form keeps an archived current binding visible but not a fresh option", async () => {
+    const user = userEvent.setup();
+    // The template is bound to art-1, which has since been archived. A second,
+    // non-archived artifact is the only fresh selectable option.
+    const archived: BuildArtifact = {
+      ...artifact,
+      archived: true,
+      archived_at: "2026-06-24T00:00:00Z",
+    };
+    const fresh: BuildArtifact = {
+      ...artifact,
+      id: "art-2",
+      name: "fresh",
+      filename: "fresh.egg",
+      archived: false,
+      archived_at: null,
+    };
+    listBuildArtifacts.mockReset().mockResolvedValue([archived, fresh]);
+    renderWithProviders(<TemplatesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("template-edit-demo-template"),
+      ).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId("template-edit-demo-template"));
+    await waitFor(() =>
+      expect(screen.getByTestId("template-dialog")).toBeInTheDocument(),
+    );
+    // Open the artifact picker.
+    await user.click(screen.getByTestId("template-artifact-select"));
+    // The current (archived) binding is shown but disabled — not a fresh choice.
+    const current = await screen.findByTestId(
+      "template-artifact-archived-current",
+    );
+    expect(current).toHaveTextContent("Archived");
+    expect(current).toHaveAttribute("data-disabled");
+    // The non-archived artifact IS offered as a selectable option.
+    const freshOption = screen.getByText("fresh · fresh.egg");
+    expect(freshOption).not.toHaveAttribute("data-disabled");
   });
 
   it("deletes a template only after confirmation", async () => {
