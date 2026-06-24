@@ -29,7 +29,7 @@ import {
 import { ToneBadge } from "@/components/features/status-badge";
 import { listBuildArtifacts, uploadEgg, uploadWheel } from "@/lib/api/artifacts";
 import type { BuildArtifact } from "@/lib/api/types";
-import { formatBytes } from "@/lib/format";
+import { formatBytes, formatDateTime } from "@/lib/format";
 
 function shortHash(hash: string | null): string {
   if (!hash) return "-";
@@ -150,6 +150,7 @@ export default function BuildArtifactsPage() {
               <TableHead>{t("artifacts.hash")}</TableHead>
               <TableHead>{t("artifacts.size")}</TableHead>
               <TableHead>{t("artifacts.status")}</TableHead>
+              <TableHead>{t("artifacts.uploadedAt")}</TableHead>
               <TableHead className="text-right">
                 {t("artifacts.actions")}
               </TableHead>
@@ -159,7 +160,7 @@ export default function BuildArtifactsPage() {
             {artifacts.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={8}
+                  colSpan={9}
                   className="text-muted-foreground text-center"
                 >
                   {loading ? "…" : t("artifacts.empty")}
@@ -188,6 +189,9 @@ export default function BuildArtifactsPage() {
                         ? t("artifacts.runnable")
                         : t("artifacts.notRunnable")}
                     </ToneBadge>
+                  </TableCell>
+                  <TableCell data-testid={`artifact-uploaded-${a.name}`}>
+                    {formatDateTime(a.created_at)}
                   </TableCell>
                   <TableCell className="text-right">
                     <Button
@@ -249,6 +253,10 @@ export default function BuildArtifactsPage() {
               <dd className="break-all">{selected.content_hash ?? "-"}</dd>
               <dt className="text-muted-foreground">{t("artifacts.size")}</dt>
               <dd>{formatBytes(selected.size_bytes)}</dd>
+              <dt className="text-muted-foreground">
+                {t("artifacts.uploadedAt")}
+              </dt>
+              <dd>{formatDateTime(selected.created_at)}</dd>
             </dl>
           )}
 
