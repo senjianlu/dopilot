@@ -35,6 +35,13 @@ def fetch_headers(url: str) -> dict[str, str]:
 
 
 def main() -> int:
+    dopilot_env = {
+        key: value for key, value in sorted(os.environ.items())
+        if key.startswith("DOPILOT_")
+    }
+    print("dopilot-demo: dopilot env:", flush=True)
+    print(json.dumps(dopilot_env, indent=2, sort_keys=True), flush=True)
+
     url = os.environ.get("DOPILOT_DEMO_URL", DEFAULT_URL)
     print(f"dopilot-demo: requesting {url}", flush=True)
     try:

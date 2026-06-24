@@ -44,6 +44,7 @@ from dopilot_protocol import (
     AgentEvent,
     AgentEventType,
     AgentLogEvent,
+    DopilotRuntimeContext,
     StopIntent,
     command_stream,
     from_stream_entry,
@@ -242,6 +243,42 @@ async def test_wheel_run_pythonpath_and_unbuffered_injected(workdir, fake_redis)
     merged = Path(store.read("w1").log_path).read_text(encoding="utf-8")
     assert str(workdir / "site") in merged  # install site on PYTHONPATH
     assert "BUF=1" in merged
+
+
+async def test_wheel_run_injects_runtime_context_env_last(workdir, fake_redis):
+    fake = fake_redis()
+    store, _r, _wr, _cache, consumer, _s = _build(workdir, fake)
+    await consumer.setup()
+
+    ctx = DopilotRuntimeContext(
+        task_id="t-runtime",
+        execution_id="w-runtime",
+        agent_id=AGENT_ID,
+        artifact_type="python_wheel",
+        task_type="python_wheel",
+        source="schedule",
+        schedule_id="sched-1",
+    )
+    cmd = _wheel_cmd(
+        execution_id="w-runtime",
+        task_id="t-runtime",
+        shell_command=(
+            'echo "TASK=$DOPILOT_TASK_ID"; '
+            'echo "EXEC=$DOPILOT_EXECUTION_ID"; '
+            'echo "CTX=$DOPILOT_RUNTIME_CONTEXT"'
+        ),
+        env={"DOPILOT_TASK_ID": "forged"},
+    )
+    cmd.payload["runtime_context"] = ctx.model_dump()
+    await fake.xadd(STREAM, to_stream_entry(cmd))
+    await consumer.drain_once()
+    await _settle(consumer)
+
+    merged = Path(store.read("w-runtime").log_path).read_text(encoding="utf-8")
+    assert "TASK=t-runtime" in merged
+    assert "EXEC=w-runtime" in merged
+    assert f"CTX={ctx.to_json()}" in merged
+    assert "forged" not in merged
 
 
 async def test_wheel_run_working_dir_escape_emits_failed(workdir, fake_redis):

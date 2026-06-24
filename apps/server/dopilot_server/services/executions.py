@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from dopilot_protocol import (
+    DopilotRuntimeContext,
     ExecutionRunRequest,
     ScrapyCommandError,
     parse_scrapy_command,
@@ -210,6 +211,26 @@ def create_execution(
     )
     session.add(execution)
     return execution
+
+
+def runtime_context_for(
+    *,
+    task: Task,
+    execution: Execution,
+    artifact_type: str,
+    task_type: str,
+) -> DopilotRuntimeContext:
+    """Build the canonical workload runtime context for one concrete target."""
+    return DopilotRuntimeContext(
+        task_id=task.id,
+        execution_id=execution.id,
+        agent_id=execution.agent_id or "",
+        artifact_type=artifact_type,
+        task_type=task_type,
+        source=task.source,
+        execution_template_id=task.execution_template_id,
+        schedule_id=task.schedule_id,
+    )
 
 
 def create_log_file(

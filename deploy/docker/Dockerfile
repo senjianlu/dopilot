@@ -55,6 +55,8 @@ COPY examples/scrapy_clock ./examples/scrapy_clock
 RUN cd /app/examples/scrapy_clock \
     && python setup.py clean --all >/dev/null 2>&1 || true \
     && python setup.py bdist_egg \
+    && mkdir -p /app/builtin-artifacts/scrapy \
+    && cp dist/*.egg /app/builtin-artifacts/scrapy/dopilot_clock.egg \
     && mkdir -p /server-data/artifacts/scrapy \
     && python - <<'PY'
 import hashlib, json
@@ -89,6 +91,9 @@ PY
 # (same sha256 dedupe key the agent later fetches/installs).
 COPY tests/fixtures/python_wheel_demo/dopilot_demo-0.1.0-py3-none-any.whl \
     /app/examples/python_wheel_demo/dopilot_demo-0.1.0-py3-none-any.whl
+RUN mkdir -p /app/builtin-artifacts/python_wheel \
+    && cp /app/examples/python_wheel_demo/dopilot_demo-0.1.0-py3-none-any.whl \
+        /app/builtin-artifacts/python_wheel/dopilot_demo-0.1.0-py3-none-any.whl
 RUN python - <<'PY'
 from pathlib import Path
 
