@@ -82,6 +82,9 @@ const en = {
     empty: "No build artifacts yet",
     runnable: "runnable",
     notRunnable: "n/a",
+    archived: "Archived",
+    archive: "Archive",
+    unarchive: "Unarchive",
   },
   tasks: {
     title: "Tasks",
@@ -274,6 +277,7 @@ const en = {
     unauthorized: "Unauthorized, please sign in again",
     unknownArtifactType: "Unknown artifact type",
     artifactNotRunnable: "This artifact is not runnable",
+    artifactArchived: "This build artifact is archived and cannot be bound",
     invalidWheel: "Invalid wheel file (must be a valid .whl)",
     buildArtifactRequired: "A build artifact is required",
     artifactOverrideForbidden: "Overriding the build artifact is not allowed",

@@ -58,6 +58,44 @@ async def list_build_artifacts(
 
 
 @router.post(
+    "/artifacts/{artifact_id}/archive", response_model=BuildArtifactView
+)
+async def archive_build_artifact(
+    artifact_id: str,
+    _admin: AdminContext = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> BuildArtifactView:
+    """Idempotently archive a build artifact (admin-only).
+
+    Archiving keeps the artifact visible and runnable by templates already bound
+    to it; it only blocks NEW/CHANGED template bindings. Re-archiving an already
+    archived artifact keeps the original ``archived_at`` and returns 200.
+    """
+    artifact = await svc.get_build_artifact_or_404(session, artifact_id)
+    svc.archive_artifact(artifact)
+    await session.commit()
+    await session.refresh(artifact)
+    return BuildArtifactView(**svc.build_artifact_view(artifact))
+
+
+@router.post(
+    "/artifacts/{artifact_id}/unarchive", response_model=BuildArtifactView
+)
+async def unarchive_build_artifact(
+    artifact_id: str,
+    _admin: AdminContext = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> BuildArtifactView:
+    """Idempotently unarchive a build artifact (admin-only). Unarchiving an
+    already-unarchived artifact is a no-op and returns 200."""
+    artifact = await svc.get_build_artifact_or_404(session, artifact_id)
+    svc.unarchive_artifact(artifact)
+    await session.commit()
+    await session.refresh(artifact)
+    return BuildArtifactView(**svc.build_artifact_view(artifact))
+
+
+@router.post(
     "/artifacts/scrapy/egg", response_model=BuildArtifactUploadResponse
 )
 async def upload_scrapy_egg(

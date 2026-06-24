@@ -106,6 +106,11 @@ export interface BuildArtifact {
   distribution?: string | null;
   fetch_path: string | null;
   runnable: boolean;
+  // Phase task-artifact-archive: reversible archive state. `archived` is derived
+  // from `archived_at` (null => false). Archived artifacts stay visible and
+  // runnable by existing template bindings, but are not selectable for new ones.
+  archived: boolean;
+  archived_at: string | null;
   created_at: string | null;
   updated_at: string | null;
 }

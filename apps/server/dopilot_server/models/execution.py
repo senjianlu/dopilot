@@ -275,6 +275,14 @@ class BuildArtifact(Base):
     artifact_metadata: Mapped[dict] = mapped_column(
         _JSON, nullable=False, default=dict
     )
+    # Phase task-artifact-archive: a reversible archive marker. An archived
+    # artifact stays visible and runnable by templates already bound to it, but
+    # is NOT selectable for new/changed template bindings. NULL = not archived;
+    # the API derives ``archived = archived_at is not None``. There is no broad
+    # status enum — archive is just this nullable aware-UTC timestamp.
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

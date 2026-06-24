@@ -7,10 +7,14 @@ import type { BuildArtifact } from "@/lib/api/types";
 const listBuildArtifacts = vi.fn();
 const uploadEgg = vi.fn();
 const uploadWheel = vi.fn();
+const archiveArtifact = vi.fn();
+const unarchiveArtifact = vi.fn();
 vi.mock("@/lib/api/artifacts", () => ({
   listBuildArtifacts: () => listBuildArtifacts(),
   uploadEgg: (input: unknown) => uploadEgg(input),
   uploadWheel: (input: unknown) => uploadWheel(input),
+  archiveArtifact: (id: string) => archiveArtifact(id),
+  unarchiveArtifact: (id: string) => unarchiveArtifact(id),
 }));
 
 import BuildArtifactsPage from "@/app/(app)/artifacts/page";
@@ -28,6 +32,8 @@ const scrapyArtifact: BuildArtifact = {
   spiders: ["phase1", "phase2"],
   fetch_path: null,
   runnable: false,
+  archived: false,
+  archived_at: null,
   created_at: null,
   updated_at: null,
 };
@@ -46,6 +52,8 @@ const wheelArtifact: BuildArtifact = {
   spiders: [],
   fetch_path: null,
   runnable: true,
+  archived: false,
+  archived_at: null,
   created_at: null,
   updated_at: null,
 };
@@ -54,6 +62,8 @@ beforeEach(() => {
   listBuildArtifacts.mockReset().mockResolvedValue([scrapyArtifact, wheelArtifact]);
   uploadEgg.mockReset().mockResolvedValue({ artifact: scrapyArtifact, spiders: [] });
   uploadWheel.mockReset().mockResolvedValue({ artifact: wheelArtifact, spiders: [] });
+  archiveArtifact.mockReset().mockResolvedValue({ ...scrapyArtifact, archived: true });
+  unarchiveArtifact.mockReset().mockResolvedValue(scrapyArtifact);
 });
 
 afterEach(() => vi.clearAllMocks());
@@ -98,6 +108,43 @@ describe("BuildArtifactsPage", () => {
     await user.upload(input, file);
     await waitFor(() => expect(uploadEgg).toHaveBeenCalledTimes(1));
     expect(uploadEgg.mock.calls[0][0]).toMatchObject({ file });
+  });
+
+  it("archives a non-archived artifact and reloads", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<BuildArtifactsPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("artifact-archive-demo")).toBeInTheDocument(),
+    );
+    // A non-archived artifact shows the "Archive" action and no archived badge.
+    expect(screen.getByTestId("artifact-archive-demo")).toHaveTextContent(
+      "Archive",
+    );
+    expect(
+      screen.queryByTestId("artifact-archived-demo"),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("artifact-archive-demo"));
+    await waitFor(() => expect(archiveArtifact).toHaveBeenCalledWith("art-1"));
+    expect(unarchiveArtifact).not.toHaveBeenCalled();
+  });
+
+  it("shows the archived badge and an Unarchive action for archived rows", async () => {
+    const user = userEvent.setup();
+    listBuildArtifacts
+      .mockReset()
+      .mockResolvedValue([
+        { ...scrapyArtifact, archived: true, archived_at: "2026-06-24T00:00:00Z" },
+      ]);
+    renderWithProviders(<BuildArtifactsPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("artifact-archived-demo")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("artifact-archive-demo")).toHaveTextContent(
+      "Unarchive",
+    );
+    await user.click(screen.getByTestId("artifact-archive-demo"));
+    await waitFor(() => expect(unarchiveArtifact).toHaveBeenCalledWith("art-1"));
+    expect(archiveArtifact).not.toHaveBeenCalled();
   });
 
   it("shows the wheel distribution in the details dialog", async () => {

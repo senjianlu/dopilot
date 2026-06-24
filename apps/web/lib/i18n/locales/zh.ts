@@ -80,6 +80,9 @@ const zh = {
     empty: "暂无构建产物",
     runnable: "可运行",
     notRunnable: "不可运行",
+    archived: "已归档",
+    archive: "归档",
+    unarchive: "取消归档",
   },
   tasks: {
     title: "任务",
@@ -270,6 +273,7 @@ const zh = {
     unauthorized: "未授权，请重新登录",
     unknownArtifactType: "未知的产物类型",
     artifactNotRunnable: "该产物不可运行",
+    artifactArchived: "该构建产物已归档，无法绑定",
     invalidWheel: "无效的 wheel 文件（必须是有效的 .whl）",
     buildArtifactRequired: "必须选择一个构建产物",
     artifactOverrideForbidden: "不允许覆盖构建产物",

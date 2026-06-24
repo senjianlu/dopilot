@@ -50,3 +50,20 @@ export async function uploadWheel(
   );
   return data;
 }
+
+// Idempotently archive a build artifact. Archived artifacts stay visible and
+// runnable by existing bindings but cannot be picked for new template bindings.
+export async function archiveArtifact(id: string): Promise<BuildArtifact> {
+  const { data } = await client.post<BuildArtifact>(
+    `/artifacts/${id}/archive`,
+  );
+  return data;
+}
+
+// Idempotently unarchive a build artifact (makes it selectable again).
+export async function unarchiveArtifact(id: string): Promise<BuildArtifact> {
+  const { data } = await client.post<BuildArtifact>(
+    `/artifacts/${id}/unarchive`,
+  );
+  return data;
+}
