@@ -87,7 +87,10 @@ describe("TaskDetailPage", () => {
     await waitFor(() => expect(getTask).toHaveBeenCalledWith("task-1"));
     expect(await screen.findByTestId("task-status")).toHaveTextContent("running");
     expect(screen.getByTestId("execution-agent-agent-1")).toBeInTheDocument();
-    expect(screen.getByTestId("log-viewer")).toHaveAttribute(
+    // The log viewer mounts after a follow-up effect resolves the default
+    // selected execution (detail/page.tsx), so wait for it rather than querying
+    // synchronously — the same async appearance the sibling test relies on.
+    expect(await screen.findByTestId("log-viewer")).toHaveAttribute(
       "data-execution-id",
       "ex-1",
     );
