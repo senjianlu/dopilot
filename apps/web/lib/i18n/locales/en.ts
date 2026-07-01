@@ -2,6 +2,7 @@
 const en = {
   common: {
     appName: "dopilot",
+    console: "Scheduling Console",
     logout: "Log out",
     language: "Language",
     theme: "Theme",

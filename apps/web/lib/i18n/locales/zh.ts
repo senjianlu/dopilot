@@ -2,6 +2,7 @@
 const zh = {
   common: {
     appName: "dopilot",
+    console: "调度控制台",
     logout: "退出登录",
     language: "语言",
     theme: "主题",
