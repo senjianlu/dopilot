@@ -57,6 +57,12 @@ class RedisStreamClient(Protocol):
 
     async def xlen(self, stream: str) -> int: ...
 
+    async def xinfo_stream(self, stream: str) -> dict[str, Any]: ...
+
+    async def info(self, section: str | None = None) -> dict[str, Any]: ...
+
+    async def bgrewriteaof(self) -> Any: ...
+
     async def xtrim(
         self,
         stream: str,
@@ -131,6 +137,31 @@ class RedisStreams:
 
     async def xlen(self, stream: str) -> int:
         return await self._c.xlen(stream)
+
+    async def xinfo_stream(self, stream: str) -> dict[str, Any]:
+        """Return ``XINFO STREAM`` (``length`` + ``first-entry`` id/fields).
+
+        Resource dashboard (D2): a non-existent stream is the NORMAL state for a
+        fresh deployment (no logs yet) or an agent that has received no command,
+        so ``ERR no such key`` is mapped to an empty ``{"length": 0,
+        "first-entry": None}`` — the caller must NOT treat it as a Redis failure
+        and degrade the whole scope. Any other ``ResponseError`` propagates."""
+        try:
+            return await self._c.xinfo_stream(stream)
+        except ResponseError as exc:
+            if "no such key" in str(exc).lower():
+                return {"length": 0, "first-entry": None}
+            raise
+
+    async def info(self, section: str | None = None) -> dict[str, Any]:
+        """Return ``INFO [section]`` as a parsed dict (memory/persistence)."""
+        if section is None:
+            return await self._c.info()
+        return await self._c.info(section)
+
+    async def bgrewriteaof(self) -> Any:
+        """Trigger a background AOF rewrite (operator "reclaim AOF now")."""
+        return await self._c.bgrewriteaof()
 
     async def xtrim(
         self,

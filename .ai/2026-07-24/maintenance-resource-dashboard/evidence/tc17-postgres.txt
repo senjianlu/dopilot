@@ -1,0 +1,21 @@
+# CMD: bash .ai/2026-07-24/maintenance-resource-dashboard/evidence/tc17-postgres.sh
+=== docker run postgres:16 (port 55432) ===
+container: d8adaf26b76595d39a49f0a825162026df56dccec07a433b08f64e59d25f007d
+=== wait for readiness ===
+postgres ready
+=== alembic upgrade head ===
+=== pytest TC-17 (real PostgreSQL) ===
+============================= test session starts ==============================
+platform linux -- Python 3.12.1, pytest-9.1.1, pluggy-1.6.0 -- /home/codespace/.python/current/bin/python
+cachedir: .pytest_cache
+rootdir: /workspaces/dopilot
+configfile: pyproject.toml
+plugins: anyio-4.12.1, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 50 items / 49 deselected / 1 selected
+
+apps/server/tests/test_resource_stats.py::test_tc17_postgres_size_and_age_real PASSED [100%]
+
+======================= 1 passed, 49 deselected in 0.31s =======================
+=== pytest exit: 0 ===
+# Script exit code: 0

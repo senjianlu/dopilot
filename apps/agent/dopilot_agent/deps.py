@@ -21,6 +21,7 @@ from . import __version__
 from .artifacts.cache import ScrapyArtifactCache
 from .artifacts.wheel_cache import PythonWheelCache
 from .config.settings import Settings
+from .disk_status import DiskStatus
 from .redis.heartbeat import HeartbeatWorker
 from .redis.status import RedisRuntimeStatus
 from .runners.python_wheel import PythonWheelRunner
@@ -40,6 +41,7 @@ class AgentRuntime:
     store: StateStore
     runner: ScrapyRunner
     redis_status: RedisRuntimeStatus | None = None
+    disk_status: DiskStatus | None = None
     artifact_cache: ScrapyArtifactCache | None = None
     wheel_cache: PythonWheelCache | None = None
     wheel_runner: PythonWheelRunner | None = None
@@ -89,6 +91,8 @@ def build_runtime(settings: Settings) -> AgentRuntime:
         logs_dir=scrapyd_logs_dir(workdir),
     )
     redis_status = RedisRuntimeStatus() if settings.redis.url else None
+    # Shared disk-usage sample: the janitor publishes it, the heartbeat reads it.
+    disk_status = DiskStatus()
     artifact_cache: ScrapyArtifactCache | None = None
     wheel_cache: PythonWheelCache | None = None
     if settings.agent.server_url:
@@ -118,6 +122,7 @@ def build_runtime(settings: Settings) -> AgentRuntime:
             store=store,
             version=__version__,
             redis_status=redis_status,
+            disk_status=disk_status,
         )
     return AgentRuntime(
         settings=settings,
@@ -126,6 +131,7 @@ def build_runtime(settings: Settings) -> AgentRuntime:
         store=store,
         runner=runner,
         redis_status=redis_status,
+        disk_status=disk_status,
         artifact_cache=artifact_cache,
         wheel_cache=wheel_cache,
         wheel_runner=wheel_runner,

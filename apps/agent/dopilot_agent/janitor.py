@@ -29,14 +29,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fnmatch
 import logging
 import os
 import shutil
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .config.settings import Settings
+from .disk_status import DiskStatus
 from .runners.python_wheel import PGID_SIDECAR, PythonWheelRunner
 from .state.store import StateStore
 
@@ -103,6 +106,7 @@ class AgentJanitor:
         release: Callable[[str], None] | None = None,
         active_ids: Callable[[], set[str]] | None = None,
         lock_for: Callable[[str], object] | None = None,
+        disk_status: DiskStatus | None = None,
         interval_seconds: float | None = None,
     ) -> None:
         self._settings = settings
@@ -110,6 +114,8 @@ class AgentJanitor:
         self._runner = wheel_runner
         self._cursor_dir = Path(cursor_dir)
         self._artifacts_root = Path(artifacts_root)
+        # Resource dashboard (D1): where each sweep publishes its disk sample.
+        self._disk_status = disk_status
         # Called after an execution's files are removed, so the consumer can drop
         # its in-memory bookkeeping (locks, EOF dedup, runner dicts).
         self._release = release
@@ -141,6 +147,14 @@ class AgentJanitor:
             await asyncio.to_thread(self._sweep_cache)
         except Exception:  # noqa: BLE001
             logger.error("janitor: cache sweep failed", exc_info=True)
+        # Resource dashboard (D1): publish a fresh disk sample for the heartbeat.
+        # All FS work runs in a thread; a per-item failure only nulls that item.
+        if self._disk_status is not None:
+            try:
+                sample = await asyncio.to_thread(self._collect_disk_sample)
+                self._disk_status.update(sample)
+            except Exception:  # noqa: BLE001 - never abort the sweep
+                logger.error("janitor: disk sample failed", exc_info=True)
 
     # --- C1: workspace / log / state TTL GC --------------------------------
     async def _sweep_workspaces(self, now: float) -> None:
@@ -235,12 +249,10 @@ class AgentJanitor:
 
     # --- C4: artifact/wheel cache LRU eviction -----------------------------
     def _sweep_cache(self) -> None:
-        cap = self._settings.agent.artifact_cache_max_bytes
-        if cap <= 0:
-            return
         entries = self._cache_entries()
         total = sum(e["size"] for e in entries)
-        if total <= cap:
+        cap = self._settings.agent.artifact_cache_max_bytes
+        if cap <= 0 or total <= cap:
             return
         referenced = self._referenced_wheel_shas()
         # LRU: evict oldest-ready-first. Referenced entries are never evicted; each
@@ -354,6 +366,57 @@ class AgentJanitor:
                 continue
         return ok
 
+    # --- D1: disk-usage sample (published to the heartbeat) ----------------
+    def _collect_disk_sample(self) -> dict:
+        """Assemble a fixed-shape disk sample (counts/bytes only, no file lists).
+
+        Runs in a worker thread. Each sub-item is guarded independently: a
+        failure (e.g. an unreadable dir) nulls only that item and never aborts
+        the sweep. ``sampled_at`` + ``interval_seconds`` let the server judge
+        staleness (2x the interval). Every byte/count uses the STRICT sample
+        helpers (``_dir_bytes`` / ``_count_*``) so an access failure nulls the
+        sub-item instead of masking as 0 — including the cache metric, which is
+        measured directly (NOT reused from the tolerant eviction ``_tree_size``)
+        and therefore reflects the real, post-eviction tree."""
+        s = self._settings
+        workdir = Path(s.agent.workdir)
+        sample: dict = {
+            "sampled_at": datetime.now(UTC).isoformat(),
+            "interval_seconds": s.agent.janitor_interval_seconds,
+        }
+        sample["workspaces"] = _guard(
+            lambda: {
+                "count": _count_dirs(self._wheel_workspace_root),
+                "bytes": _dir_bytes(self._wheel_workspace_root),
+            }
+        )
+        sample["cache"] = _guard(
+            lambda: {
+                "bytes": _dir_bytes(self._artifacts_root),
+                "limit": s.agent.artifact_cache_max_bytes,
+            }
+        )
+        sample["scrapyd"] = _guard(
+            lambda: {"bytes": _dir_bytes(workdir / "scrapyd")}
+        )
+        outbox_dir = s.redis.event_outbox_dir
+        if outbox_dir:
+            sample["outbox"] = _guard(
+                lambda: {
+                    "files": _count_glob(Path(outbox_dir), "*.json"),
+                    "bytes": _dir_bytes(Path(outbox_dir)),
+                    "limit": s.redis.event_outbox_max_files,
+                }
+            )
+        sample["state"] = _guard(
+            lambda: {
+                "executions": len(self._store.list_execution_ids()),
+                "logpos": _count_glob(self._cursor_dir, "*.logpos"),
+            }
+        )
+        sample["volume"] = _guard(lambda: _volume(workdir))
+        return sample
+
     # --- loop --------------------------------------------------------------
     async def _run(self) -> None:
         while not self._stop.is_set():
@@ -394,3 +457,77 @@ def _safe_mtime(path: Path) -> float:
         return path.stat().st_mtime
     except OSError:
         return 0.0
+
+
+def _guard(fn: Callable[[], dict]) -> dict | None:
+    """Run a sample sub-collector; None if it raises (item-level isolation)."""
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001 - a bad sub-item nulls only itself
+        return None
+
+
+# Disk-sample size/count helpers. Unlike the cache-eviction ``_tree_size`` (which
+# tolerates errors so eviction never stalls), these DISTINGUISH a genuinely-absent
+# directory from an ACCESS FAILURE: ONLY ``FileNotFoundError`` means "not created
+# yet" (-> 0); ``PermissionError`` and any other ``OSError`` PROPAGATE so ``_guard``
+# nulls that sub-item. A misconfigured/unreadable dir must never be reported as a
+# fake zero (resource dashboard D1, review R-01). They avoid ``Path.exists()`` and
+# ``Path.glob()``, both of which swallow permission errors into a false "absent".
+
+
+def _raise(exc: OSError) -> None:
+    raise exc
+
+
+def _dir_bytes(root: Path) -> int:
+    """Byte size under ``root``. Absent dir -> 0; an access failure propagates.
+    A file vanishing mid-walk is benign and skipped."""
+    total = 0
+    try:
+        walker = os.walk(root, onerror=_raise)
+        for dirpath, _dirs, files in walker:
+            for name in files:
+                try:
+                    total += os.stat(os.path.join(dirpath, name)).st_size
+                except FileNotFoundError:
+                    continue  # vanished mid-walk — benign
+    except FileNotFoundError:
+        return 0  # top dir not created yet — legit empty
+    return total
+
+
+def _count_dirs(root: Path) -> int:
+    """Count subdirectories of ``root``. Absent -> 0; access failure propagates.
+
+    Only a vanished entry (``FileNotFoundError``) is skipped; a ``PermissionError``
+    from ``entry.is_dir()`` propagates so ``_guard`` nulls the sub-item rather than
+    returning a too-small "normal" count (review R-01)."""
+    try:
+        entries = list(os.scandir(root))
+    except FileNotFoundError:
+        return 0
+    count = 0
+    for entry in entries:
+        try:
+            if entry.is_dir():
+                count += 1
+        except FileNotFoundError:
+            continue  # entry vanished mid-scan — benign
+    return count
+
+
+def _count_glob(root: Path, pattern: str) -> int:
+    """Count ``root`` entries matching ``pattern``. Absent -> 0; access failure
+    propagates. Uses ``os.scandir`` (not ``Path.glob``, which swallows scan
+    errors into a false 0)."""
+    try:
+        entries = list(os.scandir(root))
+    except FileNotFoundError:
+        return 0
+    return sum(1 for entry in entries if fnmatch.fnmatch(entry.name, pattern))
+
+
+def _volume(path: Path) -> dict:
+    usage = shutil.disk_usage(path)
+    return {"total": usage.total, "used": usage.used, "free": usage.free}

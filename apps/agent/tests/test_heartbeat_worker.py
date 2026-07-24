@@ -124,3 +124,71 @@ async def test_send_once_no_token_omits_auth_header(workdir: Path) -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         await worker.send_once(http)
     assert captured["auth"] is None
+
+
+def test_build_request_includes_disk_sample(workdir: Path) -> None:
+    """TC-10: when a disk sample exists it is attached under detail["disk"];
+    reading it never touches the filesystem (a stub sampler proves zero walks)."""
+    from dopilot_agent.disk_status import DiskStatus
+
+    store = _store_with_attempts(workdir, 0)
+    disk = DiskStatus()
+    sample = {"sampled_at": "2026-07-24T12:00:00+00:00", "interval_seconds": 600,
+              "workspaces": {"count": 1, "bytes": 42}}
+    disk.update(sample)
+    worker = HeartbeatWorker(
+        settings=_settings(workdir), store=store, version="9.9.9",
+        disk_status=disk,
+    )
+    req = worker.build_request()
+    assert req.detail["disk"] == sample
+    # scrapyd detail still present (disk is additive).
+    assert req.detail["scrapyd"]["port"] == 6801
+
+
+def test_build_request_omits_disk_when_no_sample(workdir: Path) -> None:
+    """TC-10: with no cached sample yet, detail has no "disk" key."""
+    from dopilot_agent.disk_status import DiskStatus
+
+    store = _store_with_attempts(workdir, 0)
+    worker = HeartbeatWorker(
+        settings=_settings(workdir), store=store, version="9.9.9",
+        disk_status=DiskStatus(),
+    )
+    req = worker.build_request()
+    assert "disk" not in req.detail
+    assert req.detail["scrapyd"]["port"] == 6801
+
+
+def test_build_request_reads_cache_never_walks_fs(workdir: Path, monkeypatch) -> None:
+    """TC-10: build_request only READS the cached sample (snapshot() once) and
+    NEVER samples/walks the filesystem — os.walk is asserted uncalled."""
+    import os as _os
+
+    from dopilot_agent.disk_status import DiskStatus
+
+    store = _store_with_attempts(workdir, 0)
+    sample = {"sampled_at": "2026-07-24T12:00:00+00:00", "interval_seconds": 600,
+              "workspaces": {"count": 1, "bytes": 42}}
+    calls = {"snapshot": 0, "walk": 0}
+
+    class CountingDisk(DiskStatus):
+        def snapshot(self):  # type: ignore[override]
+            calls["snapshot"] += 1
+            return sample
+
+    real_walk = _os.walk
+
+    def _tracking_walk(*a, **k):
+        calls["walk"] += 1
+        return real_walk(*a, **k)
+
+    monkeypatch.setattr(_os, "walk", _tracking_walk)
+    worker = HeartbeatWorker(
+        settings=_settings(workdir), store=store, version="9.9.9",
+        disk_status=CountingDisk(),
+    )
+    req = worker.build_request()
+    assert req.detail["disk"] == sample
+    assert calls["snapshot"] == 1  # cache read exactly once
+    assert calls["walk"] == 0  # zero filesystem traversal in the heartbeat path

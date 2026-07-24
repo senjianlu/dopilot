@@ -271,7 +271,7 @@ async def trim_log_streams(
     settings: Settings,
     *,
     now: datetime,
-) -> dict[str, int]:
+) -> dict[str, dict[str, int | str]]:
     """Time-trim the Redis log + event streams via ``XTRIM MINID`` (B4).
 
     Implements the previously-inert ``redis.log_retention_seconds``: entries
@@ -279,8 +279,11 @@ async def trim_log_streams(
     primary bound). ``minid`` is the millisecond epoch of ``now - retention`` —
     Redis stream ids are ``<ms>-<seq>``, so this drops every entry produced before
     that instant. A per-stream failure is logged and skipped (never aborts the
-    sweep). Returns a map of stream -> entries trimmed. Retention 0 (or no client)
-    disables the time trim.
+    automatic sweep), but — unlike the fire-and-forget original — it is REPORTED:
+    each stream maps to ``{"trimmed": <n>}`` on success or ``{"error": "<msg>"}``
+    on failure, so the manual ``sweep-now`` endpoint can surface a partial
+    failure instead of silently swallowing it. Retention 0 (or no client)
+    disables the time trim and returns an empty map.
     """
     seconds = settings.redis.log_retention_seconds
     if seconds <= 0 or redis_client is None:
@@ -288,18 +291,21 @@ async def trim_log_streams(
     minid = int((now.timestamp() - seconds) * 1000)
     if minid <= 0:
         return {}
-    trimmed: dict[str, int] = {}
+    results: dict[str, dict[str, int | str]] = {}
     for stream in (LOG_STREAM, EVENT_STREAM):
         try:
-            trimmed[stream] = await redis_client.xtrim(
-                stream, minid=minid, approximate=True
-            )
-        except Exception:  # noqa: BLE001 - one bad stream never aborts the sweep
+            results[stream] = {
+                "trimmed": await redis_client.xtrim(
+                    stream, minid=minid, approximate=True
+                )
+            }
+        except Exception as exc:  # noqa: BLE001 - one bad stream never aborts
             log.error(
                 "retention: XTRIM %s MINID %s failed", stream, minid,
                 exc_info=True,
             )
-    return trimmed
+            results[stream] = {"error": f"{type(exc).__name__}: {exc}"}
+    return results
 
 
 async def mark_task_lost(

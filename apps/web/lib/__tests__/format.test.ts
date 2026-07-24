@@ -36,6 +36,19 @@ describe("formatBytes", () => {
     expect(formatBytes(5 * 1024 * 1024)).toBe("5.00 MB");
   });
 
+  it("shows GB at and above 1 GB", () => {
+    expect(formatBytes(1024 ** 3)).toBe("1.00 GB");
+    expect(formatBytes(3 * 1024 ** 3)).toBe("3.00 GB");
+    expect(formatBytes(1024 ** 3 - 1)).toBe("1024.00 MB");
+  });
+
+  it("shows TB at and above 1 TB and caps at TB", () => {
+    expect(formatBytes(1024 ** 4)).toBe("1.00 TB");
+    expect(formatBytes(2 * 1024 ** 4)).toBe("2.00 TB");
+    // Beyond TB stays in TB (largest unit).
+    expect(formatBytes(5 * 1024 ** 5)).toBe("5120.00 TB");
+  });
+
   it("handles 0 and falsy sizes safely", () => {
     expect(formatBytes(0)).toBe("0.00 KB");
     expect(formatBytes(NaN)).toBe("0.00 KB");

@@ -21,6 +21,7 @@ import httpx
 from dopilot_protocol import AgentHeartbeatRequest, CapabilitySet
 
 from ..config.settings import Settings
+from ..disk_status import DiskStatus
 from ..state.store import StateStore
 from .status import RedisRuntimeStatus
 
@@ -40,12 +41,14 @@ class HeartbeatWorker:
         version: str,
         client: httpx.AsyncClient | None = None,
         redis_status: RedisRuntimeStatus | None = None,
+        disk_status: DiskStatus | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
         self._version = version
         self._client = client
         self._redis_status = redis_status
+        self._disk_status = disk_status
         self._owns_client = client is None
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
@@ -67,6 +70,13 @@ class HeartbeatWorker:
         }
         if self._redis_status is not None:
             detail["redis"] = self._redis_status.snapshot()
+        # Resource dashboard (D1): attach the latest cached disk sample (produced
+        # by the janitor loop). Reading the cache never touches the filesystem;
+        # when no sample exists yet the key is simply omitted.
+        if self._disk_status is not None:
+            disk = self._disk_status.snapshot()
+            if disk is not None:
+                detail["disk"] = disk
         return AgentHeartbeatRequest(
             agent_id=s.agent.agent_id,
             version=self._version,

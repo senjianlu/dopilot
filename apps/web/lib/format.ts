@@ -18,12 +18,16 @@ export function formatDateTime(value: string | null | undefined): string {
   }).format(d);
 }
 
-// Adaptive byte size: KB when under 1 MB, otherwise MB. Handles 0/NaN safely.
+// Adaptive byte size across KB/MB/GB/TB (bytes under 1 KB round up to KB, so
+// the smallest unit shown is KB). Handles 0/NaN safely.
 export function formatBytes(sizeBytes: number): string {
   const bytes = sizeBytes || 0;
-  const kb = bytes / 1024;
-  if (kb < 1024) {
-    return `${kb.toFixed(2)} KB`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
   }
-  return `${(kb / 1024).toFixed(2)} MB`;
+  return `${value.toFixed(2)} ${units[unit]}`;
 }

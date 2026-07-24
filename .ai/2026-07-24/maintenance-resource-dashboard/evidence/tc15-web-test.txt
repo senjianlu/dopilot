@@ -1,0 +1,73 @@
+# CMD: corepack pnpm --filter web test
+$ vitest run
+
+ RUN  v2.1.9 /workspaces/dopilot/apps/web
+
+ ✓ app/(app)/templates/__tests__/templates.test.tsx (10 tests) 1563ms
+   ✓ TemplatesPage > edits a template: pre-fills the dialog and calls updateTemplate 388ms
+   ✓ TemplatesPage > edit form keeps an archived current binding visible but not a fresh option 358ms
+ ✓ app/(app)/schedules/__tests__/schedules.test.tsx (10 tests) 1348ms
+   ✓ SchedulesPage > creates a schedule with enabled true when the modal switch is on 378ms
+stderr | app/(app)/maintenance/__tests__/maintenance.test.tsx > MaintenancePage — polling > polls every 10s and stops after unmount
+An update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ ✓ app/(app)/maintenance/__tests__/maintenance.test.tsx (10 tests) 795ms
+ ✓ app/(app)/tasks/__tests__/task-detail.test.tsx (6 tests) 519ms
+ ✓ app/(app)/tasks/__tests__/tasks.test.tsx (6 tests) 1474ms
+   ✓ TasksPage build-artifact filter > selecting a build artifact calls listTasks with buildArtifactId 365ms
+   ✓ TasksPage status filter > preserves status across refresh, pagination, and page-size changes 419ms
+ ✓ app/(app)/artifacts/__tests__/artifacts.test.tsx (6 tests) 486ms
+ ✓ components/features/__tests__/log-viewer.test.tsx (3 tests) 77ms
+ ✓ app/(app)/nodes/__tests__/nodes.test.tsx (3 tests) 390ms
+ ✓ lib/api/__tests__/client.test.ts (5 tests) 15ms
+ ✓ lib/__tests__/nodeSelection.test.ts (5 tests) 4ms
+ ✓ lib/__tests__/format.test.ts (8 tests) 20ms
+ ✓ lib/__tests__/templateCommand.test.ts (5 tests) 5ms
+ ✓ lib/__tests__/scrapyCommand.test.ts (9 tests) 6ms
+ ✓ components/features/__tests__/archived-indicator.test.tsx (2 tests) 112ms
+
+ Test Files  14 passed (14)
+      Tests  88 passed (88)
+   Start at  09:27:34
+   Duration  23.29s (transform 646ms, setup 2.47s, collect 3.87s, tests 6.81s, environment 6.33s, prepare 921ms)
+
+# Exit code: 0

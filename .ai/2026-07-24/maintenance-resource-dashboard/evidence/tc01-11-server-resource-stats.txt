@@ -1,0 +1,63 @@
+# CMD: python -m pytest apps/server/tests/test_resource_stats.py -v (TC-01..08,11 + R-02 degradation; TC-17 skipped without DOPILOT_TEST_PG_URL)
+============================= test session starts ==============================
+platform linux -- Python 3.12.1, pytest-9.1.1, pluggy-1.6.0 -- /home/codespace/.python/current/bin/python
+cachedir: .pytest_cache
+rootdir: /workspaces/dopilot
+configfile: pyproject.toml
+plugins: anyio-4.12.1, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 50 items
+
+apps/server/tests/test_resource_stats.py::test_tc02_occupancy_levels[69-ok] PASSED [  2%]
+apps/server/tests/test_resource_stats.py::test_tc02_occupancy_levels[70-warn] PASSED [  4%]
+apps/server/tests/test_resource_stats.py::test_tc02_occupancy_levels[89-warn] PASSED [  6%]
+apps/server/tests/test_resource_stats.py::test_tc02_occupancy_levels[90-critical] PASSED [  8%]
+apps/server/tests/test_resource_stats.py::test_tc02_occupancy_levels[100-critical] PASSED [ 10%]
+apps/server/tests/test_resource_stats.py::test_tc02_age_levels_grace_lt_limit[150-ok] PASSED [ 12%]
+apps/server/tests/test_resource_stats.py::test_tc02_age_levels_grace_lt_limit[151-warn] PASSED [ 14%]
+apps/server/tests/test_resource_stats.py::test_tc02_age_levels_grace_lt_limit[200-warn] PASSED [ 16%]
+apps/server/tests/test_resource_stats.py::test_tc02_age_levels_grace_lt_limit[201-critical] PASSED [ 18%]
+apps/server/tests/test_resource_stats.py::test_tc02_age_levels_grace_gt_limit[300-ok] PASSED [ 20%]
+apps/server/tests/test_resource_stats.py::test_tc02_age_levels_grace_gt_limit[301-critical] PASSED [ 22%]
+apps/server/tests/test_resource_stats.py::test_tc02_null_limit_is_ok_and_null_value_is_unknown PASSED [ 24%]
+apps/server/tests/test_resource_stats.py::test_tc01_snapshot_shape_and_configured_roots PASSED [ 26%]
+apps/server/tests/test_resource_stats.py::test_tc02_effective_time_predicate_not_false_red PASSED [ 28%]
+apps/server/tests/test_resource_stats.py::test_tc02_zero_retention_is_uncapped_ok PASSED [ 30%]
+apps/server/tests/test_resource_stats.py::test_tc03_redis_scope_normal_and_command_stream_no_age PASSED [ 32%]
+apps/server/tests/test_resource_stats.py::test_tc03_empty_streams_scope_ok PASSED [ 34%]
+apps/server/tests/test_resource_stats.py::test_tc03_client_maps_no_such_key PASSED [ 36%]
+apps/server/tests/test_resource_stats.py::test_tc03_redis_whole_scope_unavailable_others_ok PASSED [ 38%]
+apps/server/tests/test_resource_stats.py::test_tc03_aof_missing_is_unknown PASSED [ 40%]
+apps/server/tests/test_resource_stats.py::test_tc03_du_missing_dir_is_zero PASSED [ 42%]
+apps/server/tests/test_resource_stats.py::test_tc03_du_access_failure_is_unknown PASSED [ 44%]
+apps/server/tests/test_resource_stats.py::test_tc03_du_vanished_file_mid_walk_is_benign PASSED [ 46%]
+apps/server/tests/test_resource_stats.py::test_tc03_server_scope_du_failure_is_unknown_not_zero PASSED [ 48%]
+apps/server/tests/test_resource_stats.py::test_tc03_nodes_read_failure_surfaces_agents_unavailable PASSED [ 50%]
+apps/server/tests/test_resource_stats.py::test_tc03_read_nodes_returns_ok_flag PASSED [ 52%]
+apps/server/tests/test_resource_stats.py::test_tc03_postgres_failure_isolated PASSED [ 54%]
+apps/server/tests/test_resource_stats.py::test_tc04_agent_scope_statuses PASSED [ 56%]
+apps/server/tests/test_resource_stats.py::test_tc04_malformed_disk_samples_isolated PASSED [ 58%]
+apps/server/tests/test_resource_stats.py::test_tc04_endpoint_auth_and_serialization PASSED [ 60%]
+apps/server/tests/test_resource_stats.py::test_tc04_no_snapshot_zero_sampling PASSED [ 62%]
+apps/server/tests/test_resource_stats.py::test_tc04_no_snapshot_reports_true_sweep_enabled PASSED [ 64%]
+apps/server/tests/test_resource_stats.py::test_tc05_sweep_now_auth PASSED [ 66%]
+apps/server/tests/test_resource_stats.py::test_tc05_sweep_now_all_ok PASSED [ 68%]
+apps/server/tests/test_resource_stats.py::test_tc05_sweep_now_cleanup_fails_others_run PASSED [ 70%]
+apps/server/tests/test_resource_stats.py::test_tc05_sweep_now_prune_fails_others_run PASSED [ 72%]
+apps/server/tests/test_resource_stats.py::test_tc05_sweep_now_single_stream_trim_failure PASSED [ 74%]
+apps/server/tests/test_resource_stats.py::test_tc05_sweep_now_no_redis_skips_trim PASSED [ 76%]
+apps/server/tests/test_resource_stats.py::test_tc05_sweep_now_retention_zero_skips_cleanup PASSED [ 78%]
+apps/server/tests/test_resource_stats.py::test_tc06_rewrite_aof PASSED   [ 80%]
+apps/server/tests/test_resource_stats.py::test_tc06_rewrite_aof_no_redis_503 PASSED [ 82%]
+apps/server/tests/test_resource_stats.py::test_tc06_rewrite_aof_call_raises_503 PASSED [ 84%]
+apps/server/tests/test_resource_stats.py::test_tc07_loop_samples_and_recovers PASSED [ 86%]
+apps/server/tests/test_resource_stats.py::test_tc07_retention_zero_sweep_skips_cleanup PASSED [ 88%]
+apps/server/tests/test_resource_stats.py::test_tc07_lifespan_gates_stats_loop PASSED [ 90%]
+apps/server/tests/test_resource_stats.py::test_tc08_stats_interval_default PASSED [ 92%]
+apps/server/tests/test_resource_stats.py::test_tc08_stats_interval_toml PASSED [ 94%]
+apps/server/tests/test_resource_stats.py::test_tc08_stats_interval_env_override PASSED [ 96%]
+apps/server/tests/test_resource_stats.py::test_tc11_heartbeat_disk_flows_to_stats PASSED [ 98%]
+apps/server/tests/test_resource_stats.py::test_tc17_postgres_size_and_age_real SKIPPED [100%]
+
+======================== 49 passed, 1 skipped in 2.06s =========================
+# Exit code: 0

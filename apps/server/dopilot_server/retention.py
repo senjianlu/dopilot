@@ -68,19 +68,26 @@ class RetentionSweepLoop:
         not skip event_audit pruning or the stream trim, and vice versa.
         """
         now = now or datetime.now(UTC)
-        cutoff = now - timedelta(days=self._settings.logs.retention_days)
+        retention_days = self._settings.logs.retention_days
 
-        # Step 1: terminal task data (owns its two-phase commits).
-        async with self._sm() as session:
-            try:
-                await cleanup_terminal_data(
-                    session, self._settings, cutoff=cutoff
-                )
-            except Exception:  # noqa: BLE001 - never abort the sweep
-                logger.error(
-                    "retention: terminal cleanup failed", exc_info=True
-                )
-                await session.rollback()
+        # Step 1: terminal task data (owns its two-phase commits). A retention of
+        # 0 means "disabled", NOT "delete everything": cutoff = now - 0 = now
+        # would make every terminal task eligible and wipe all terminal history,
+        # so 0 short-circuits the step (mirrors event_audit / stream-trim, which
+        # already treat 0 as off). The manual sweep-now endpoint applies the same
+        # guard.
+        if retention_days > 0:
+            cutoff = now - timedelta(days=retention_days)
+            async with self._sm() as session:
+                try:
+                    await cleanup_terminal_data(
+                        session, self._settings, cutoff=cutoff
+                    )
+                except Exception:  # noqa: BLE001 - never abort the sweep
+                    logger.error(
+                        "retention: terminal cleanup failed", exc_info=True
+                    )
+                    await session.rollback()
 
         # Step 2: event_audit prune (commits per batch).
         async with self._sm() as session:

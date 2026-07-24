@@ -1,0 +1,15 @@
+# TC-16 (B): doc + config sample writeback — 文件:行号 references
+
+## configs/server.example.toml (stats_interval_seconds)
+144:stats_interval_seconds = 60
+## configs/server.docker.toml
+114:stats_interval_seconds = 60
+## docs/architecture/04-configuration.md (config + dashboard section + 0=disabled)
+28:| server | `[logs]` | `root_dir=/server-data/logs`、drain/保留窗口参数、`retention_days`（默认 30,自动保留清扫的 cutoff;**0 = 关闭终态清理**,而非 cutoff=now 立删全部）、`max_file_bytes`（单执行日志硬上限，默认 100MiB，超限置 `log_integrity=truncated`） |
+29:| server | `[maintenance]` | 自动保留清扫:`enabled`（默认 true）、`sweep_interval_seconds`（默认 3600）、`event_audit_retention_days`（默认 30）、`event_audit_delete_batch`;资源仪表盘采样:`stats_interval_seconds`（默认 60,env `DOPILOT_MAINTENANCE_STATS_INTERVAL_SECONDS`,0 关闭采样 loop） |
+58:### 资源仪表盘(可观测面)
+62:`stats_interval_seconds` 采一次快照缓存于内存,`GET /maintenance/resource-stats`
+## docs/architecture/06-web-frontend.md (maintenance page dual role)
+17:- **运维清理页(`/maintenance`)**:双职责——(1) 资源仪表盘,约 10s 轮询
+18:  `GET /maintenance/resource-stats` 的内存快照,按 scope(server 磁盘 /
+21:  `stale`/`unavailable` 有独立标注;首次采样前显示骨架。(2) 三个安全操作

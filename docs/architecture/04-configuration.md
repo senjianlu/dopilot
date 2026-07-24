@@ -25,8 +25,8 @@
 | server | `[redis]` | `url`、三条 stream 的 maxlen（`stream_maxlen_logs` 默认 100000）、`log_retention_seconds`（由保留清扫实装为定时 `XTRIM MINID`）、`consumer_name`、`require_aof` |
 | server | `[agents]` | `heartbeat_timeout_seconds`/`stalled_attempt_seconds`/`lost_after_stalled_seconds`/`agent_token` |
 | server | `[scheduler]` | `enabled`（in-process runner 开关）、`timezone` |
-| server | `[logs]` | `root_dir=/server-data/logs`、drain/保留窗口参数、`retention_days`（默认 30，自动保留清扫的 cutoff）、`max_file_bytes`（单执行日志硬上限，默认 100MiB，超限置 `log_integrity=truncated`） |
-| server | `[maintenance]` | 自动保留清扫:`enabled`（默认 true）、`sweep_interval_seconds`（默认 3600）、`event_audit_retention_days`（默认 30）、`event_audit_delete_batch` |
+| server | `[logs]` | `root_dir=/server-data/logs`、drain/保留窗口参数、`retention_days`（默认 30,自动保留清扫的 cutoff;**0 = 关闭终态清理**,而非 cutoff=now 立删全部）、`max_file_bytes`（单执行日志硬上限，默认 100MiB，超限置 `log_integrity=truncated`） |
+| server | `[maintenance]` | 自动保留清扫:`enabled`（默认 true）、`sweep_interval_seconds`（默认 3600）、`event_audit_retention_days`（默认 30）、`event_audit_delete_batch`;资源仪表盘采样:`stats_interval_seconds`（默认 60,env `DOPILOT_MAINTENANCE_STATS_INTERVAL_SECONDS`,0 关闭采样 loop） |
 | server | `[artifacts]` | `root_dir`、`max_upload_bytes`（单次上传上限 413，默认 200MiB）、`max_total_bytes`（聚合配额 507，默认 20GiB） |
 | server | `[nodes]` | `agents` 仅作未 heartbeat 节点的占位提示（不再是 poll 目标） |
 | server | `[i18n]` | `locale`（默认 `zh`）、`timezone` |
@@ -51,7 +51,25 @@
 - **agent**:`AgentJanitor` 周期 GC 终态/孤儿 workspace + `.logpos` + state
   (三重安全判定:内存活跃集、`job.pgid` 存活、树静默期);job.log 100MiB 上限
   (PIPE+drain,永不背压阻塞子进程);artifact/wheel 缓存按 LRU 淘汰;event
-  outbox 文件数上限(超限丢最旧)。
+  outbox 文件数上限(超限丢最旧)。janitor 每轮 sweep 顺带采集本机磁盘样本
+  (workspaces/缓存/scrapyd/outbox/state/卷),经心跳 `detail["disk"]` 上报,
+  供运维仪表盘展示。
+
+### 资源仪表盘(可观测面)
+
+运维清理页(`/maintenance`)展示各增长面的**当前值 vs 上限**与 ok/warn/
+critical 等级,约 10s 轮询。数据由 server `ResourceStatsLoop` 每
+`stats_interval_seconds` 采一次快照缓存于内存,`GET /maintenance/resource-stats`
+只读缓存、**绝不在请求路径遍历文件系统**。快照覆盖:server 磁盘(日志/制品
+目录字节、最大单日志文件 vs `max_file_bytes`、卷用量)、PostgreSQL(五表行数
+与真实字节、库大小、最老终态任务/最老 event_audit 行的年龄 vs 保留窗口——
+时间谓词与清扫函数同源)、Redis(内存 vs maxmemory、AOF、log/event 流长度与
+首条目年龄、每 agent 命令流长度)、每 agent 磁盘(经心跳上报)。年龄类指标
+的上限为对应保留窗口,旋钮为 0(关闭)时不告警。页面另提供三个安全操作:
+立即保留清扫(`POST /maintenance/sweep-now`,逐步汇报、步骤级故障隔离)、
+终态清理(沿用 `terminal-cleanup` 的 dry-run 预览+确认)、Redis
+`BGREWRITEAOF`(`POST /maintenance/redis-rewrite-aof`);均需 admin 认证。
+`VACUUM FULL` 仅页面文案提示,指向生产收缩 runbook。
 - 决策见 [0019 资源硬上限](../decisions/0019-resource-hard-limits.md)。
 
 ## 认证体系

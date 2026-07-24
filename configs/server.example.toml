@@ -137,6 +137,11 @@ enabled = true
 sweep_interval_seconds = 3600
 event_audit_retention_days = 30
 event_audit_delete_batch = 5000
+# Resource dashboard: how often the /maintenance page's usage snapshot (server
+# disk / PostgreSQL / Redis / per-agent) is sampled, in seconds. The endpoint
+# serves this cached snapshot only (never samples on the request path).
+# 0 disables the sampler (the page then shows "not sampled yet").
+stats_interval_seconds = 60
 
 [artifacts]
 root_dir = "/server-data/artifacts"

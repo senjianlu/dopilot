@@ -194,6 +194,12 @@ class MaintenanceSettings(BaseModel):
     event_audit_retention_days: int = 30
     # Batch size for the ``event_audit`` delete, to avoid long table locks.
     event_audit_delete_batch: int = 5000
+    # How often the resource-stats sampler (``ResourceStatsLoop``) snapshots
+    # server disk / PostgreSQL / Redis usage for the /maintenance dashboard, in
+    # seconds. The snapshot is served from memory (the endpoint never samples on
+    # the request path). 0 disables the sampler loop entirely — the endpoint then
+    # returns an empty "not yet sampled" response instead of walking the FS.
+    stats_interval_seconds: int = 60
 
 
 class ArtifactsSettings(BaseModel):

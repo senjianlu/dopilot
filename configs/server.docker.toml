@@ -110,6 +110,8 @@ enabled = true
 sweep_interval_seconds = 3600
 event_audit_retention_days = 30
 event_audit_delete_batch = 5000
+# Resource dashboard usage-snapshot sampling interval (seconds); 0 disables.
+stats_interval_seconds = 60
 
 [artifacts]
 root_dir = "/server-data/artifacts"
