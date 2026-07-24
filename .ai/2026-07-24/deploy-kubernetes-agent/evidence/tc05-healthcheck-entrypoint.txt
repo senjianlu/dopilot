@@ -1,0 +1,8 @@
+### TC-05 (round-05 regenerated): probe name == console-script
+$ /usr/bin/grep -n "dopilot-agent-healthcheck" apps/agent/pyproject.toml deploy/kubernetes/agent/statefulset.yaml; echo "exit=$?"
+apps/agent/pyproject.toml:31:dopilot-agent-healthcheck = "dopilot_agent.healthcheck:main"
+deploy/kubernetes/agent/statefulset.yaml:86:            # does NOT catch a bad URL: dopilot-agent-healthcheck only checks config
+deploy/kubernetes/agent/statefulset.yaml:115:          # baked console-script `dopilot-agent-healthcheck` (verifies the
+deploy/kubernetes/agent/statefulset.yaml:120:              command: ["dopilot-agent-healthcheck"]
+deploy/kubernetes/agent/statefulset.yaml:126:              command: ["dopilot-agent-healthcheck"]
+exit=0

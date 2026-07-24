@@ -36,6 +36,31 @@
 任何端口**（纯出站;scrapyd 内部端口 6801 永不发布）;server 容器
 `init: true`、单实例。
 
+## Kubernetes / k3s(参考清单)
+
+`deploy/kubernetes/agent/` 是 **agent-only** 接入清单的通用参考版,与
+`docker-compose.agent.yml` 同口径:纯出站 worker agent 接入单独部署的 server,
+无入站 HTTP、不绑端口、无 Service。server 侧仍走 compose(或自有编排)。
+
+- **必填项**(缺一无法入群,与 compose 接入栈一致):`DOPILOT_AGENT_TOKEN`
+  与 `DOPILOT_REDIS_URL` 经 Secret `dopilot-agent` 注入(`secretKeyRef`,
+  仓库只放 `secret.example.yaml` 占位,真值绝不入库)、`DOPILOT_SERVER_URL`
+  改占位为可达地址。K8s 无 compose 的 `:?` 快速失败,且探针不测 server 连通性
+  (healthcheck 只校验配置加载 + 本地 scrapyd),故占位 URL 忘改时 Pod 仍会
+  Ready 而 agent 从未入群——须在 server 侧(`nodes.last_seen_at` / 运维仪表盘
+  agent 板块)确认入群,不能凭 Pod Ready 判定。agent 永不注入
+  `DOPILOT_ADMIN_API_TOKEN`。
+- **PVC 即 agent 磁盘硬顶**:`volumeClaimTemplates` 的容量(样例 20Gi)就是该
+  agent 本地磁盘上限,`/maintenance` 每-agent 板块显示的正是该卷用量/容量;
+  设到 `artifact_cache_max_bytes` + 工作集余量之上。
+- **容器日志轮转归 kubelet**:K8s 下容器 stdout/stderr 由 kubelet 管,不是
+  docker `json-file`。对齐 compose 侧宿主机磁盘保护须在节点设 kubelet
+  `container-log-max-size` / `container-log-max-files`(k3s 走
+  `/etc/rancher/k3s/config.yaml` 的 `kubelet-arg`)。
+- 通用清单不含任何 secrets 注入 sidecar(Vault 等);容器 resources /
+  ephemeral-storage 限额亦为节点侧待办。细则与 yaml 片段见
+  `deploy/kubernetes/agent/README.md`。
+
 ## 持久化卷与备份
 
 | 卷 | 内容 | 备份 |

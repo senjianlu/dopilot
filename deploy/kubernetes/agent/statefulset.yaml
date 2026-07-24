@@ -1,0 +1,140 @@
+# dopilot AGENT-ONLY join manifest for Kubernetes / k3s (reference).
+#
+# Same role as deploy/docker/docker-compose.agent.yml: one or more OUTBOUND-ONLY
+# worker agents that join a server deployed separately. The agent consumes Redis
+# commands and POSTs heartbeats to the server; it exposes NO inbound HTTP API and
+# binds NO port, so there is deliberately no Service here.
+#
+# This is the GENERIC manifest: it bundles NO secret-injection sidecar. Such a
+# sidecar is a site-specific extension — mount your own secrets into the `agent`
+# container as your infrastructure requires (see README.md "扩展").
+#
+# Before apply:
+#   1. Create the pull-through secret from secret.example.yaml (agent-token +
+#      redis-url). NEVER commit real credentials — see README.md.
+#   2. Set DOPILOT_SERVER_URL below to a URL the agent can actually reach.
+#
+# Token auth is NOT transport encryption. The link from these agents to the
+# server's Redis and HTTP port crosses hosts — put them on a private network /
+# VPN or terminate TLS at a reverse proxy for encrypted transport. Agents are
+# NEVER given DOPILOT_ADMIN_API_TOKEN (admin-only).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dopilot
+# If the namespace already exists, delete this document before apply.
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dopilot-agent
+  namespace: dopilot
+spec:
+  # StatefulSet requires serviceName. The agent is outbound-only with no Service,
+  # so this points at a name that need not resolve; pod DNS is unused. Create a
+  # headless Service of this name only if you want stable per-pod DNS.
+  serviceName: dopilot-agent
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dopilot-agent
+  template:
+    metadata:
+      labels:
+        app: dopilot-agent
+    spec:
+      # hostNetwork lets the agent reach the server's Redis/HTTP over the node's
+      # network (e.g. a Tailscale/WireGuard interface on the host). Drop both
+      # lines if the agent should use the pod network instead.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+        # One agent per node: distinct AGENT_ID (pod name) per host so their
+        # local-disk working sets never collide.
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: dopilot-agent
+              topologyKey: "kubernetes.io/hostname"
+      containers:
+        - name: agent
+          image: rabbir/dopilot:latest
+          # Swap for your own derivative image (e.g. one that bakes extra crawler
+          # deps) if needed; the console-script entrypoints stay the same.
+          imagePullPolicy: Always
+          command: ["dopilot-agent"]
+          env:
+            # Stable, unique agent id per pod: dopilot-agent-0 / -1 / ...
+            - name: AGENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: AGENT_WORKDIR
+              value: /agent-data
+            # REQUIRED: the server's HTTP base URL for heartbeat + artifact/wheel
+            # fetch. The baked default http://server:5000 only resolves inside the
+            # all-in-one compose network, so a K8s join MUST point at a reachable
+            # URL. Kubernetes has no compose-style `:?` fail-fast, AND the probe
+            # does NOT catch a bad URL: dopilot-agent-healthcheck only checks config
+            # load + local scrapyd, not server reachability. So if this stays a
+            # placeholder the pod still goes Ready while the agent never joins
+            # (heartbeats fail silently). Verify the join server-side (the node
+            # appears/updates under nodes.last_seen_at / the maintenance dashboard
+            # agent panel), not by pod Ready. Examples:
+            #   http://<server-ip-or-dns>:5000
+            #   https://dopilot.example.com
+            - name: DOPILOT_SERVER_URL
+              value: "http://<server-host-or-dns>:5000"
+            # The single server<->agent machine token. MUST equal the server's
+            # token (docker/host: `dopilot-server agent-token print`). From Secret,
+            # never inline — see secret.example.yaml.
+            - name: DOPILOT_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dopilot-agent
+                  key: agent-token
+            # Full Redis URL of the server's Redis (redis://:<pass>@<host>:6379/0).
+            # From Secret, never inline.
+            - name: DOPILOT_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dopilot-agent
+                  key: redis-url
+          volumeMounts:
+            - name: agent-data
+              mountPath: /agent-data
+          # Outbound-only agent: liveness/readiness are exec probes running the
+          # baked console-script `dopilot-agent-healthcheck` (verifies the
+          # container-internal scrapyd answers). Real liveness is the
+          # agent->server heartbeat (server-side nodes.last_seen_at).
+          readinessProbe:
+            exec:
+              command: ["dopilot-agent-healthcheck"]
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["dopilot-agent-healthcheck"]
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: agent-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            # This PVC IS the agent's local-disk hard ceiling. The maintenance
+            # dashboard's per-agent panel reports usage against this capacity.
+            # Size it above artifact_cache_max_bytes + working-set headroom.
+            storage: 20Gi

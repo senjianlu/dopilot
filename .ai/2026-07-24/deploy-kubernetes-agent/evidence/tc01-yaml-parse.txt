@@ -1,0 +1,22 @@
+### TC-01 (round-05 regenerated: reflects post-edit statefulset.yaml)
+$ cat tc01_check.py
+import glob, yaml
+
+kinds = []
+for f in sorted(glob.glob("deploy/kubernetes/agent/*.yaml")):
+    for doc in yaml.safe_load_all(open(f)):
+        kind = doc["kind"] if doc else None
+        if doc:
+            kinds.append(kind)
+        print(f"{f}: {kind}")
+assert set(kinds) == {"Namespace", "StatefulSet", "Secret"}, kinds
+print("kind set =", sorted(set(kinds)))
+print("OK")
+
+$ python3 tc01_check.py; echo "exit=$?"
+deploy/kubernetes/agent/secret.example.yaml: Secret
+deploy/kubernetes/agent/statefulset.yaml: Namespace
+deploy/kubernetes/agent/statefulset.yaml: StatefulSet
+kind set = ['Namespace', 'Secret', 'StatefulSet']
+OK
+exit=0

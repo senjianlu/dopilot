@@ -1,0 +1,3 @@
+### TC-03 (round-05 regenerated): plan contract 0 hits, exit 1
+$ /usr/bin/grep -rniE "REDACTED-TOKEN-PREFIX|REDACTED-PASSWORD-PREFIX|tailscale\.internal|CONSUL_|vault" deploy/kubernetes/; echo "exit=$?"
+exit=1
