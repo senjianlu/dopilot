@@ -4,7 +4,7 @@ Revision ID: 0009
 Revises: 0008
 Create Date: 2026-06-20
 
-Phase 2a (see docs/phases/phase-2a/00-brief.md). Collapses the wire/disk/DB seam
+Phase 2a (see git history: docs/phases/phase-2a/00-brief.md). Collapses the wire/disk/DB seam
 so the Redis payloads, on-disk log paths, agent state files, and these index
 tables all use the same ids as the server domain:
 

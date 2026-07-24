@@ -1,7 +1,7 @@
 """Task / execution / log-file state machine.
 
 Phase 1.7 domain vocabulary (the parent/atomic split was inverted from the
-phase-1.5 names — see ``docs/phases/phase-1.7/00-brief.md``):
+phase-1.5 names — see ``git history: docs/phases/phase-1.7/00-brief.md``):
 
 - **task**: the parent logical run (was ``execution``). One task fans out to one
   atomic execution per selected healthy node.

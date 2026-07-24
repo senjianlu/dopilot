@@ -4,7 +4,7 @@ Revision ID: 0004
 Revises: 0003
 Create Date: 2026-06-19
 
-Phase 1.7 packet 1 (see docs/phases/phase-1.7/00-brief.md). Inverts the
+Phase 1.7 packet 1 (see git history: docs/phases/phase-1.7/00-brief.md). Inverts the
 parent/atomic vocabulary so the server domain reads as task -> execution:
 
 - table ``executions`` (parent logical run)  -> ``tasks``

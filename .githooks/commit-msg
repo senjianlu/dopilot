@@ -1,14 +1,16 @@
 #!/bin/sh
-# dopilot commit-msg hook — enforce Conventional Commits header.
-# Enable with:  git config core.hooksPath .githooks
-# Spec:         docs/agent-governance/03-commit-convention.md
+# commit-msg 钩子:强制 Conventional Commits 头部格式(零依赖 POSIX sh)。
+# 启用: git config core.hooksPath .githooks
+# 规范: AGENTS.md「Git 提交规范」
+# 改编自 senjianlu/dopilot .githooks/commit-msg;长度检查固定 UTF-8
+# locale,中文 subject 按字符而非字节计数。
 
 msg_file="$1"
 
-# First non-comment, non-blank line is the header.
+# 第一个非注释、非空行是 header。
 header=$(grep -v '^#' "$msg_file" | sed '/^[[:space:]]*$/d' | head -n1)
 
-# Let merge / revert / fixup / squash machinery through untouched.
+# 放行 merge / revert / fixup / squash 等机器生成消息。
 case "$header" in
   "Merge "*|"Revert "*|"fixup! "*|"squash! "*) exit 0 ;;
 esac
@@ -16,25 +18,34 @@ esac
 types='feat|fix|docs|refactor|perf|test|build|ci|chore|style|revert'
 
 fail() {
-  echo "[commit-msg] rejected: $1" >&2
+  echo "[commit-msg] 拒绝: $1" >&2
   echo "  header: $header" >&2
-  echo "  expected: <type>(<scope>): <subject>" >&2
-  echo "  types: feat fix docs refactor perf test build ci chore style revert" >&2
-  echo "  see docs/agent-governance/03-commit-convention.md" >&2
+  echo "  期望:   <type>(<scope>): <subject>" >&2
+  echo "  types:  feat fix docs refactor perf test build ci chore style revert" >&2
+  echo "  规范见 AGENTS.md「Git 提交规范」" >&2
   exit 1
 }
 
 printf '%s' "$header" | grep -Eq "^(${types})(\([a-z0-9_-]+\))?!?: .+" \
-  || fail "header is not <type>(<scope>): <subject>"
+  || fail "header 不符合 <type>(<scope>): <subject>"
 
-if [ "$(printf '%s' "$header" | wc -m | tr -d ' ')" -gt 72 ]; then
-  fail "header exceeds 72 characters"
+# 长度按字符计;locale 不可用时退回字节计数(字节数≥字符数,只会更严
+# 不会放行超长);两级都拿不到数字则直接拒绝——决不 fail-open。
+header_len=$(printf '%s' "$header" | LC_ALL=en_US.UTF-8 wc -m 2>/dev/null | tr -d '[:space:]')
+case "$header_len" in
+  ''|*[!0-9]*) header_len=$(printf '%s' "$header" | wc -c 2>/dev/null | tr -d '[:space:]') ;;
+esac
+case "$header_len" in
+  ''|*[!0-9]*) fail "无法计算 header 长度" ;;
+esac
+if [ "$header_len" -gt 72 ]; then
+  fail "header 超过 72 字符(当前 $header_len)"
 fi
 
 subject=$(printf '%s' "$header" | sed -E "s/^(${types})(\([a-z0-9_-]+\))?!?: //")
 case "$subject" in
-  *.) fail "subject must not end with a period" ;;
-  '') fail "subject is empty" ;;
+  *.|*。) fail "subject 不得以句号结尾" ;;
+  '') fail "subject 为空" ;;
 esac
 
 exit 0

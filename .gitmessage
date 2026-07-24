@@ -1,9 +1,12 @@
-# <type>(<scope>): <subject>   (<=72 chars, imperative, lowercase, no period)
+# <type>(<scope>): <subject>   (≤72 字符,祈使句,不以句号结尾)
 #
-# <body: what & why, wrapped ~72-100 cols>
+# <正文:改了什么、为什么;72~100 列换行>
 #
-# <footer: Co-Authored-By: / Refs: / Phase: / BREAKING CHANGE:>
+# <footer:Rawf: <yyyy-mm-dd>/<task-slug> / Refs: <权威文档> /
+#         Co-Authored-By: ... / BREAKING CHANGE: ...(或 type 后加 !)>
 #
 # types:  feat fix docs refactor perf test build ci chore style revert
-# scopes: server agent web protocol deploy ci configs docs repo
-# spec:   docs/agent-governance/03-commit-convention.md
+# scopes: 可选,小写短词,按项目约定(如 web server deploy docs repo)
+# 规范:   AGENTS.md「Git 提交规范」;由 .githooks/commit-msg 本地强制
+# 启用:   git config core.hooksPath .githooks
+#         git config commit.template .gitmessage

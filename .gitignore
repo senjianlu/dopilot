@@ -1,66 +1,32 @@
-/*.html
-scrapydweb_settings.py
-scrapydweb_settings_v*.py
+# rawf:运行时状态不入库(产物入库,状态不入库)
+.ai/.current-task
+# rawf:评审异常时遗留的原始输出与原子发布临时文件
+.ai/**/.review-raw-*
+.ai/**/.review-out-*
+# rawf:plan 阶段评审的原始输出与原子发布临时文件
+.ai/**/.plan-review-raw-*
+.ai/**/.plan-review-out-*
+# Claude Code 本地权限记录等,不入库(项目级 settings.json 入库)
+.claude/settings.local.json
 
-
-tests/*.html
-tests/data/
-allure-results/
-
-
-scrapydweb/data/*
-!scrapydweb/data/parse/
-!scrapydweb/data/demo_projects/
-
-scrapydweb/data/parse/*
-!scrapydweb/data/parse/ScrapydWeb_demo.log
-
-scrapydweb/data/demo_projects/*
-!scrapydweb/data/demo_projects/ScrapydWeb_demo/
-!scrapydweb/data/demo_projects/ScrapydWeb_demo - 副本/
-
-scrapydweb/data/demo_projects/ScrapydWeb_demo/*
-!scrapydweb/data/demo_projects/ScrapydWeb_demo/ScrapydWeb_demo/
-!scrapydweb/data/demo_projects/ScrapydWeb_demo/scrapy.cfg
-
-scrapydweb/data/demo_projects/ScrapydWeb_demo - 副本/*
-!scrapydweb/data/demo_projects/ScrapydWeb_demo - 副本/ScrapydWeb_demo/
-!scrapydweb/data/demo_projects/ScrapydWeb_demo - 副本/scrapy.cfg
-
-
-venv/
-.venv/
-
-*.pyc
+# Python
 __pycache__/
-
-instance/
-
+*.pyc
+.venv/
+venv/
 .pytest_cache/
 .coverage
 coverage.xml
 htmlcov/
-
+.ruff_cache/
 dist/
 build/
 *.egg-info/
 
-.idea
-.vscode/
-.claude/
-
-# --- dopilot (greenfield) ---
-.venv-ref/
+# Node / web
 node_modules/
 apps/web/dist/
 apps/web/node_modules/
-# local config copies (examples are committed as configs/*.example.toml)
-configs/server.toml
-configs/agent.toml
-# local server data (log bodies live here, see decision #11)
-server-data/
-agent-data/
-.ruff_cache/
 # web TS build artifacts (incremental build cache; emit is disabled via noEmit)
 *.tsbuildinfo
 # Playwright browser e2e outputs (traces/screenshots/videos + HTML report)
@@ -68,3 +34,19 @@ apps/web/test-results/
 apps/web/playwright-report/
 apps/web/blob-report/
 apps/web/.cache/
+
+# local config copies (examples are committed as configs/*.example.toml)
+configs/server.toml
+configs/agent.toml
+# local server/agent data (log bodies live here, see docs/decisions)
+server-data/
+agent-data/
+
+# IDE / 系统
+.idea
+.vscode/
+.DS_Store
+
+# 环境
+.env
+.env.*

@@ -4,7 +4,7 @@ Revision ID: 0012
 Revises: 0011
 Create Date: 2026-06-24
 
-Phase task-artifact-archive (see docs/phases/task-artifact-archive/00-brief.md).
+Phase task-artifact-archive (see git history: docs/phases/task-artifact-archive/00-brief.md).
 Adds the nullable ``build_artifacts.archived_at`` timestamp that marks a build
 artifact as archived. NULL = not archived; the API derives
 ``archived = archived_at is not None``. No broad status enum is introduced — the

@@ -4,7 +4,7 @@ Revision ID: 0010
 Revises: 0009
 Create Date: 2026-06-22
 
-Phase 2.2 (see docs/phases/phase-2.2/00-brief.md). Adds uniqueness to
+Phase 2.2 (see git history: docs/phases/phase-2.2/00-brief.md). Adds uniqueness to
 ``execution_templates.name`` and ``schedules.name`` so the create/rename paths
 can return a deterministic 409 conflict (the service checks first; the DB
 constraint is the backstop).

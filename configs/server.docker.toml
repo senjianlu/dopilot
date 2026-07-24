@@ -2,7 +2,7 @@
 #
 # Same as server.example.toml but tuned for the compose network: the database
 # and agent are reached by SERVICE NAME (db / agent), not localhost — inside the
-# server container "localhost" is the server itself. See docs/dopilot/08 §2.5.
+# server container "localhost" is the server itself. See docs/architecture/05-deployment.md.
 #
 # change-me* values are NOT production-safe; this file is a local/dev compose
 # convenience, not a secret store.

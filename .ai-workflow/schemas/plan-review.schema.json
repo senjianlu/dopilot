@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "issues", "overall"],
+  "properties": {
+    "verdict": { "type": "string", "enum": ["pass", "fail"] },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "id", "summary", "detail"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["plan-blocker", "major", "minor"]
+          },
+          "id": { "type": "string" },
+          "summary": { "type": "string" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "overall": { "type": "string" }
+  }
+}

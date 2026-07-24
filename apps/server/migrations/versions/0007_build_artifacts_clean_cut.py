@@ -4,7 +4,7 @@ Revision ID: 0007
 Revises: 0006
 Create Date: 2026-06-20
 
-Phase 1.8 domain clean-cut (see docs/phases/phase-1.8/00-brief.md):
+Phase 1.8 domain clean-cut (see git history: docs/phases/phase-1.8/00-brief.md):
 
 - New canonical ``build_artifacts`` table. Backfilled (data-preserving) from the
   legacy ``task_templates.artifact`` JSON descriptors, deduped on

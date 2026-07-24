@@ -4,7 +4,7 @@ Revision ID: 0008
 Revises: 0007
 Create Date: 2026-06-20
 
-Destructive command-first refactor (see docs/phases/phase-1.8.1/00-brief.md):
+Destructive command-first refactor (see git history: docs/phases/phase-1.8.1/00-brief.md):
 
 - ``execution_templates`` gains a nullable ``command`` column. It is best-effort
   BACKFILLED by synthesizing ``scrapy crawl <spider> [-a k=v]... [-s K=V]...``

@@ -1,0 +1,3 @@
+$ bash .ai/2026-07-24/adopt-ai-workflow-template/evidence/stale-refs-check-round02.sh
+RESULT: NO UNEXPECTED REFS (pass)
+exit code: 0

@@ -1,0 +1,3 @@
+$ ruff check apps packages
+All checks passed!
+exit code: 0

@@ -239,13 +239,14 @@ cd deploy/docker && docker compose config
 
 ## 文档
 
-目标、决策与分阶段路线图见 [`docs/`](docs/README.md)：
+持久设计真相见 [`docs/`](docs/README.md)：
 
-- [`docs/dopilot/00-requirements.md`](docs/dopilot/00-requirements.md) ——
-  北极星：产品目标、已确认决策、分阶段路线图。
-- [`docs/dopilot/10-roadmap.md`](docs/dopilot/10-roadmap.md) —— 综合构建/移植
-  路线图。
-- [`CLAUDE.md`](CLAUDE.md) —— 架构、硬约束与当前状态。
+- [`docs/architecture/`](docs/architecture/README.md) —— 当前系统：运行拓扑、
+  领域模型、执行/日志链路、配置、部署、前端、开发与测试。
+- [`docs/decisions/`](docs/decisions/README.md) —— 已确认决策与硬约束，
+  一事一文。
+- [`AGENTS.md`](AGENTS.md) —— 面向 AI 编码工具的项目事实与约定（技术栈、
+  目录、提交规范）；AI 开发工作流本身见 [`CLAUDE.md`](CLAUDE.md)。
 
 ## 贡献
 

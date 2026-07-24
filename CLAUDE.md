@@ -1,71 +1,45 @@
-# CLAUDE.md
+@AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# Claude Code 工作流
 
-## AI agent governance
+## 开发工作流(强制)
 
-This repository uses Codex as the governance/review agent and Claude Code as the
-implementation/test agent. Follow `docs/agent-governance/00-operating-model.md`
-and `docs/agent-governance/01-codex-claude-loop.md` when a task is handed off by
-Codex. Codex owns the brief, review, test strategy, and final acceptance summary;
-Claude owns scoped implementation and exact test-result reporting.
+所有非琐碎改动必须走此流程,产物写入 `.ai/<yyyy-mm-dd>/<task-slug>/`:
 
-## What this repo is right now
+1. `/rawf-plan` → 产出 plan.md(必须含测试用例),向用户呈现摘要
+1b. 【plan 评审闸,仅 >10 文件】确认前先跑 `.ai-workflow/scripts/plan-review.sh`,
+    plan-blocker/major 就地改 plan 再重评,默认最多 3 轮(用户明确指定时
+    以其为准,见硬规则),不决转人工
+2. 【人工闸】用户确认 plan 前,禁止改动源码(有 hook 拦截)
+3. `/rawf-implement` → 实现 + 自测,写 implementation-round-<NN>.md
+4. `/rawf-review` → 跑 Codex 评审,产出 review-round-<NN>-<pass|fail>.md
+5. fail → 按 rawf-review skill 的分流规则处理,实现层修复默认最多 3 轮
+   (用户明确指定时以其为准,见硬规则)
+6. `/rawf-report` → 汇报;提交须用户确认
 
-**dopilot is a greenfield application repo, open source under the MIT license** (root `LICENSE`, SPDX `MIT`). It contains dopilot application code under the `apps/` + `packages/` layout. dopilot is a **self-hosted, single-admin** scheduling platform built fresh. It draws **behavioral** inspiration from the upstream **scrapydweb 1.6.0** project (a Flask-based Scrapyd cluster manager), which is consulted only for **how it behaves**, never for how it is built.
+例外:纯文档、拼写级改动可跳过流程,但需先向用户声明。
 
-**Implementation state (current):** phases 0 → 1 → 1.5 → 1.8 → 2 → 2b are complete. The web UI is a **Next.js static export** served by `dopilot-server`; server↔agent communication is **Redis Streams + heartbeat**; **Scrapy `.egg`** and **Python `.whl` script** job types are implemented and runnable. **Docker long-running crawlers remain planned** (a future phase, not implemented). dopilot has its own build/test/lint/CI pipeline (pytest, ruff, web vitest, Dockerfiles, GitHub Actions).
+## 硬规则(通用硬规则见 AGENTS.md,以下为 Claude Code 补充)
 
-> **⚠️ scrapydweb reference boundary (hard rule).** Upstream scrapydweb is used for exactly two things: (1) a **functional/behavioral reference** (what it does, what the rules are) and (2) a **behavioral oracle** (expected-behavior comparison). Its **code style, directory structure, module layout, naming, dependency organization, and config form must NEVER be a design basis for dopilot.** dopilot is written fresh, structure-first, per its own domain (authoritative layout: `docs/dopilot/05-dev-setup-and-known-issues.md` §1). **There is no local snapshot of scrapydweb in this repo** — it was removed for the MIT release. Consult upstream **externally** (the public repo) if you need to understand a behavior; never fetch, vendor, copy, import, or restructure from upstream scrapydweb code.
-
-Two things follow from this and matter constantly:
-
-1. **Upstream scrapydweb is a behavior reference only — and only externally.** dopilot does not vendor it. Do not fetch, copy, or import upstream code, do not derive dopilot's structure/code/naming from it, and nothing scrapydweb-derived may enter any Docker build context. (`.dockerignore` and `pyproject.toml` still exclude a `reference/` path defensively; that directory no longer exists in the tree.)
-2. **The `docs/` tree is the source of truth** for goals, decisions, and the greenfield build plan. When the user asks for behavior/architecture decisions, the answer is usually already written there. Update docs when decisions change.
-
-## Where to read first
-
-- `docs/dopilot/00-requirements.md` — **北极星 / north-star**: product goals, the confirmed decisions table, the 4-phase roadmap. Read this before proposing anything.
-- `docs/dopilot/10-roadmap.md` — consolidated greenfield build/port roadmap (ties together scrapydweb behavior + gaps + decisions).
-- `docs/architecture/` — how scrapydweb works today (**behavioral/functional reference for porting**, not a structure to inherit): overview, bootstrap/config, data model, scheduler engine, views/frontend, scrapyd cluster I/O, auth/utils.
-- `docs/dopilot/0x-gap-*.md` — per-area gap analyses (executors, scheduling/nodes/push, realtime logs, i18n).
-
-**Docs convention:** behavior assertions about scrapydweb are cited as `file:line` **relative to upstream scrapydweb 1.6.0 (commit `1341cf9`)** — e.g. `vars.py:29` means `scrapydweb/vars.py:29` in the upstream tree. These are historical behavior-reference citations into the public upstream repo, **not** paths in this repo (there is no local snapshot). Keep this convention when editing docs.
-
-## Confirmed decisions you must respect
-
-These are locked in `docs/dopilot/00-requirements.md` §4 — don't relitigate them:
-
-- **Three scheduled-object types, done in strict order:** ① Scrapy (via scrapyd) → ③ plain Python3 scripts → ② Docker long-lived crawlers. One type stable before the next.
-- **Two deploy roles, both Docker:** `server` (Web + scheduler hub) and `agent` (worker executor).
-- **Single admin only** — no multi-user/RBAC.
-- **Frontend = greenfield SPA:** **Next.js static export (`output: export`) + shadcn/ui + Recharts + react-i18next + TypeScript** in `apps/web` (since phase 2.1; replaced the earlier Vue 3 + Element Plus + Vite choice). Front/back split (FastAPI backend exposes `/api/v1/*` JSON/SSE); the static export is served by `dopilot-server` from the same container (no separate web container, no Node production runtime) — **no scrapydweb-Jinja coexistence** (dopilot has no inherited Jinja pages).
-- **Realtime logs (decision #11) = agent pushes log increments over a Redis log stream; server consumes and persists, no WebSocket** *(superseded by `docs/refactor/00-redis-streams-agent-communication.md`, the authoritative model)*: instead of server pulling the agent tail API, the **agent** publishes log increments (base64 bytes, with byte `offset`/`size_bytes`/`eof`) to the Redis stream `dopilot:server:logs`; the **server log consumer** drains them, writes log bodies to `/server-data/logs`, and writes the log index/offset/status to PostgreSQL, then pushes to the web SPA over **server→web SSE**. The four invariants are preserved: first version does **not** use WebSocket, fan-out to web is **server→web SSE**, log bodies live at `/server-data/logs`, and PostgreSQL stores only the index/offset/status. Built on the `LogSource` abstraction — implementation changes from `AgentTailLogSource` (server pull) to `RedisLogSource` (agent push + server consume); the seam stays. Log RPO is **not** 0: server long-stop or Redis log-stream trimming can leave a `partial` log file (new `log_integrity` column), which is a visible/audit fact and is decoupled from business status — log gaps never block execution status from converging.
-- **Push mode** = dispatch a task to a specific worker for immediate execution.
-- **Image publishing (decision 7):** build & push one unified Docker Hub image **`rabbir/dopilot:latest`**. Server, agent, and migrate containers use this same image; their runtime role is selected by the container command (`dopilot-server`, `dopilot-agent`, or `alembic upgrade head`). ⚠️ Image namespace `rabbir` ≠ git `origin` `senjianlu/dopilot` — they are unrelated; never use `senjianlu` as an image prefix.
-- **Monorepo (decision 8):** server, agent, and web are developed in **this same repo** under an `apps/`+`packages/` layout (authoritative tree: `docs/dopilot/05-dev-setup-and-known-issues.md` §1); not split into multiple repos.
-- **Database (decision 10):** PostgreSQL is the only dopilot database. server owns SQLAlchemy/Alembic migrations; agent/web never connect directly. PostgreSQL stores only the **log index/offset/status** (table `execution_log_files`); **log bodies are NOT stored in PostgreSQL** — they live as files on the server at `/server-data/logs` with a retention policy. **Redis is a message bus / transient transport, not a dopilot database** — it does not persist business truth, and the agent reaching dopilot **through Redis does not connect to PostgreSQL directly** (see `docs/refactor/00-redis-streams-agent-communication.md`).
-- **Agent communication (decision #12) = agent-initiated over Redis Streams + heartbeat, not server→agent HTTP** *(superseded by `docs/refactor/00-redis-streams-agent-communication.md`, the authoritative model)*: the v1 "agent does not call back" rule is dropped. The **agent** actively consumes commands from its Redis command stream (`dopilot:agent:{agent_id}:commands`), actively `XADD`s status events / logs (`dopilot:server:agent-events`, `dopilot:server:logs`), and actively `POST /api/v1/agents/{agent_id}/heartbeat`. The **server** initiates only the high-level dispatch via writing commands → Redis. Agent inbound HTTP has been removed entirely in phase 2.2.7: no run/status/tail pull paths, no egg-deploy endpoint, no `/health`, and no `6800` listener. Machine auth uses a **single** agent token `DOPILOT_AGENT_TOKEN` (server config `[agents].agent_token`, agent config `[agent].agent_token`) that authenticates agent→server calls only — heartbeat and artifact/wheel fetches. The earlier split `server_shared_token` / `agent_auth.shared_token` pair and the admin-token fallback are removed; the admin API token (`DOPILOT_ADMIN_API_TOKEN`) is admin-only and never reaches agents. Machine auth is config-present-or-off (ON iff `agent_token` is set; a non-empty token must be ≥16 chars), and Redis runs with AUTH/ACL. **Phase 2.2.4 relaxed this at the server runtime boundary only:** when no `agent_token` is configured, the server runtime/CLI auto-generates a strong token (`secrets.token_urlsafe(32)`) and persists it at `<server.data_dir>/secrets/agent-token` (new `[server].data_dir`, default `/server-data`, env `DOPILOT_SERVER_DATA_DIR`), reusing it on restart — so machine auth ends up ON via the generated token. Generation is server-only (agents never generate) and is a runtime step in `dopilot_server.agent_token`; `load_settings()` stays side-effect-free (no file creation, no generation). `create_app(settings)` injects the provided settings into the `Depends(get_settings)` path so inbound heartbeat/artifact-fetch auth sees the generated token. Operators retrieve the token with `dopilot-server agent-token print [--quiet]` (no DB/Redis/ASGI needed; usable via `docker exec`). Deployment ships three compose files under `deploy/docker/`: all-in-one (`docker-compose.yml`, explicit shared token because services start together), server-only (`docker-compose.server.yml`, token optional → generated), and agent-only join (`docker-compose.agent.yml`, token required, no admin token). Token auth is not transport encryption — encrypted cross-host transport still requires TLS/VPN/a private network. The agent still never connects to PostgreSQL directly.
-
-The three "abstract-first" seams to establish in phase 0/1 (so you don't edit three executors three times): `BaseExecutor`, `LogSource`, `node_strategy`. See `10-roadmap.md` §1.
-
-## Critical pitfalls (scrapydweb reference behavior — read before porting)
-
-These describe how the **scrapydweb reference** behaves. Each is tagged either *[do NOT inherit]* (a scrapydweb implementation quirk dopilot must not reproduce) or *[dopilot design constraint]* (a property dopilot must respect when it implements similar behavior). They are **never** a reason to copy scrapydweb's structure or code.
-
-- **`pkg_resources` / setuptools (porting note):** APScheduler 3.6.0 (scrapydweb's pin) imports `from pkg_resources import ...`, which `setuptools>=81` removed, so an editable install of upstream scrapydweb breaks `import scrapydweb` unless you `pip install "setuptools<81"`. **dopilot does not inherit that pin** — it uses APScheduler 3.10.x (importlib-based, no `pkg_resources`) in its own deps. See `docs/dopilot/05-dev-setup-and-known-issues.md` §4.1.
-- **Startup wipes directories *[do NOT inherit]*:** scrapydweb's `vars.py` deletes `*.*` files in `parse/`, `deploy/`, `schedule/` at import time. This is a scrapydweb implementation quirk — dopilot must not reproduce destructive-on-import behavior. (dopilot's own data/persistence model: `docs/dopilot/08-docker-deployment.md` §3.)
-- **Single-instance scheduler *[dopilot design constraint]*:** an in-process `BackgroundScheduler` has no distributed lock — multiple server replicas = duplicate timer firing. dopilot's server runs single-replica, **and uvicorn must run `workers=1`** (multiple workers cause the same duplicate firing, plus the in-process Redis stream consumers / dispatcher / SSE subscription tables break across processes). This is a hard constraint — dopilot does not support multi-replica/multi-worker and will not in the future. **Introducing Redis as the single-instance server↔agent communication bus is explicitly allowed**; what stays out of scope is using Redis (or NATS / PG LISTEN-NOTIFY) for **multi-replica HA / fan-out / a distributed lock** — server→web SSE fan-out is still done in single-process memory. See `docs/refactor/00-redis-streams-agent-communication.md`.
-- **Config form *[do NOT inherit]*:** scrapydweb hardcodes config filename `scrapydweb_settings_v11.py` loaded from `os.getcwd()` (`vars.py:29`, `run.py:124`). dopilot does **not** inherit this — it uses its own loader with TOML files under `configs/` (e.g. via `DOPILOT_CONFIG`).
-- **Base image must be glibc (slim/debian), not Alpine *[dopilot design constraint]*:** scrapydweb's subprocess parent-death signaling uses `libc.so.6` prctl (`sub_process.py:38`), which musl doesn't satisfy. If/when dopilot implements parent-death subprocess control (executors/agent), keep a glibc base.
-
-## Consulting scrapydweb behavior (external, read-only)
-
-There is **no local scrapydweb snapshot** in this repo. If you need to observe scrapydweb's reference behavior, clone the public upstream **externally** (outside this tree) — `https://github.com/my8100/scrapydweb` at `1.6.0` / commit `1341cf9` — and run it there. ⚠️ Anything you do with upstream is for **behavior observation only**: it does NOT run dopilot, and upstream code must never be fetched into, vendored into, or imported by dopilot.
-
-dopilot has its **own** build/test/lint/CI pipeline. dopilot writes its own tests under `apps/server/tests/`, `apps/agent/tests/`, and `packages/protocol/tests/`; the web SPA has vitest tests under `apps/web`. Run them with `pytest`, `ruff check apps packages`, and `corepack pnpm --filter web test`. scrapydweb's own test suite is a **behavioral oracle for upstream only — not dopilot's regression net** (`docs/dopilot/07-testing-baseline.md`); `docs/dopilot/09-package-rename.md` is now scrapydweb **behavioral porting notes**, not a rename plan.
-
-## Git remotes
-
-- `origin` → https://github.com/senjianlu/dopilot (this repo)
-- `upstream` → https://github.com/my8100/scrapydweb.git (track upstream for diff/cherry-pick; do NOT merge its history)
+- 与用户沟通一律使用简体中文(对话、方案摘要、汇报等面向用户的自然语言);
+  代码、标识符、注释与既有产物的语言不受此约束
+- 评审只能通过 `.ai-workflow/scripts/review.sh` 触发,不得自行替代
+- **预计触及文件 > 10 的改动,方案确认闸之前必须先经 plan 阶段 Codex 评审**
+  (`.ai-workflow/scripts/plan-review.sh`):plan-blocker/major 就地改 plan.md
+  后重评,脚本强制轮次上限,达上限仍不决则停下交用户。≤10 文件不强制。
+  文件数为 plan 起草时的估计;实现中实际超阈,按 rawf-implement"偏差需停下
+  问用户"处理
+- **评审轮次上限默认均为 3 轮**(plan 评审与实现层修复各自计数),仅当
+  **用户明确要求放宽**时,在当前任务 plan.md frontmatter 写
+  `plan_review_max_rounds` / `impl_fix_max_rounds`(正整数)覆盖默认值,
+  并在摘要或实现记录中声明;不得未经用户提出而自行写入或建议性写入
+- **评审进行中(review.sh 运行至返回,含后台等待期)禁止改动本项目任何
+  文件,`.claude/` 除外**。脚本比对评审前后主工作区指纹,任何被计入的
+  写入都会使评审无效并返回 exit 3;`.claude/`(如权限记录 settings.local.json)
+  已从指纹排除,不受此限。发起评审后,等待其完成再对项目做写入
+- 开新任务前先检查 `.ai/` 下是否有同日同名任务目录,避免覆盖
+- 禁止用 Bash 重定向、临时脚本等方式绕过 gate-plan 对源码与工作流
+  控制文件的写入闸
+- 任务改变架构或关键决策时,收尾(/rawf-report)前把变化回写 docs/
+  (architecture/ 或 decisions/),与代码同一提交;architecture/README.md
+  只做汇总和导航,详细主题下沉到同目录其他文件

@@ -5,11 +5,11 @@ single-admin scheduling platform built as an `apps/` + `packages/` monorepo.
 
 ## Before you start
 
-- Read [`CLAUDE.md`](CLAUDE.md) for the architecture, hard constraints, and
-  current implementation state.
-- Read [`docs/dopilot/00-requirements.md`](docs/dopilot/00-requirements.md) (the
-  north-star: goals, confirmed decisions, phased roadmap) before proposing any
-  behavior change.
+- Read [`docs/architecture/`](docs/architecture/README.md) for the current
+  system architecture and implementation state.
+- Read [`docs/decisions/`](docs/decisions/README.md) (confirmed decisions and
+  hard constraints, one record per decision) before proposing any behavior
+  change.
 - Honor the locked decisions: single-admin (no multi-user/RBAC), single-replica
   server (`uvicorn workers=1`, one in-process scheduler), PostgreSQL as the only
   database, Redis as a transient message bus, and the strict job-type order
@@ -72,8 +72,13 @@ blocker instead.
 ## Commits & pull requests
 
 - This repo follows **Conventional Commits 1.0.0**, adapted to dopilot, enforced
-  by a local `commit-msg` hook. See
-  [`docs/agent-governance/03-commit-convention.md`](docs/agent-governance/03-commit-convention.md).
+  by a local `commit-msg` hook. See the "Git 提交规范" section in
+  [`AGENTS.md`](AGENTS.md); enable the hooks once after cloning:
+
+  ```bash
+  git config core.hooksPath .githooks
+  git config commit.template .gitmessage
+  ```
 - Keep PRs scoped; update the relevant `docs/` when a decision or behavior
   changes.
 - New or changed behavior needs tests under `apps/server/tests/`,

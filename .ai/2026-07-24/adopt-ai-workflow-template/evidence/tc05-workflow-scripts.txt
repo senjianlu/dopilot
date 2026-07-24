@@ -1,0 +1,7 @@
+$ bash -n .claude/hooks/gate-plan.sh .claude/hooks/gate-review.sh .ai-workflow/scripts/review.sh .ai-workflow/scripts/plan-review.sh .githooks/commit-msg && ls -l 可执行位
+bash -n exit code: 0
+-rwxr-xrw- 1 codespace codespace 6640 Jul 24 03:18 .ai-workflow/scripts/plan-review.sh
+-rwxr-xrw- 1 codespace codespace 7631 Jul 24 03:18 .ai-workflow/scripts/review.sh
+-rwxr-xrw- 1 codespace codespace 2208 Jul 24 03:18 .claude/hooks/gate-plan.sh
+-rwxr-xrw- 1 codespace codespace 1242 Jul 24 03:18 .claude/hooks/gate-review.sh
+-rwxrwxrwx 1 codespace root      1840 Jul 24 03:20 .githooks/commit-msg

@@ -1,0 +1,2 @@
+$ python3 -m py_compile apps/server/dopilot_server/services/states.py apps/server/migrations/versions/*.py packages/protocol/dopilot_protocol/agent.py packages/protocol/dopilot_protocol/streams.py
+exit code: 0

@@ -4,7 +4,7 @@ Revision ID: 0011
 Revises: 0010
 Create Date: 2026-06-22
 
-Phase 2.2 (see docs/phases/phase-2.2/00-brief.md). Adds the row-level
+Phase 2.2 (see git history: docs/phases/phase-2.2/00-brief.md). Adds the row-level
 ``schedules.enabled`` boolean that gates whether a schedule is registered with
 APScheduler / fires on a timer. Server default is ``false`` so the column
 backfills existing rows as disabled and matches the model default (new schedules
