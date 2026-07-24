@@ -414,3 +414,65 @@ class MarkTaskLostResponse(BaseModel):
     task_status: str
     executions_marked: int = 0
     already_terminal: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# resource dashboard (D2/D3): live usage snapshot + safe operator actions
+# ---------------------------------------------------------------------------
+
+
+class ResourceStatEntry(BaseModel):
+    """One measured metric. ``value``/``limit`` are ``null`` when unknown or
+    uncapped; ``level`` is computed server-side (single source of truth)."""
+
+    key: str
+    kind: str  # "bytes" | "count" | "age"
+    value: int | None = None
+    limit: int | None = None
+    level: str  # "ok" | "warn" | "critical" | "unknown"
+
+
+class ResourceStatScope(BaseModel):
+    """A group of metrics (server / postgres / redis / agent:<id>) with a scope-
+    level ``status`` — ``unavailable`` means collection failed, ``stale`` means
+    the sample is older than 2x its reporting interval."""
+
+    scope: str
+    status: str  # "ok" | "stale" | "unavailable"
+    sampled_at: str | None = None
+    last_seen_at: str | None = None
+    entries: list[ResourceStatEntry] = Field(default_factory=list)
+
+
+class ResourceStatsResponse(BaseModel):
+    """Cached resource snapshot. ``sampled_at=None`` + empty ``scopes`` means no
+    snapshot has been taken yet (sampler disabled or first tick pending) — the
+    endpoint NEVER samples on the request path."""
+
+    sampled_at: str | None = None
+    sweep_enabled: bool = True
+    scopes: list[ResourceStatScope] = Field(default_factory=list)
+
+
+class SweepStepResult(BaseModel):
+    """Outcome of one retention-sweep step. ``status='skipped'`` when its knob is
+    0/disabled; ``failed`` when it raised (later steps still run)."""
+
+    status: str  # "ok" | "failed" | "skipped"
+    result: TerminalCleanupResponse | None = None
+    pruned: int | None = None
+    streams: dict[str, dict[str, int | str]] | None = None
+    error: str | None = None
+
+
+class SweepNowResponse(BaseModel):
+    """Per-step report of a manually-triggered retention sweep. Always HTTP 200
+    (the sweep was executed); each step reports its own status."""
+
+    steps: dict[str, SweepStepResult]
+
+
+class RewriteAofResponse(BaseModel):
+    """Result of triggering a Redis background AOF rewrite."""
+
+    started: bool = True

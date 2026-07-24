@@ -1,0 +1,24 @@
+# CMD: python -m pytest apps/agent/tests/test_resource_limits.py apps/agent/tests/test_heartbeat_worker.py -k "tc09 or disk_sample or reads_cache or omits_disk or includes_disk" -v
+============================= test session starts ==============================
+platform linux -- Python 3.12.1, pytest-9.1.1, pluggy-1.6.0 -- /home/codespace/.python/current/bin/python
+cachedir: .pytest_cache
+rootdir: /workspaces/dopilot/apps/agent
+configfile: pyproject.toml
+plugins: anyio-4.12.1, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 27 items / 16 deselected / 11 selected
+
+apps/agent/tests/test_resource_limits.py::test_tc09_job_log_size_cap_no_block PASSED [  9%]
+apps/agent/tests/test_resource_limits.py::test_tc09_janitor_disk_sample PASSED [ 18%]
+apps/agent/tests/test_resource_limits.py::test_tc09_janitor_disk_sample_subitem_failure_nulled PASSED [ 27%]
+apps/agent/tests/test_resource_limits.py::test_tc09_dir_bytes_missing_vs_access_failure PASSED [ 36%]
+apps/agent/tests/test_resource_limits.py::test_tc09_count_helpers_missing_vs_access_failure PASSED [ 45%]
+apps/agent/tests/test_resource_limits.py::test_tc09_count_dirs_entry_access_failure_propagates PASSED [ 54%]
+apps/agent/tests/test_resource_limits.py::test_tc09_cache_sample_reflects_post_eviction_size PASSED [ 63%]
+apps/agent/tests/test_resource_limits.py::test_tc09_janitor_disk_sample_unreadable_dir_nulled PASSED [ 72%]
+apps/agent/tests/test_heartbeat_worker.py::test_build_request_includes_disk_sample PASSED [ 81%]
+apps/agent/tests/test_heartbeat_worker.py::test_build_request_omits_disk_when_no_sample PASSED [ 90%]
+apps/agent/tests/test_heartbeat_worker.py::test_build_request_reads_cache_never_walks_fs PASSED [100%]
+
+====================== 11 passed, 16 deselected in 0.62s =======================
+# Exit code: 0

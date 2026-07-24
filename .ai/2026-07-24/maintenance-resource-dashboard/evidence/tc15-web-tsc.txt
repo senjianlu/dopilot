@@ -1,0 +1,2 @@
+# CMD: corepack pnpm --filter web exec tsc --noEmit
+# Exit code: 0

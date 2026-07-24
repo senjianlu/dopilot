@@ -126,6 +126,9 @@ async def run_agent(settings: Settings, *, stop: asyncio.Event | None = None) ->
             else None
         ),
         lock_for=consumer.execution_lock if consumer is not None else None,
+        # Resource dashboard (D1): each sweep publishes a disk sample here; the
+        # heartbeat worker reads it and reports it under detail["disk"].
+        disk_status=runtime.disk_status,
     )
     janitor.start()
     if runtime.heartbeat is not None:

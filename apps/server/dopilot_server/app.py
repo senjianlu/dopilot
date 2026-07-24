@@ -43,6 +43,7 @@ from .redis.commands import CommandProducer
 from .redis.consumers import EventConsumer, LogConsumer
 from .redis.dispatcher import CommandDispatcher
 from .redis.reconcile import RedisReconcileLoop
+from .resource_stats import ResourceStatsLoop
 from .retention import RetentionSweepLoop
 from .scheduler.runner import ScheduleRunner, build_schedule_runner
 from .services.builtin_artifacts import seed_builtin_artifacts
@@ -124,6 +125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         log_consumer: LogConsumer | None = None
         reconcile_loop: RedisReconcileLoop | None = None
         retention_loop: RetentionSweepLoop | None = None
+        stats_loop: ResourceStatsLoop | None = None
         schedule_runner: ScheduleRunner | None = None
         if owns_runtime:
             app.dependency_overrides[get_session] = _session_dependency
@@ -171,6 +173,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 retention_loop.start()
             app.state.retention_loop = retention_loop
 
+            # Resource dashboard (D2): periodic usage sampler. The endpoint serves
+            # only this cached snapshot (never samples per request). OFF only when
+            # stats_interval_seconds<=0.
+            if active.maintenance.stats_interval_seconds > 0:
+                stats_loop = ResourceStatsLoop(bg_maker, active, redis_client)
+                stats_loop.start()
+            app.state.resource_stats = stats_loop
+
             # Phase 1.7: the single-instance schedule runner (OFF unless
             # [scheduler].enabled). Drives the schedules table via APScheduler.
             schedule_runner = build_schedule_runner(bg_maker, active, dispatcher)
@@ -184,7 +194,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if schedule_runner is not None:
                     await schedule_runner.stop()
                 for worker in (
-                    retention_loop, reconcile_loop, log_consumer,
+                    stats_loop, retention_loop, reconcile_loop, log_consumer,
                     event_consumer, dispatcher,
                 ):
                     if worker is not None:

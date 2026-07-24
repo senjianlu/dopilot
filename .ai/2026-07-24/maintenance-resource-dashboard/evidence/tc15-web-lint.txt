@@ -1,0 +1,3 @@
+# CMD: corepack pnpm --filter web lint
+$ eslint .
+# Exit code: 0

@@ -556,3 +556,280 @@ def test_tc13_agent_defaults_and_env_overrides(monkeypatch, tmp_path):
     s2 = load_settings(str(toml))
     for _var, (val, get) in env.items():
         assert get(s2) == int(val)
+
+
+# --------------------------------------------------------------------------
+# TC-09 — janitor disk sample (resource dashboard, D1)
+# --------------------------------------------------------------------------
+async def test_tc09_janitor_disk_sample(tmp_path, monkeypatch):
+    """TC-09: sweep_once publishes a fixed-shape disk sample whose counts/bytes
+    match a known workdir tree; a failing sub-item is nulled, not fatal."""
+    from dopilot_agent.disk_status import DiskStatus
+
+    workdir = tmp_path
+    store = StateStore(str(workdir / "state" / "executions"))
+    cursor_dir = workdir / "state" / "executions" / "logpos"
+    cursor_dir.mkdir(parents=True, exist_ok=True)
+    ws_root = workdir / "python_wheel" / "workspaces"
+    ws_root.mkdir(parents=True, exist_ok=True)
+
+    # workspaces: 2 dirs, 100 + 50 bytes
+    (ws_root / "e1").mkdir()
+    (ws_root / "e1" / "job.log").write_bytes(b"x" * 100)
+    (ws_root / "e2").mkdir()
+    (ws_root / "e2" / "job.log").write_bytes(b"y" * 50)
+    # artifact cache: 30 bytes under artifacts/scrapy
+    arts = workdir / "artifacts" / "scrapy"
+    arts.mkdir(parents=True)
+    (arts / "abc.egg").write_bytes(b"z" * 30)
+    # scrapyd dirs: 25 bytes
+    scrapyd_logs = workdir / "scrapyd" / "logs"
+    scrapyd_logs.mkdir(parents=True)
+    (scrapyd_logs / "j.log").write_bytes(b"s" * 25)
+    # outbox: 3 json files
+    outbox = workdir / "outbox"
+    outbox.mkdir()
+    for i in range(3):
+        (outbox / f"{i}.json").write_bytes(b"{}")
+    # state: 2 execution state files + 2 logpos cursors
+    store.write(AttemptState(task_id="t", execution_id="e1", phase="done",
+                             runner_type="python_wheel"))
+    store.write(AttemptState(task_id="t", execution_id="e2", phase="done",
+                             runner_type="python_wheel"))
+    (cursor_dir / "e1.logpos").write_text("0")
+    (cursor_dir / "e2.logpos").write_text("0")
+
+    settings = Settings(
+        agent=AgentSettings(agent_id="agent-1", workdir=str(workdir),
+                            janitor_interval_seconds=600),
+        capabilities=Capabilities(scrapy=True),
+        scrapyd=ScrapydSettings(start=False),
+        redis=RedisSettings(url="", event_outbox_dir=str(outbox)),
+    )
+    disk = DiskStatus()
+    runner = PythonWheelRunner(workspace_root=str(ws_root))
+    janitor = AgentJanitor(
+        settings=settings, store=store, wheel_runner=runner,
+        cursor_dir=str(cursor_dir), artifacts_root=str(workdir / "artifacts"),
+        disk_status=disk,
+    )
+    await janitor.sweep_once(now=time.time())
+
+    sample = disk.snapshot()
+    assert sample is not None
+    assert set(sample) >= {
+        "sampled_at", "interval_seconds", "workspaces", "cache",
+        "scrapyd", "outbox", "state", "volume",
+    }
+    assert sample["interval_seconds"] == 600
+    assert sample["workspaces"] == {"count": 2, "bytes": 150}
+    assert sample["cache"]["bytes"] == 30
+    assert sample["cache"]["limit"] == settings.agent.artifact_cache_max_bytes
+    assert sample["scrapyd"]["bytes"] == 25
+    assert sample["outbox"]["files"] == 3
+    assert sample["outbox"]["limit"] == settings.redis.event_outbox_max_files
+    assert sample["state"] == {"executions": 2, "logpos": 2}
+    assert sample["volume"]["total"] > 0
+
+
+async def test_tc09_janitor_disk_sample_subitem_failure_nulled(
+    tmp_path, monkeypatch
+):
+    """TC-09 (edge): a failing sub-collector nulls only its item; the sweep and
+    the rest of the sample survive."""
+    from dopilot_agent import janitor as janitor_mod
+    from dopilot_agent.disk_status import DiskStatus
+
+    workdir = tmp_path
+    store = StateStore(str(workdir / "state" / "executions"))
+    cursor_dir = workdir / "state" / "executions" / "logpos"
+    cursor_dir.mkdir(parents=True, exist_ok=True)
+    (workdir / "python_wheel" / "workspaces").mkdir(parents=True)
+
+    def _boom(_path):
+        raise OSError("volume unreadable")
+
+    monkeypatch.setattr(janitor_mod, "_volume", _boom)
+
+    settings = _settings(workdir)
+    disk = DiskStatus()
+    runner = PythonWheelRunner(
+        workspace_root=str(workdir / "python_wheel" / "workspaces")
+    )
+    janitor = AgentJanitor(
+        settings=settings, store=store, wheel_runner=runner,
+        cursor_dir=str(cursor_dir), artifacts_root=str(workdir / "artifacts"),
+        disk_status=disk,
+    )
+    await janitor.sweep_once(now=time.time())
+    sample = disk.snapshot()
+    assert sample is not None
+    assert sample["volume"] is None  # failing item nulled
+
+
+def test_tc09_dir_bytes_missing_vs_access_failure(tmp_path, monkeypatch):
+    """TC-09: the sample size helper returns 0 for an absent dir (legit empty)
+    but PROPAGATES an access failure (so _guard nulls the item) — an unreadable
+    dir is never a fake 0."""
+    from dopilot_agent import janitor as janitor_mod
+
+    # missing dir -> 0 (nothing written yet)
+    assert janitor_mod._dir_bytes(tmp_path / "never") == 0
+
+    # existing but unreadable dir -> os.walk onerror raises -> propagates
+    d = tmp_path / "logs"
+    d.mkdir()
+
+    def _walk(path, onerror=None):
+        if onerror is not None:
+            onerror(PermissionError("denied"))
+        return iter([])
+
+    monkeypatch.setattr(janitor_mod.os, "walk", _walk)
+    with pytest.raises(PermissionError):
+        janitor_mod._dir_bytes(d)
+
+
+def test_tc09_count_helpers_missing_vs_access_failure(tmp_path, monkeypatch):
+    """TC-09: count helpers return 0 ONLY for an absent dir (FileNotFoundError);
+    a PermissionError propagates (never a fake 0), and they do not rely on
+    error-swallowing Path.glob/Path.exists."""
+    from dopilot_agent import janitor as janitor_mod
+
+    d = tmp_path / "logpos"
+    d.mkdir()
+    (d / "a.logpos").write_text("0")
+    (d / "b.logpos").write_text("0")
+    (d / "c.txt").write_text("x")
+    # happy path: pattern match count
+    assert janitor_mod._count_glob(d, "*.logpos") == 2
+    assert janitor_mod._count_dirs(tmp_path) == 1  # only 'logpos' subdir
+
+    # absent dir -> 0
+    assert janitor_mod._count_glob(tmp_path / "nope", "*.logpos") == 0
+    assert janitor_mod._count_dirs(tmp_path / "nope") == 0
+
+    # unreadable dir (scandir PermissionError) -> propagates, NOT a fake 0
+    def _boom_scandir(_path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(janitor_mod.os, "scandir", _boom_scandir)
+    with pytest.raises(PermissionError):
+        janitor_mod._count_glob(d, "*.logpos")
+    with pytest.raises(PermissionError):
+        janitor_mod._count_dirs(d)
+
+
+def test_tc09_count_dirs_entry_access_failure_propagates(tmp_path, monkeypatch):
+    """TC-09 (R-01): a PermissionError from DirEntry.is_dir() PROPAGATES (never a
+    too-small "normal" count); only a vanished entry (FileNotFoundError) is
+    skipped."""
+    from dopilot_agent import janitor as janitor_mod
+
+    class _Entry:
+        def __init__(self, exc):
+            self.name = "x"
+            self._exc = exc
+
+        def is_dir(self):
+            if self._exc:
+                raise self._exc
+            return True
+
+    # PermissionError on an entry -> propagates
+    monkeypatch.setattr(
+        janitor_mod.os, "scandir", lambda p: [_Entry(PermissionError("denied"))]
+    )
+    with pytest.raises(PermissionError):
+        janitor_mod._count_dirs(tmp_path)
+
+    # A vanished entry (FileNotFoundError) is skipped, real dirs still counted
+    monkeypatch.setattr(
+        janitor_mod.os,
+        "scandir",
+        lambda p: [_Entry(FileNotFoundError()), _Entry(None)],
+    )
+    assert janitor_mod._count_dirs(tmp_path) == 1
+
+
+async def test_tc09_cache_sample_reflects_post_eviction_size(tmp_path):
+    """TC-09 (R-02): after the LRU eviction frees space, the disk sample reports
+    the REMAINING cache size, not the pre-eviction total (which could keep the
+    dashboard at warn/critical for a whole janitor cycle)."""
+    from dopilot_agent.disk_status import DiskStatus
+
+    workdir = tmp_path
+    store = StateStore(str(workdir / "state" / "executions"))
+    cursor_dir = workdir / "state" / "executions" / "logpos"
+    cursor_dir.mkdir(parents=True, exist_ok=True)
+    (workdir / "python_wheel" / "workspaces").mkdir(parents=True)
+    wheel = workdir / "artifacts" / "python_wheel"
+    for sha, age in (("aaa", 1000), ("bbb", 0)):  # aaa older -> evicted first
+        d = wheel / sha
+        d.mkdir(parents=True)
+        (d / "body.bin").write_bytes(b"x" * 100)
+        ready = d / ".ready"
+        ready.write_text("")
+        t = time.time() - age
+        os.utime(ready, (t, t))
+
+    # cap 150 < 200 total -> exactly one 100-byte entry is evicted, 100 remains.
+    settings = _settings(workdir, artifact_cache_max_bytes=150)
+    disk = DiskStatus()
+    runner = PythonWheelRunner(
+        workspace_root=str(workdir / "python_wheel" / "workspaces")
+    )
+    janitor = AgentJanitor(
+        settings=settings, store=store, wheel_runner=runner,
+        cursor_dir=str(cursor_dir), artifacts_root=str(workdir / "artifacts"),
+        disk_status=disk,
+    )
+    await janitor.sweep_once(now=time.time())
+    sample = disk.snapshot()
+    assert sample["cache"]["bytes"] == 100  # post-eviction remaining, not 200
+    assert not (wheel / "aaa").exists()  # older entry actually evicted
+
+
+async def test_tc09_janitor_disk_sample_unreadable_dir_nulled(
+    tmp_path, monkeypatch
+):
+    """TC-09 (edge): an UNREADABLE directory in the real traversal path nulls
+    only that sub-item (scrapyd here) — not a fake 0 — and the rest survive."""
+    from dopilot_agent import janitor as janitor_mod
+    from dopilot_agent.disk_status import DiskStatus
+
+    workdir = tmp_path
+    store = StateStore(str(workdir / "state" / "executions"))
+    cursor_dir = workdir / "state" / "executions" / "logpos"
+    cursor_dir.mkdir(parents=True, exist_ok=True)
+    ws_root = workdir / "python_wheel" / "workspaces"
+    ws_root.mkdir(parents=True)
+    (ws_root / "e1").mkdir()
+    (ws_root / "e1" / "job.log").write_bytes(b"x" * 10)
+    (workdir / "scrapyd").mkdir()
+
+    real_walk = janitor_mod.os.walk
+
+    def _walk(path, onerror=None):
+        # Simulate scrapyd/ being unreadable; everything else walks normally.
+        if "scrapyd" in str(path) and onerror is not None:
+            onerror(PermissionError("scrapyd unreadable"))
+            return iter([])
+        return real_walk(path, onerror=onerror)
+
+    monkeypatch.setattr(janitor_mod.os, "walk", _walk)
+
+    settings = _settings(workdir)
+    disk = DiskStatus()
+    runner = PythonWheelRunner(workspace_root=str(ws_root))
+    janitor = AgentJanitor(
+        settings=settings, store=store, wheel_runner=runner,
+        cursor_dir=str(cursor_dir), artifacts_root=str(workdir / "artifacts"),
+        disk_status=disk,
+    )
+    await janitor.sweep_once(now=time.time())
+    sample = disk.snapshot()
+    assert sample is not None
+    assert sample["scrapyd"] is None  # unreadable -> nulled, NOT a fake 0
+    assert sample["workspaces"]["bytes"] == 10  # others intact
+    assert sample["workspaces"] is not None  # others intact

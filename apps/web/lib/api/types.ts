@@ -398,6 +398,51 @@ export interface MarkTaskLostResponse {
   already_terminal: string[];
 }
 
+// ---------------------------------------------------------------------------
+// resource dashboard (D3): live usage snapshot + safe operator actions
+// ---------------------------------------------------------------------------
+
+export type ResourceLevel = "ok" | "warn" | "critical" | "unknown";
+export type ResourceScopeStatus = "ok" | "stale" | "unavailable";
+
+export interface ResourceStatEntry {
+  key: string;
+  kind: "bytes" | "count" | "age";
+  value: number | null;
+  limit: number | null;
+  level: ResourceLevel;
+}
+
+export interface ResourceStatScope {
+  scope: string; // "server" | "postgres" | "redis" | "agent:<id>"
+  status: ResourceScopeStatus;
+  sampled_at: string | null;
+  last_seen_at: string | null;
+  entries: ResourceStatEntry[];
+}
+
+export interface ResourceStatsResponse {
+  sampled_at: string | null;
+  sweep_enabled: boolean;
+  scopes: ResourceStatScope[];
+}
+
+export interface SweepStepResult {
+  status: "ok" | "failed" | "skipped";
+  result?: TerminalCleanupResponse | null;
+  pruned?: number | null;
+  streams?: Record<string, Record<string, number | string>> | null;
+  error?: string | null;
+}
+
+export interface SweepNowResponse {
+  steps: Record<string, SweepStepResult>;
+}
+
+export interface RewriteAofResponse {
+  started: boolean;
+}
+
 // Universal error envelope: { code, message_key, detail }.
 export interface ApiError {
   code: string;

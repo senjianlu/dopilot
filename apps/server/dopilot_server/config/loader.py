@@ -131,6 +131,11 @@ _INT_OVERRIDES: tuple[tuple[str, str, str], ...] = (
         "maintenance",
         "event_audit_delete_batch",
     ),
+    (
+        "DOPILOT_MAINTENANCE_STATS_INTERVAL_SECONDS",
+        "maintenance",
+        "stats_interval_seconds",
+    ),
     # Resource caps: artifact upload + aggregate quotas ([artifacts]).
     ("DOPILOT_ARTIFACTS_MAX_UPLOAD_BYTES", "artifacts", "max_upload_bytes"),
     ("DOPILOT_ARTIFACTS_MAX_TOTAL_BYTES", "artifacts", "max_total_bytes"),

@@ -14,6 +14,14 @@
   `dopilot-server` 同源托管（`DOPILOT_WEB_DIST=/app/web`）;`/api/*` 永不
   被改写为 HTML。无独立 Web 容器、无 `next start`。
 - 开发:`next dev` 经 `NEXT_PUBLIC_API_BASE` 指向 server。
+- **运维清理页(`/maintenance`)**:双职责——(1) 资源仪表盘,约 10s 轮询
+  `GET /maintenance/resource-stats` 的内存快照,按 scope(server 磁盘 /
+  PostgreSQL / Redis / 每 agent)分组展示当前值、上限、`Progress` 用量条与
+  等级 `ToneBadge`(ok→green/warn→amber/critical→red/unknown→gray),scope 级
+  `stale`/`unavailable` 有独立标注;首次采样前显示骨架。(2) 三个安全操作
+  (立即保留清扫 / 终态清理 dry-run+确认 / Redis 重写 AOF),均经 `useConfirm`
+  确认、内联 `Alert`/summary 呈现。配置面见
+  [04-configuration](04-configuration.md)。
 - i18n 默认中文;后端 API 只返回结构化 message code，文案映射在前端。
 - 测试:vitest + @testing-library/react + jsdom（单测/组件），Playwright
   （e2e，选择器走 `data-tone`/`data-testid`）;lint 为 ESLint flat config;
