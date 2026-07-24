@@ -1,0 +1,3 @@
+### TC-03 (round-05 regenerated): plan contract 0 hits, exit 1
+$ /usr/bin/grep -rniE "xUXNML4|dCa7nJn2|tailscale\.internal|CONSUL_|vault" deploy/kubernetes/; echo "exit=$?"
+exit=1

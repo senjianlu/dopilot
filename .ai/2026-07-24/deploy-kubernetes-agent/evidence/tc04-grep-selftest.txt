@@ -1,0 +1,39 @@
+### TC-04: grep-pattern effectiveness self-test (decoy file OUTSIDE the repo)
+### Each command is shown LITERALLY (including the '>' redirection and its target path),
+### then executed, with its full stdout/stderr and explicit exit code. No xtrace, no elision.
+
+# --- step 1: create the decoy file (printf writes, '>' redirects to the absolute path) ---
+$ printf 'token = xUXNML4iPCSsf5eHeKDBeJ3E2cK8yGGLy7\nredis = dCa7nJn2gYYG2Rmv\nhost = pve-cz-console.tailscale.internal\nCONSUL_HOST: x\nvault-addr: y\n' > /tmp/claude-1000/-workspaces-dopilot/590d4e0e-60de-4094-b6ab-1ea585d9f4e9/scratchpad/decoy-secrets.txt
+exit=0
+
+# --- step 2: prove the file now exists at that path (size in bytes) ---
+$ ls -l /tmp/claude-1000/-workspaces-dopilot/590d4e0e-60de-4094-b6ab-1ea585d9f4e9/scratchpad/decoy-secrets.txt
+-rw-r--rw- 1 codespace codespace 138 Jul 24 12:36 /tmp/claude-1000/-workspaces-dopilot/590d4e0e-60de-4094-b6ab-1ea585d9f4e9/scratchpad/decoy-secrets.txt
+exit=0
+
+# --- step 3: show the decoy contents that were written ---
+$ cat /tmp/claude-1000/-workspaces-dopilot/590d4e0e-60de-4094-b6ab-1ea585d9f4e9/scratchpad/decoy-secrets.txt
+token = xUXNML4iPCSsf5eHeKDBeJ3E2cK8yGGLy7
+redis = dCa7nJn2gYYG2Rmv
+host = pve-cz-console.tailscale.internal
+CONSUL_HOST: x
+vault-addr: y
+exit=0
+
+# --- step 4: the sanitization pattern MATCHES the decoy (proves the pattern is not broken) ---
+$ /usr/bin/grep -niE 'xUXNML4|dCa7nJn2|tailscale\.internal|CONSUL_|vault' /tmp/claude-1000/-workspaces-dopilot/590d4e0e-60de-4094-b6ab-1ea585d9f4e9/scratchpad/decoy-secrets.txt
+1:token = xUXNML4iPCSsf5eHeKDBeJ3E2cK8yGGLy7
+2:redis = dCa7nJn2gYYG2Rmv
+3:host = pve-cz-console.tailscale.internal
+4:CONSUL_HOST: x
+5:vault-addr: y
+exit=0   # 0 = matched
+
+# --- step 5: SAME pattern over the repo manifests finds 0 hits (TC-03's clean is genuine) ---
+$ /usr/bin/grep -rniE 'xUXNML4|dCa7nJn2|tailscale\.internal|CONSUL_|vault' deploy/kubernetes/
+exit=1   # 1 = no hits
+
+# --- step 6: decoy is OUTSIDE the repo tree (git does not see it) ---
+$ git status --porcelain | /usr/bin/grep -c decoy
+0
+grep-c-exit=1   # printed count 0 and exit 1 => no path containing 'decoy' in repo status

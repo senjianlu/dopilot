@@ -90,7 +90,7 @@ Next `output: "export"` 产出纯静态文件,由后端(FastAPI)静态托管,
 | `packages/protocol/` | server↔agent 共享 Pydantic 协议 |
 | `tests/` | 仅跨应用共享 fixtures;测试本体随各应用 |
 | `docs/`、`.ai/` | 持久真相 / 过程痕迹(分工见 docs/README.md;`.ai/` 每个任务目录含 `evidence/` 证据与 `assets/` 资源子目录) |
-| `deploy/` | Dockerfile 之外的编排(compose) |
+| `deploy/` | Dockerfile 之外的编排(`docker/` compose;`kubernetes/` K8s 参考清单) |
 | `configs/` | server/agent TOML 配置样例 |
 | `scripts/` | 仓库级辅助脚本(dev-db、smoke、deps-hash) |
 | `examples/` | 示例被调度对象(scrapy_clock) |

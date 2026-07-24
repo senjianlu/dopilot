@@ -1,0 +1,50 @@
+### TC-02 (round-05 regenerated)
+$ cat tc02_check.py
+import yaml
+
+docs = list(yaml.safe_load_all(open("deploy/kubernetes/agent/statefulset.yaml")))
+sts = [d for d in docs if d and d["kind"] == "StatefulSet"][0]
+sec = [d for d in yaml.safe_load_all(open("deploy/kubernetes/agent/secret.example.yaml"))
+       if d and d["kind"] == "Secret"][0]
+sec_keys = set(sec["stringData"].keys())
+print("secret stringData keys:", sorted(sec_keys))
+
+spec = sts["spec"]["template"]["spec"]
+conts = spec["containers"]
+assert len(conts) == 1, f"expected 1 container, got {len(conts)}"
+c = conts[0]
+env = {e["name"]: e for e in c["env"]}
+
+for var, key in (("DOPILOT_AGENT_TOKEN", "agent-token"), ("DOPILOT_REDIS_URL", "redis-url")):
+    ref = env[var]["valueFrom"]["secretKeyRef"]
+    assert ref["name"] == "dopilot-agent" and ref["key"] == key, ref
+    assert ref["key"] in sec_keys, f"{key} not in secret example"
+    assert "value" not in env[var], f"{var} must not have inline value"
+    print(f"{var}: secretKeyRef -> ({ref['name']}, {ref['key']})  in-example={ref['key'] in sec_keys}")
+
+assert "serviceAccountName" not in spec, "serviceAccountName must be absent"
+assert "initContainers" not in spec, "initContainers must be absent (no Vault init)"
+assert not spec.get("volumes"), f"no extra volumes expected, got {spec.get('volumes')}"
+print("de-sidecar (no serviceAccountName / initContainers / volumes): OK")
+
+for p in ("readinessProbe", "livenessProbe"):
+    cmd = c[p]["exec"]["command"]
+    assert cmd == ["dopilot-agent-healthcheck"], cmd
+    print(f"{p}.exec.command = {cmd}")
+
+pvc = sts["spec"]["volumeClaimTemplates"][0]
+assert pvc["metadata"]["name"] == "agent-data"
+assert pvc["spec"]["resources"]["requests"]["storage"] == "20Gi", pvc
+print("PVC agent-data storage =", pvc["spec"]["resources"]["requests"]["storage"])
+print("ALL ASSERTIONS PASSED")
+
+$ python3 tc02_check.py; echo "exit=$?"
+secret stringData keys: ['agent-token', 'redis-url']
+DOPILOT_AGENT_TOKEN: secretKeyRef -> (dopilot-agent, agent-token)  in-example=True
+DOPILOT_REDIS_URL: secretKeyRef -> (dopilot-agent, redis-url)  in-example=True
+de-sidecar (no serviceAccountName / initContainers / volumes): OK
+readinessProbe.exec.command = ['dopilot-agent-healthcheck']
+livenessProbe.exec.command = ['dopilot-agent-healthcheck']
+PVC agent-data storage = 20Gi
+ALL ASSERTIONS PASSED
+exit=0
