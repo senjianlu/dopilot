@@ -160,6 +160,15 @@ def tail_screen(
     return byte_start, fsize, chunk.decode("utf-8", errors="replace")
 
 
+def _append_bytes(path: str, data: bytes) -> None:
+    """Append ``data`` to ``path`` in one open (creating parents). No-op if empty."""
+    if not data:
+        return
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "ab") as fh:
+        fh.write(data)
+
+
 def append_increment(path: str, marker: bytes, raw: bytes) -> tuple[int, int]:
     """Append an optional gap ``marker`` then ``raw`` in ONE file open.
 
@@ -176,15 +185,49 @@ def append_increment(path: str, marker: bytes, raw: bytes) -> tuple[int, int]:
     a lock — the size/append split would then drop or overlap bytes.
     """
     physical_start = size(path)
-    if marker or raw:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "ab") as fh:
-            if marker:
-                fh.write(marker)
-            if raw:
-                fh.write(raw)
+    _append_bytes(path, marker + raw if (marker and raw) else (marker or raw))
     physical_end = physical_start + len(marker) + len(raw)
     return physical_start, physical_end
+
+
+def append_increment_capped(
+    path: str,
+    marker: bytes,
+    raw: bytes,
+    max_bytes: int,
+    trunc_marker: bytes,
+) -> tuple[int, int, bool]:
+    """Size-capped variant of :func:`append_increment` (resource caps, B1).
+
+    Appends ``marker + raw`` but never lets the body grow past ``max_bytes``
+    (measured in server-file physical bytes). Returns
+    ``(physical_start, physical_end, truncated_now)``:
+
+    - ``max_bytes <= 0`` disables the cap — behaves exactly like
+      :func:`append_increment` and ``truncated_now`` is always ``False``.
+    - When the incoming bytes stay within the cap, the full payload is written and
+      ``truncated_now`` is ``False``.
+    - When the payload would cross the cap, only the bytes that still fit are
+      written, followed by ``trunc_marker`` exactly once, and ``truncated_now`` is
+      ``True``. The caller is expected to record the sticky ``truncated`` state so
+      subsequent increments for this file are skipped entirely (keeping the marker
+      to exactly one line).
+
+    Shares the single-writer invariant documented on :func:`append_increment`.
+    """
+    physical_start = size(path)
+    payload = marker + raw if (marker and raw) else (marker or raw)
+    if max_bytes <= 0:
+        _append_bytes(path, payload)
+        return physical_start, physical_start + len(payload), False
+    room = max_bytes - physical_start
+    if len(payload) <= room:
+        _append_bytes(path, payload)
+        return physical_start, physical_start + len(payload), False
+    # Crossing the cap: write only what fits, then one truncation marker.
+    to_write = payload[: max(0, room)] + trunc_marker
+    _append_bytes(path, to_write)
+    return physical_start, physical_start + len(to_write), True
 
 
 # --- async boundary -------------------------------------------------------
@@ -222,8 +265,27 @@ async def aremove(path: str) -> bool:
     return await asyncio.to_thread(remove, path)
 
 
+async def aexists(path: str) -> bool:
+    """Async ``os.path.exists`` (offloaded). Used by retention to tell a failed
+    unlink (file still present) from an already-gone body (idempotent)."""
+    return await asyncio.to_thread(os.path.exists, path)
+
+
 async def aappend_increment(
     path: str, marker: bytes, raw: bytes
 ) -> tuple[int, int]:
     """Async :func:`append_increment`: marker+raw append + offsets in ONE hop."""
     return await asyncio.to_thread(append_increment, path, marker, raw)
+
+
+async def aappend_increment_capped(
+    path: str,
+    marker: bytes,
+    raw: bytes,
+    max_bytes: int,
+    trunc_marker: bytes,
+) -> tuple[int, int, bool]:
+    """Async :func:`append_increment_capped` (offloaded to a thread)."""
+    return await asyncio.to_thread(
+        append_increment_capped, path, marker, raw, max_bytes, trunc_marker
+    )

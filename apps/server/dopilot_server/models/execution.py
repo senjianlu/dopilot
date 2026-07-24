@@ -204,8 +204,12 @@ class ExecutionLogFile(Base):
         String, nullable=False, default="active"
     )
     # Phase 1.5: log COMPLETENESS, decoupled from lifecycle status. Sticky:
-    # once "partial" (a gap was seen), it never reverts to "complete".
-    # complete | partial | missing | expired
+    # once "partial" (a gap was seen) or "truncated" (hit the size cap), it never
+    # reverts to "complete". "truncated" (resource caps, B1) is set when the
+    # on-disk body reaches logs.max_file_bytes; it takes precedence over "partial"
+    # (truncation already implies incompleteness) and is NOT overridden by the
+    # finalize path, which only sets the lifecycle ``status`` column.
+    # complete | partial | truncated | missing | expired
     log_integrity: Mapped[str] = mapped_column(
         String, nullable=False, default="complete"
     )

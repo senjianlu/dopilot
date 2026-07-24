@@ -112,14 +112,35 @@ _INT_OVERRIDES: tuple[tuple[str, str, str], ...] = (
         "unreachable_lost_seconds",
     ),
     ("DOPILOT_LOG_RETENTION_DAYS", "logs", "retention_days"),
+    ("DOPILOT_LOG_MAX_FILE_BYTES", "logs", "max_file_bytes"),
     ("DOPILOT_LOG_FIRST_SCREEN_MAX_LINES", "logs", "first_screen_max_lines"),
     ("DOPILOT_LOG_FIRST_SCREEN_MAX_BYTES", "logs", "first_screen_max_bytes"),
+    # Resource caps: automatic retention sweep ([maintenance]).
+    (
+        "DOPILOT_MAINTENANCE_SWEEP_INTERVAL_SECONDS",
+        "maintenance",
+        "sweep_interval_seconds",
+    ),
+    (
+        "DOPILOT_MAINTENANCE_EVENT_AUDIT_RETENTION_DAYS",
+        "maintenance",
+        "event_audit_retention_days",
+    ),
+    (
+        "DOPILOT_MAINTENANCE_EVENT_AUDIT_DELETE_BATCH",
+        "maintenance",
+        "event_audit_delete_batch",
+    ),
+    # Resource caps: artifact upload + aggregate quotas ([artifacts]).
+    ("DOPILOT_ARTIFACTS_MAX_UPLOAD_BYTES", "artifacts", "max_upload_bytes"),
+    ("DOPILOT_ARTIFACTS_MAX_TOTAL_BYTES", "artifacts", "max_total_bytes"),
 )
 
 _BOOL_OVERRIDES: tuple[tuple[str, str, str], ...] = (
     ("DOPILOT_AUTH_DISABLED", "auth", "disabled"),
     ("DOPILOT_REDIS_REQUIRE_AOF", "redis", "require_aof"),
     ("DOPILOT_SCHEDULER_ENABLED", "scheduler", "enabled"),
+    ("DOPILOT_MAINTENANCE_ENABLED", "maintenance", "enabled"),
 )
 
 _TRUE = frozenset({"1", "true", "yes", "on"})

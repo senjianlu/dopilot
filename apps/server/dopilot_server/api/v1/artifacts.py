@@ -11,11 +11,20 @@ as build artifacts. Phase 1.8.1: a build artifact is NO LONGER directly runnable
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...artifacts.scrapy_store import ScrapyArtifactStore
+from ...artifacts.upload import (
+    cleanup_temp,
+    publish_lock,
+    release_quota,
+    reserve_quota,
+    stream_to_staging,
+)
 from ...artifacts.wheel_store import WheelArtifactStore
 from ...auth.agent_dependencies import require_server_token
 from ...auth.dependencies import AdminContext, get_current_admin
@@ -112,17 +121,61 @@ async def upload_scrapy_egg(
     the stored artifact version is content-derived from sha256.
     """
     _ = version
-    egg_bytes = await file.read()
     filename = file.filename or "crawler.egg"
-    manifest = _store(settings).save(
-        filename=filename, content=egg_bytes, project_hint=project
+    store = _store(settings)
+    # Resource caps (B5): stream to a bounded temp file (413 over max_upload_bytes),
+    # reserve against the aggregate quota (507), then publish + upsert. The temp
+    # file and reservation are always cleaned up.
+    tmp_path, size_bytes, sha256 = await stream_to_staging(
+        file, settings.artifacts.root_dir, settings.artifacts.max_upload_bytes
     )
-    artifact = await svc.upsert_scrapy(session, manifest)
-    await session.commit()
-    return BuildArtifactUploadResponse(
-        artifact=BuildArtifactView(**svc.build_artifact_view(artifact)),
-        spiders=list(manifest.spiders),
-    )
+    token = None
+    published = False
+    try:
+        # Serialize same-sha publishes (R-03): the existence check, publish, DB
+        # commit and rollback must not interleave with another upload of the same
+        # content, or a failing request could delete a body a concurrent COMMITTED
+        # request references. Under the lock, a second same-sha upload sees
+        # already_stored=True and never rolls back the shared body.
+        async with publish_lock(sha256):
+            already_stored = await asyncio.to_thread(store.egg_path(sha256).exists)
+            token = await reserve_quota(
+                session,
+                size_bytes=size_bytes,
+                max_total_bytes=settings.artifacts.max_total_bytes,
+                already_stored=already_stored,
+            )
+            try:
+                manifest = await asyncio.to_thread(
+                    lambda: store.save_from_path(
+                        filename=filename,
+                        tmp_path=tmp_path,
+                        sha256=sha256,
+                        size_bytes=size_bytes,
+                        project_hint=project,
+                    )
+                )
+                published = True
+                artifact = await svc.upsert_scrapy(session, manifest)
+                await session.commit()
+            except BaseException:
+                # If the body was published but upsert/commit failed, delete the
+                # published body so it is never left uncounted by the quota (R-04).
+                # Only roll back bytes THIS upload created — a deduped pre-existing
+                # artifact belongs to a prior success (and the sha lock guarantees
+                # no concurrent same-sha request is mid-publish).
+                if published and not already_stored:
+                    await asyncio.to_thread(store.remove_stored, sha256)
+                raise
+        return BuildArtifactUploadResponse(
+            artifact=BuildArtifactView(**svc.build_artifact_view(artifact)),
+            spiders=list(manifest.spiders),
+        )
+    finally:
+        # save_from_path renames the temp on success; on any failure it is left
+        # behind — remove it. Always release the reservation.
+        await cleanup_temp(tmp_path)
+        release_quota(token)
 
 
 @router.get("/artifacts/scrapy/{sha256}/egg")
@@ -155,17 +208,51 @@ async def upload_python_wheel(
     wheel; the agent installs it (``pip install --no-deps --target`` + PYTHONPATH)
     in packet 2b-2 — the server never runs Python.
     """
-    wheel_bytes = await file.read()
     filename = file.filename or "package.whl"
-    manifest = _wheel_store(settings).save(
-        filename=filename, content=wheel_bytes
+    store = _wheel_store(settings)
+    # Resource caps (B5): stream to a bounded temp (413), reserve quota (507),
+    # then publish + upsert; temp file + reservation always cleaned up.
+    tmp_path, size_bytes, sha256 = await stream_to_staging(
+        file, settings.artifacts.root_dir, settings.artifacts.max_upload_bytes
     )
-    artifact = await svc.upsert_wheel(session, manifest)
-    await session.commit()
-    return BuildArtifactUploadResponse(
-        artifact=BuildArtifactView(**svc.build_artifact_view(artifact)),
-        spiders=[],
-    )
+    token = None
+    published = False
+    try:
+        # Serialize same-sha publishes (R-03) — see the egg endpoint for rationale.
+        async with publish_lock(sha256):
+            already_stored = await asyncio.to_thread(store.wheel_path(sha256).exists)
+            token = await reserve_quota(
+                session,
+                size_bytes=size_bytes,
+                max_total_bytes=settings.artifacts.max_total_bytes,
+                already_stored=already_stored,
+            )
+            try:
+                manifest = await asyncio.to_thread(
+                    lambda: store.save_from_path(
+                        filename=filename,
+                        tmp_path=tmp_path,
+                        sha256=sha256,
+                        size_bytes=size_bytes,
+                    )
+                )
+                published = True
+                artifact = await svc.upsert_wheel(session, manifest)
+                await session.commit()
+            except BaseException:
+                # Roll back a published-but-uncommitted body (R-04); only this
+                # upload's new bytes, and the sha lock prevents a concurrent
+                # same-sha request from being mid-publish.
+                if published and not already_stored:
+                    await asyncio.to_thread(store.remove_stored, sha256)
+                raise
+        return BuildArtifactUploadResponse(
+            artifact=BuildArtifactView(**svc.build_artifact_view(artifact)),
+            spiders=[],
+        )
+    finally:
+        await cleanup_temp(tmp_path)
+        release_quota(token)
 
 
 @router.get("/artifacts/python_wheel/{sha256}/wheel")

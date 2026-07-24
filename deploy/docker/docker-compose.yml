@@ -61,6 +61,17 @@
 # host port and keeps password AUTH on by default.
 # ---------------------------------------------------------------------------
 
+# Container log rotation (resource hard limit): cap every service's json-file
+# stdout/stderr log so a runaway container can never fill the host disk. Applied
+# to ALL services below via the <<: *default-logging merge. Hosts using a
+# different Docker log driver (journald, etc.) must set an equivalent cap on the
+# daemon — this anchor only governs the json-file driver.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 # Shared agent definition. The three agents differ only by AGENT_ID + data
 # volume; the agent config loader lets AGENT_ID / AGENT_WORKDIR / DOPILOT_REDIS_URL
 # env vars override the baked TOML (read from the role default /app/configs/agent.toml
@@ -70,6 +81,7 @@ x-agent: &agent
   image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
   command: ["dopilot-agent"]
   init: true
+  logging: *default-logging
   depends_on:
     redis:
       condition: service_healthy
@@ -89,6 +101,7 @@ x-agent: &agent
 services:
   db:
     image: postgres:16
+    logging: *default-logging
     environment:
       POSTGRES_DB: dopilot
       POSTGRES_USER: dopilot
@@ -108,14 +121,32 @@ services:
   # append-only file (AOF) on; single instance (matches the single-server
   # constraint — Redis here is a message bus, NOT a multi-replica HA store).
   # Override the password with REDIS_PASSWORD in the environment.
+  #
+  # Memory hard limit (resource caps): --maxmemory backstops the host against
+  # Redis OOM; --maxmemory-policy noeviction makes XADD fail LOUDLY at the cap
+  # rather than silently evicting stream data (both sides tolerate XADD failure:
+  # the agent's log cursor does not advance and events sit in the durable outbox;
+  # the server retries dispatch). The primary bound is still the per-stream
+  # MAXLEN on XADD plus the server-side XTRIM MINID sweep. AOF is kept compact by
+  # the auto-rewrite thresholds. Raise DOPILOT_REDIS_MAXMEMORY for high-volume
+  # deployments (see docs/architecture/05-deployment.md).
   redis:
     image: redis:7
+    logging: *default-logging
     command:
       - "redis-server"
       - "--appendonly"
       - "yes"
       - "--requirepass"
       - "${REDIS_PASSWORD:-change-me-redis-pass}"
+      - "--maxmemory"
+      - "${DOPILOT_REDIS_MAXMEMORY:-512mb}"
+      - "--maxmemory-policy"
+      - "noeviction"
+      - "--auto-aof-rewrite-percentage"
+      - "100"
+      - "--auto-aof-rewrite-min-size"
+      - "64mb"
     volumes:
       - dopilot-redis:/data
     healthcheck:
@@ -137,6 +168,7 @@ services:
   migrate:
     image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
     command: ["alembic", "upgrade", "head"]
+    logging: *default-logging
     environment:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
     depends_on:
@@ -186,6 +218,7 @@ services:
     image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
     command: ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
     init: true
+    logging: *default-logging
     environment:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0

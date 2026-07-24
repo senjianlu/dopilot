@@ -44,11 +44,21 @@
 # server's Redis and HTTP port crosses hosts — put them on a private network /
 # VPN or terminate TLS at a reverse proxy for encrypted transport.
 
+# Container log rotation (resource hard limit): cap the agent's json-file
+# stdout/stderr log so a runaway container can never fill the host disk. Hosts on
+# a different Docker log driver must set an equivalent cap on the daemon.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   scrapy-agent-remote-1:
     image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
     command: ["dopilot-agent"]
     init: true
+    logging: *default-logging
     environment:
       AGENT_ID: ${AGENT_ID:-scrapy-agent-remote-1}
       AGENT_WORKDIR: /agent-data

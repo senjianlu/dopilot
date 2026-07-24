@@ -1,0 +1,26 @@
+# Command: grep -n verification for TC-16 (B-tier, file:line anchors)
+retention.py (retention_days cutoff):
+71:        cutoff = now - timedelta(days=self._settings.logs.retention_days)
+maintenance.py (log_retention_seconds -> XTRIM MINID):
+285:    seconds = settings.redis.log_retention_seconds
+reconcile.py (retained_until written at finalize):
+240:            log_file.retained_until = now + timedelta(days=retention_days)
+04-configuration.md:
+28:| server | `[logs]` | `root_dir=/server-data/logs`、drain/保留窗口参数、`retention_days`（默认 30，自动保留清扫的 cutoff）、`max_file_bytes`（单执行日志硬上限，默认 100MiB，超限置 `log_integrity=truncated`） |
+30:| server | `[artifacts]` | `root_dir`、`max_upload_bytes`（单次上传上限 413，默认 200MiB）、`max_total_bytes`（聚合配额 507，默认 20GiB） |
+37:### 资源硬上限（防磁盘/内存膨胀）
+55:- 决策见 [0019 资源硬上限](../decisions/0019-resource-hard-limits.md)。
+03-execution-and-logs.md:
+80:  `log_integrity`（`complete/partial/truncated/missing/expired`）表达完整性。
+82:  `truncated`（资源硬上限 B1）:单执行日志达到 `[logs].max_file_bytes`
+89:  - server 端 `RetentionSweepLoop`（资源硬上限 B2）每
+93:  - agent 端 `AgentJanitor`（资源硬上限 C1）实装 TTL 兜底 GC:终态
+05-deployment.md:
+48:## 资源硬上限（防宿主机膨胀）
+60:  `--maxmemory-policy noeviction` + `--auto-aof-rewrite-percentage 100`
+66:### 生产收缩 runbook（已膨胀的部署升级到本版本）
+0019 + README:
+1:# 0019:资源硬上限——防日志/磁盘/内存膨胀
+43:| [0019](0019-resource-hard-limits.md) | 资源硬上限：部署层/server/agent 各增长面配置化上限 + 自动过期，防日志/磁盘/内存膨胀 |
+docs/phases removed: OK
+# Exit code: 0

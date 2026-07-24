@@ -21,20 +21,26 @@ Naming (phase 2a clean-cut): the log index + command outbox key on ``task_id``
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, or_, select
+from dopilot_protocol.streams import EVENT_STREAM, LOG_STREAM
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config.settings import Settings
 from ..errors import ApiError
 from ..logs import files
 from ..models.command_outbox import CommandOutbox
+from ..models.event_audit import EventAudit
 from ..models.execution import Execution, ExecutionLogFile, Task
 from ..redis import reconcile
+from ..redis.client import RedisStreamClient
 from . import executions as svc
 from . import states
+
+log = logging.getLogger(__name__)
 
 # Reason recorded on manually lost executions/tasks (audit in error/status detail).
 MANUAL_LOST_REASON = "manual_cleanup"
@@ -90,13 +96,31 @@ async def cleanup_terminal_data(
     cutoff: datetime,
     dry_run: bool = False,
 ) -> CleanupSummary:
-    """Delete terminal task data older than ``cutoff``. Caller commits.
+    """Delete terminal task data older than ``cutoff`` — failure-safe.
 
-    Deletes, in FK-safe application order (there are no DB cascades): on-disk log
-    bodies -> ``execution_log_files`` rows -> ``executions`` -> ``command_outbox``
-    rows -> ``tasks``. Only terminal tasks are eligible, so a queued/running/
-    finalizing task is never deleted. ``dry_run`` returns the counts without
-    deleting or unlinking anything.
+    Used by BOTH the manual maintenance API and the automatic retention sweep
+    (:class:`RetentionSweepLoop`). Because the automatic sweep runs unattended, the
+    deletion is ordered so an interruption can NEVER leave a live index row
+    pointing at an already-deleted body (which would be an unmarked dangling
+    index, violating the "log gaps are visible audit facts" invariant):
+
+    STEP 1 — mark every matching ``execution_log_files`` row ``status='expired'``
+      and **commit**. Once committed, an absent body is an explicit, auditable
+      state (``expired``), not silent corruption.
+    STEP 2 — unlink the on-disk bodies (offloaded so the blocking unlink/rmdir
+      never runs on the event loop). A missing file is idempotent; a real unlink
+      failure is logged and the row is left for the next sweep to retry.
+    STEP 3 — delete the rows in FK-safe order (``execution_log_files`` ->
+      ``executions`` -> ``command_outbox`` -> ``tasks``) and **commit**.
+
+    A crash between any steps leaves expired-marked rows; the next sweep re-selects
+    them (still terminal + old) and idempotently completes the deletion. Only
+    terminal tasks are eligible, so a queued/running/finalizing task is never
+    touched. ``dry_run`` returns the counts without mutating, unlinking, or
+    committing anything (and is what the manual API preview uses).
+
+    Unlike the pre-resource-caps version, this function OWNS its commits when not
+    ``dry_run`` (it must, for the two-phase safety); callers no longer commit.
     """
     summary = CleanupSummary(dry_run=dry_run, cutoff=cutoff.isoformat())
 
@@ -145,26 +169,137 @@ async def cleanup_terminal_data(
     if dry_run:
         return summary
 
-    # 1) on-disk log bodies (before the index rows that point at them). Offloaded
-    # so the manual cleanup's blocking unlink/rmdir never runs on the event loop.
-    for lf in log_files:
-        if await files.aremove(lf.storage_path):
-            summary.log_files_removed += 1
+    # STEP 1: mark bodies expired + commit BEFORE any unlink (audit fact first).
+    await session.execute(
+        update(ExecutionLogFile)
+        .where(ExecutionLogFile.task_id.in_(task_ids))
+        .values(status=states.LOG_EXPIRED, log_integrity=states.LOG_EXPIRED)
+    )
+    await session.commit()
 
-    # 2) log index, 3) executions, 4) outbox, 5) tasks — FK-safe order.
-    await session.execute(
-        delete(ExecutionLogFile).where(
-            ExecutionLogFile.task_id.in_(task_ids)
+    # STEP 2: unlink bodies. A body that could NOT be removed (permission error,
+    # or a hard OSError) leaves its task OUT of the row deletion below, so the
+    # expired row keeps pointing at the still-present file and the next sweep
+    # retries the unlink. Never delete an index whose body still exists — that
+    # would orphan the file forever (R-03). A missing file is idempotent success.
+    failed_task_ids: set[str] = set()
+    for lf in log_files:
+        try:
+            if await files.aremove(lf.storage_path):
+                summary.log_files_removed += 1
+                continue
+        except OSError:
+            log.error(
+                "retention: error unlinking log body %s (retry next sweep)",
+                lf.storage_path, exc_info=True,
+            )
+            failed_task_ids.add(lf.task_id)
+            continue
+        # aremove returned False: either already-gone (ok to delete the row) or
+        # the file still exists (removal failed silently — must NOT delete the row).
+        if await files.aexists(lf.storage_path):
+            log.error(
+                "retention: could not unlink log body %s (retry next sweep)",
+                lf.storage_path,
+            )
+            failed_task_ids.add(lf.task_id)
+
+    # STEP 3: delete only tasks whose bodies are fully gone, FK-safe + commit.
+    # Tasks with a failed unlink stay (rows expired, retried next sweep).
+    deletable = [tid for tid in task_ids if tid not in failed_task_ids]
+    if deletable:
+        await session.execute(
+            delete(ExecutionLogFile).where(
+                ExecutionLogFile.task_id.in_(deletable)
+            )
         )
-    )
-    await session.execute(
-        delete(Execution).where(Execution.task_id.in_(task_ids))
-    )
-    await session.execute(
-        delete(CommandOutbox).where(CommandOutbox.task_id.in_(task_ids))
-    )
-    await session.execute(delete(Task).where(Task.id.in_(task_ids)))
+        await session.execute(
+            delete(Execution).where(Execution.task_id.in_(deletable))
+        )
+        await session.execute(
+            delete(CommandOutbox).where(CommandOutbox.task_id.in_(deletable))
+        )
+        await session.execute(delete(Task).where(Task.id.in_(deletable)))
+    await session.commit()
+    summary.tasks = len(deletable)
     return summary
+
+
+async def prune_event_audit(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    now: datetime,
+) -> int:
+    """Delete ``event_audit`` rows older than the configured window (B3).
+
+    ``event_audit`` grows by one row per consumed agent status event (the
+    fastest-growing table) and had no cleanup path before the resource caps. Rows
+    older than ``maintenance.event_audit_retention_days`` are deleted in bounded
+    batches (``event_audit_delete_batch``), COMMITTING per batch so a large
+    backlog never holds a long table lock. Returns the number of rows deleted.
+    A retention of 0 disables pruning.
+    """
+    days = settings.maintenance.event_audit_retention_days
+    if days <= 0:
+        return 0
+    cutoff = now - timedelta(days=days)
+    batch = max(1, settings.maintenance.event_audit_delete_batch)
+    total = 0
+    while True:
+        ids = (
+            await session.execute(
+                select(EventAudit.id)
+                .where(EventAudit.processed_at < cutoff)
+                .limit(batch)
+            )
+        ).scalars().all()
+        if not ids:
+            break
+        await session.execute(
+            delete(EventAudit).where(EventAudit.id.in_(ids))
+        )
+        await session.commit()
+        total += len(ids)
+        if len(ids) < batch:
+            break
+    return total
+
+
+async def trim_log_streams(
+    redis_client: RedisStreamClient | None,
+    settings: Settings,
+    *,
+    now: datetime,
+) -> dict[str, int]:
+    """Time-trim the Redis log + event streams via ``XTRIM MINID`` (B4).
+
+    Implements the previously-inert ``redis.log_retention_seconds``: entries
+    older than the window are trimmed regardless of the per-XADD MAXLEN (the
+    primary bound). ``minid`` is the millisecond epoch of ``now - retention`` —
+    Redis stream ids are ``<ms>-<seq>``, so this drops every entry produced before
+    that instant. A per-stream failure is logged and skipped (never aborts the
+    sweep). Returns a map of stream -> entries trimmed. Retention 0 (or no client)
+    disables the time trim.
+    """
+    seconds = settings.redis.log_retention_seconds
+    if seconds <= 0 or redis_client is None:
+        return {}
+    minid = int((now.timestamp() - seconds) * 1000)
+    if minid <= 0:
+        return {}
+    trimmed: dict[str, int] = {}
+    for stream in (LOG_STREAM, EVENT_STREAM):
+        try:
+            trimmed[stream] = await redis_client.xtrim(
+                stream, minid=minid, approximate=True
+            )
+        except Exception:  # noqa: BLE001 - one bad stream never aborts the sweep
+            log.error(
+                "retention: XTRIM %s MINID %s failed", stream, minid,
+                exc_info=True,
+            )
+    return trimmed
 
 
 async def mark_task_lost(

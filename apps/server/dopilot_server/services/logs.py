@@ -34,12 +34,29 @@ OUTCOME_DROPPED_DUP = "dropped_dup"
 OUTCOME_GAP_PARTIAL = "gap_partial"
 OUTCOME_EOF = "eof"
 OUTCOME_NO_LOG_FILE = "no_log_file"
+# Resource caps (B1): the file just reached its size cap on this increment (a
+# truncation marker was written, log_integrity became sticky "truncated"), or it
+# was already capped and this increment's bytes were dropped while the stream
+# kept being consumed/ACKed.
+OUTCOME_TRUNCATED = "truncated"
+OUTCOME_TRUNCATED_DROPPED = "truncated_dropped"
+
+# Sticky log_integrity value once a file hits its size cap (see LogsSettings
+# .max_file_bytes). Decoupled from lifecycle status, like "partial".
+INTEGRITY_TRUNCATED = "truncated"
 
 
 def _gap_marker(expected: int, actual: int) -> bytes:
     return (
         f"\n[dopilot:log-gap expected_offset={expected} "
         f"actual_offset={actual}]\n"
+    ).encode()
+
+
+def _truncation_marker(max_bytes: int) -> bytes:
+    return (
+        f"\n[dopilot:log-truncated max_bytes={max_bytes} "
+        f"reason=size-cap]\n"
     ).encode()
 
 
@@ -67,6 +84,14 @@ async def apply_log_event(
     if event.offset < log_file.last_pulled_offset:
         return OUTCOME_DROPPED_DUP
 
+    cap = settings.logs.max_file_bytes
+    # Resource caps (B1): once a file is sticky-"truncated" we keep consuming and
+    # ACKing the stream (never stall) but write no more body bytes — just advance
+    # the agent cursor so offsets stay consistent and the marker stays one line.
+    if cap > 0 and log_file.log_integrity == INTEGRITY_TRUNCATED:
+        log_file.last_pulled_offset = event.offset + event.size_bytes
+        return OUTCOME_TRUNCATED_DROPPED
+
     outcome = OUTCOME_APPENDED
     marker = b""
 
@@ -84,28 +109,45 @@ async def apply_log_event(
     # DB offset (at-most-a-duplicate). The blocking open/write/getsize stays off
     # the event loop; ``physical_start``/``physical_end`` span exactly the bytes
     # written. Race-free because the single log consumer serializes writes (see
-    # files.append_increment's single-writer invariant).
-    physical_start, physical_end = await files.aappend_increment(
-        log_file.storage_path, marker, raw
+    # files.append_increment's single-writer invariant). The capped writer stops
+    # the body at ``max_file_bytes`` (+ one truncation marker); ``last_pulled_offset``
+    # still advances by the full agent range so the cursor never desyncs.
+    physical_start, physical_end, truncated_now = (
+        await files.aappend_increment_capped(
+            log_file.storage_path, marker, raw, cap, _truncation_marker(cap)
+        )
     )
     log_file.last_pulled_offset = event.offset + event.size_bytes
     log_file.size_bytes = physical_end
     log_file.final_offset = physical_end
+    if truncated_now:
+        # Sticky: once truncated it never reverts (like "partial"). Overrides a
+        # prior "partial" — truncated already implies incompleteness.
+        log_file.log_integrity = INTEGRITY_TRUNCATED
+        outcome = OUTCOME_TRUNCATED
 
     if manager is not None:
         # The SSE content spans EXACTLY [physical_start, physical_end] — it
         # includes the gap marker so the web's offset tracking stays consistent
         # with the on-disk physical bytes (the marker is meant to be visible).
-        # SSE is a TEXT channel for human display, so bytes are decoded with
+        # When this increment crossed the size cap, only the bytes that were
+        # actually written (the fitted body prefix + the one truncation marker)
+        # are published, so the SSE span still matches the physical file. SSE is a
+        # TEXT channel for human display, so bytes are decoded with
         # errors="replace" here; byte-fidelity lives on disk (written above) and
         # in the file-backed snapshot/download path, not in the live SSE stream.
+        if truncated_now:
+            room = max(0, cap - physical_start)
+            written = (marker + raw)[:room] + _truncation_marker(cap)
+        else:
+            written = marker + raw
         manager.publish(
             event.execution_id,
             {
                 "type": "log",
                 "start_offset": physical_start,
                 "end_offset": physical_end,
-                "content": (marker + raw).decode("utf-8", errors="replace"),
+                "content": written.decode("utf-8", errors="replace"),
             },
         )
     return outcome

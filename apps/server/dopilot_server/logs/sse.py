@@ -16,15 +16,24 @@ from fastapi import Request
 # A terminal sentinel pushed onto a subscriber queue so its generator can stop.
 CLOSE = object()
 
+# Resource caps (B6): per-subscriber queue bound. A subscriber whose generator
+# stalls (slow/stuck client) must never let the publisher grow an unbounded queue
+# and exhaust RAM; once this many undelivered events pile up the subscriber is
+# force-closed (its generator ends, the client reconnects and re-tails).
+DEFAULT_QUEUE_MAXSIZE = 1000
+
 
 class SubscriptionManager:
     """Tracks SSE subscribers per ``execution_id`` and fans out events."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, queue_maxsize: int = DEFAULT_QUEUE_MAXSIZE) -> None:
         self._subs: dict[str, set[asyncio.Queue]] = {}
+        self._maxsize = queue_maxsize
 
     def subscribe(self, execution_id: str) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue()
+        # Bounded queue (resource caps, B6): a stalled subscriber cannot grow it
+        # without limit — the publisher force-closes it on overflow instead.
+        queue: asyncio.Queue = asyncio.Queue(maxsize=self._maxsize)
         self._subs.setdefault(execution_id, set()).add(queue)
         return queue
 
@@ -44,14 +53,48 @@ class SubscriptionManager:
         return {eid for eid, subs in self._subs.items() if subs}
 
     def publish(self, execution_id: str, event: dict[str, Any]) -> None:
-        """Deliver ``event`` to every current subscriber of ``execution_id``."""
-        for queue in self._subs.get(execution_id, set()):
-            queue.put_nowait(event)
+        """Deliver ``event`` to every current subscriber of ``execution_id``.
+
+        Iterates over a snapshot so an overflow-triggered unsubscribe can mutate
+        the set mid-loop. A subscriber whose bounded queue is full is force-closed
+        (see :meth:`_overflow`) rather than silently dropped or blocked on.
+        """
+        for queue in list(self._subs.get(execution_id, ())):
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                self._overflow(execution_id, queue)
 
     def close(self, execution_id: str) -> None:
         """Signal all subscribers of ``execution_id`` to end their streams."""
-        for queue in self._subs.get(execution_id, set()):
+        for queue in list(self._subs.get(execution_id, ())):
+            self._push_close(queue)
+
+    def _overflow(self, execution_id: str, queue: asyncio.Queue) -> None:
+        """Force-close a subscriber whose queue overflowed (resource caps, B6).
+
+        The generator is blocked on ``queue.get()``; draining the backlog and
+        pushing :data:`CLOSE` wakes it so it ends promptly (``finally`` then
+        unsubscribes). The web client reconnects and re-tails from its last
+        offset via the existing recovery path — no data is lost, only this stalled
+        connection is dropped. Also unsubscribed here so a wedged generator that
+        never wakes still stops receiving fan-out.
+        """
+        self._push_close(queue)
+        self.unsubscribe(execution_id, queue)
+
+    @staticmethod
+    def _push_close(queue: asyncio.Queue) -> None:
+        """Drain any backlog (to guarantee room) then push :data:`CLOSE`."""
+        try:
+            while True:
+                queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+        try:
             queue.put_nowait(CLOSE)
+        except asyncio.QueueFull:  # pragma: no cover - just drained, room exists
+            pass
 
 
 def get_subscriptions(request: Request) -> SubscriptionManager:

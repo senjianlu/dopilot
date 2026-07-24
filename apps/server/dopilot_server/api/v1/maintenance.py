@@ -66,9 +66,9 @@ async def terminal_cleanup(
     cutoff are affected; queued/running/finalizing tasks are never touched.
     """
     cutoff = _resolve_cutoff(body)
+    # cleanup_terminal_data owns its commits (two-phase, failure-safe) when not a
+    # dry run; the handler no longer commits.
     summary = await svc.cleanup_terminal_data(
         session, settings, cutoff=cutoff, dry_run=body.dry_run
     )
-    if not body.dry_run:
-        await session.commit()
     return TerminalCleanupResponse(**summary.as_dict())

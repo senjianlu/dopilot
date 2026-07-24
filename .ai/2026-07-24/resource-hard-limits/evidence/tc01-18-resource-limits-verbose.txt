@@ -1,0 +1,49 @@
+# Command: python -m pytest apps/server/tests/test_resource_limits.py apps/agent/tests/test_resource_limits.py -v -p no:cacheprovider
+# CWD: /workspaces/dopilot
+# ---- stdout/stderr ----
+============================= test session starts ==============================
+platform linux -- Python 3.12.1, pytest-9.1.1, pluggy-1.6.0 -- /home/codespace/.python/current/bin/python
+rootdir: /workspaces/dopilot
+configfile: pyproject.toml
+plugins: anyio-4.12.1, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 35 items
+
+apps/server/tests/test_resource_limits.py::test_tc01_log_file_size_cap_truncates_and_keeps_consuming PASSED [  2%]
+apps/server/tests/test_resource_limits.py::test_tc01_consumer_keeps_acking_past_the_cap PASSED [  5%]
+apps/server/tests/test_resource_limits.py::test_tc02_truncated_sticky_through_finalize PASSED [  8%]
+apps/server/tests/test_resource_limits.py::test_tc03_retention_sweep_deletes_old_terminal_only PASSED [ 11%]
+apps/server/tests/test_resource_limits.py::test_tc03_retention_sweep_unlink_failure_retries_next_sweep PASSED [ 14%]
+apps/server/tests/test_resource_limits.py::test_tc03_retention_sweep_commit_failure_no_dangling_and_retries PASSED [ 17%]
+apps/server/tests/test_resource_limits.py::test_tc03_retention_sweep_step3_failure_no_dangling_and_retries PASSED [ 20%]
+apps/server/tests/test_resource_limits.py::test_tc04_event_audit_batch_prune PASSED [ 22%]
+apps/server/tests/test_resource_limits.py::test_tc05_trim_log_streams_xtrim_minid PASSED [ 25%]
+apps/server/tests/test_resource_limits.py::test_tc06_stream_upload_413_over_cap_no_residue PASSED [ 28%]
+apps/server/tests/test_resource_limits.py::test_tc06_stream_upload_under_cap_ok PASSED [ 31%]
+apps/server/tests/test_resource_limits.py::test_tc06_endpoint_upload_success_and_failures_no_residue PASSED [ 34%]
+apps/server/tests/test_resource_limits.py::test_tc06_endpoint_wheel_upload_success_and_413 PASSED [ 37%]
+apps/server/tests/test_resource_limits.py::test_tc18_endpoint_quota_507_no_residue_and_total PASSED [ 40%]
+apps/server/tests/test_resource_limits.py::test_tc18_manifest_publish_failure_rolls_back_body PASSED [ 42%]
+apps/server/tests/test_resource_limits.py::test_tc18_reupload_manifest_failure_keeps_existing_artifact PASSED [ 45%]
+apps/server/tests/test_resource_limits.py::test_tc18_same_sha_failure_keeps_committed_artifact PASSED [ 48%]
+apps/server/tests/test_resource_limits.py::test_tc18_endpoint_rollback_on_db_failure_no_orphan_body PASSED [ 51%]
+apps/server/tests/test_resource_limits.py::test_tc18_quota_507_at_boundary_and_concurrency PASSED [ 54%]
+apps/server/tests/test_resource_limits.py::test_tc07_sse_bounded_queue_force_closes_slow_subscriber PASSED [ 57%]
+apps/server/tests/test_resource_limits.py::test_tc07_real_sse_generator_ends_on_overflow PASSED [ 60%]
+apps/server/tests/test_resource_limits.py::test_tc18_concurrent_same_content_uploads_are_safe PASSED [ 62%]
+apps/server/tests/test_resource_limits.py::test_tc13_server_defaults_and_env_overrides PASSED [ 65%]
+apps/agent/tests/test_resource_limits.py::test_tc08_janitor_workspace_and_orphan_gc PASSED [ 68%]
+apps/agent/tests/test_resource_limits.py::test_tc08_janitor_respects_inflight_and_lock_recheck PASSED [ 71%]
+apps/agent/tests/test_resource_limits.py::test_tc17_refcounted_lock_never_orphaned_while_held PASSED [ 74%]
+apps/agent/tests/test_resource_limits.py::test_tc11_cache_eviction_skips_locked_entry PASSED [ 77%]
+apps/agent/tests/test_resource_limits.py::test_tc09_job_log_size_cap_no_block PASSED [ 80%]
+apps/agent/tests/test_resource_limits.py::test_tc10_scrapyd_conf_retention_keys PASSED [ 82%]
+apps/agent/tests/test_resource_limits.py::test_tc11_cache_lru_eviction PASSED [ 85%]
+apps/agent/tests/test_resource_limits.py::test_tc12_outbox_cap_drops_oldest PASSED [ 88%]
+apps/agent/tests/test_resource_limits.py::test_tc17_bookkeeping_lifetime_and_eof_idempotent[finished] PASSED [ 91%]
+apps/agent/tests/test_resource_limits.py::test_tc17_bookkeeping_lifetime_and_eof_idempotent[failed] PASSED [ 94%]
+apps/agent/tests/test_resource_limits.py::test_tc17_bookkeeping_lifetime_and_eof_idempotent[canceled] PASSED [ 97%]
+apps/agent/tests/test_resource_limits.py::test_tc13_agent_defaults_and_env_overrides PASSED [100%]
+
+============================== 35 passed in 2.45s ==============================
+# Exit code: 0

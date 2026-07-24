@@ -77,6 +77,8 @@ def build_runtime(settings: Settings) -> AgentRuntime:
             workdir=workdir,
             host=settings.scrapyd.host,
             port=settings.scrapyd.port,
+            jobs_to_keep=settings.scrapyd.jobs_to_keep,
+            finished_to_keep=settings.scrapyd.finished_to_keep,
         )
 
     client = ScrapydClient(base_url=base_url)
@@ -103,7 +105,10 @@ def build_runtime(settings: Settings) -> AgentRuntime:
         )
     # The Python-wheel runner needs no server URL (it spawns local shell
     # commands); the cache that fetches the wheel does.
-    wheel_runner = PythonWheelRunner(workspace_root=wheel_workspace_dir(workdir))
+    wheel_runner = PythonWheelRunner(
+        workspace_root=wheel_workspace_dir(workdir),
+        max_job_log_bytes=settings.agent.max_job_log_bytes,
+    )
     # Heartbeat worker is built only when a server_url is configured; run_agent
     # starts/stops the background task.
     heartbeat: HeartbeatWorker | None = None

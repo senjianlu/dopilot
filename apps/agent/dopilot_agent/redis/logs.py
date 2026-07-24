@@ -16,6 +16,7 @@ import asyncio
 import base64
 import logging
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -41,10 +42,11 @@ class LogPublisher:
         agent_id: str,
         store: StateStore,
         cursor_dir: str | os.PathLike[str],
-        maxlen_logs: int = 1000000,
+        maxlen_logs: int = 100000,
         max_bytes: int = 262144,
         interval_seconds: float = 1.0,
         status: RedisRuntimeStatus | None = None,
+        on_eof: Callable[[str], None] | None = None,
     ) -> None:
         self._redis = redis
         self._agent_id = agent_id
@@ -57,6 +59,11 @@ class LogPublisher:
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self._status = status
+        # Resource caps (C6): invoked once, right after an execution's EOF is
+        # published, so the consumer can drop terminal-execution bookkeeping that
+        # is safe to release at EOF (in-proc-wheel set + runner dicts). It must NOT
+        # touch _eof_sent, which stays until state cleanup to keep EOF idempotent.
+        self._on_eof = on_eof
 
     # --- cursor persistence ------------------------------------------------
     def _cursor_path(self, execution_id: str) -> Path:
@@ -145,11 +152,35 @@ class LogPublisher:
                     maxlen=self._maxlen, approximate=True,
                 )
                 self._eof_sent.add(execution_id)
+                if self._on_eof is not None:
+                    # terminal + EOF published: release EOF-safe bookkeeping (C6).
+                    try:
+                        self._on_eof(execution_id)
+                    except Exception:  # noqa: BLE001 - callback must not break publish
+                        logger.warning(
+                            "on_eof callback failed for %s", execution_id,
+                            exc_info=True,
+                        )
             except Exception as exc:  # noqa: BLE001
                 if self._status is not None:
                     self._status.mark_error(exc)
                 pass
         return total
+
+    def forget(self, execution_id: str) -> None:
+        """Drop per-execution cursor + EOF dedup state (resource caps, C1/C6).
+
+        Called when the execution's state is removed (server ``cleanup_logs`` or
+        the janitor TTL sweep). Deletes the ``.logpos`` cursor file — previously
+        leaked one-per-execution forever — and clears the ``_eof_sent`` entry.
+        Same lifetime as the scan source (the state file), so EOF stays idempotent
+        until the execution truly goes away.
+        """
+        self._eof_sent.discard(execution_id)
+        try:
+            self._cursor_path(execution_id).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     async def publish_once(self) -> int:
         """Publish increments for every execution that has local state."""

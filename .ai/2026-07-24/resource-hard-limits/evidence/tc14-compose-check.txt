@@ -1,0 +1,30 @@
+# Command: bash .ai/2026-07-24/resource-hard-limits/evidence/tc14-compose-check.sh
+# CWD: /workspaces/dopilot
+# ---- stdout/stderr ----
+=== docker-compose.yml ===
+config: OK
+  service db: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  service migrate: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  service redis: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  service scrapy-agent-1: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  service scrapy-agent-2: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  service scrapy-agent-3: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  service server: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  all 7 services bounded: True
+=== docker-compose.server.yml ===
+config: OK
+  service db: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  service migrate: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  service redis: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  service server: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  all 4 services bounded: True
+=== docker-compose.agent.yml ===
+config: OK
+  service scrapy-agent-remote-1: logging.options={'max-file': '3', 'max-size': '10m'} -> OK
+  all 1 services bounded: True
+=== redis maxmemory/noeviction/auto-aof-rewrite (all-in-one rendered command) ===
+  redis maxmemory: OK
+  redis noeviction: OK
+  redis auto-aof-rewrite: OK
+FAIL=0
+# Exit code: 0

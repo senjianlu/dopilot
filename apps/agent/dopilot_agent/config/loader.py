@@ -101,6 +101,35 @@ def load_settings(
     if env_redis_url:
         redis_section["url"] = env_redis_url
 
+    # Resource caps (C7): env overrides for every new numeric knob (TOML + env
+    # dual channel), so a deployment can retune them without editing TOML.
+    for env_var, section, key in (
+        ("DOPILOT_REDIS_STREAM_MAXLEN_LOGS", redis_section, "maxlen_logs"),
+        ("DOPILOT_REDIS_STREAM_MAXLEN_EVENTS", redis_section, "maxlen_events"),
+        ("DOPILOT_REDIS_EVENT_OUTBOX_MAX_FILES", redis_section,
+         "event_outbox_max_files"),
+        ("DOPILOT_AGENT_JANITOR_INTERVAL_SECONDS", agent_section,
+         "janitor_interval_seconds"),
+        ("DOPILOT_AGENT_COMPLETED_LOG_TTL_DAYS", agent_section,
+         "completed_log_ttl_days"),
+        ("DOPILOT_AGENT_ORPHAN_LOG_TTL_DAYS", agent_section,
+         "orphan_log_ttl_days"),
+        ("DOPILOT_AGENT_MAX_JOB_LOG_BYTES", agent_section, "max_job_log_bytes"),
+        ("DOPILOT_AGENT_ARTIFACT_CACHE_MAX_BYTES", agent_section,
+         "artifact_cache_max_bytes"),
+        ("DOPILOT_SCRAPYD_JOBS_TO_KEEP", scrapyd_section, "jobs_to_keep"),
+        ("DOPILOT_SCRAPYD_FINISHED_TO_KEEP", scrapyd_section,
+         "finished_to_keep"),
+    ):
+        raw = os.environ.get(env_var)
+        if raw is not None:
+            try:
+                section[key] = int(raw.strip())
+            except ValueError as exc:
+                raise ConfigError(
+                    f"invalid integer for {env_var}: {raw!r}"
+                ) from exc
+
     # Single server<->agent machine token (phase 2.2.3): env wins over TOML.
     # The old split envs and the admin-token fallback were removed and have no
     # effect — agents never receive or derive from the admin API token.
