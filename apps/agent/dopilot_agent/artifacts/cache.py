@@ -66,6 +66,12 @@ class ScrapyArtifactCache:
 
         self._dir.mkdir(parents=True, exist_ok=True)
         if self._ready_path(sha256).is_file():
+            # Resource caps (C4): touch the ready marker so the janitor's LRU
+            # eviction treats a cache HIT as recent use.
+            try:
+                os.utime(self._ready_path(sha256), None)
+            except OSError:
+                pass
             return
 
         deadline = asyncio.get_running_loop().time() + self._wait_timeout

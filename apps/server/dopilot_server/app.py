@@ -43,6 +43,7 @@ from .redis.commands import CommandProducer
 from .redis.consumers import EventConsumer, LogConsumer
 from .redis.dispatcher import CommandDispatcher
 from .redis.reconcile import RedisReconcileLoop
+from .retention import RetentionSweepLoop
 from .scheduler.runner import ScheduleRunner, build_schedule_runner
 from .services.builtin_artifacts import seed_builtin_artifacts
 
@@ -122,6 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         event_consumer: EventConsumer | None = None
         log_consumer: LogConsumer | None = None
         reconcile_loop: RedisReconcileLoop | None = None
+        retention_loop: RetentionSweepLoop | None = None
         schedule_runner: ScheduleRunner | None = None
         if owns_runtime:
             app.dependency_overrides[get_session] = _session_dependency
@@ -159,6 +161,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.command_dispatcher = dispatcher
             app.state.redis = redis_client
 
+            # Resource caps: automatic retention sweep (terminal-data retention,
+            # event_audit prune, Redis stream time-trim). OFF only if explicitly
+            # disabled — limits should hold without operator action.
+            if active.maintenance.enabled:
+                retention_loop = RetentionSweepLoop(
+                    bg_maker, active, redis_client
+                )
+                retention_loop.start()
+            app.state.retention_loop = retention_loop
+
             # Phase 1.7: the single-instance schedule runner (OFF unless
             # [scheduler].enabled). Drives the schedules table via APScheduler.
             schedule_runner = build_schedule_runner(bg_maker, active, dispatcher)
@@ -172,7 +184,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if schedule_runner is not None:
                     await schedule_runner.stop()
                 for worker in (
-                    reconcile_loop, log_consumer, event_consumer, dispatcher
+                    retention_loop, reconcile_loop, log_consumer,
+                    event_consumer, dispatcher,
                 ):
                     if worker is not None:
                         await worker.stop()

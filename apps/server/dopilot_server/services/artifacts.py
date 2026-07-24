@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..artifacts.scrapy_store import ScrapyArtifactManifest, ScrapyArtifactStore
@@ -27,6 +27,19 @@ from ..errors import ApiError
 from ..models.execution import BuildArtifact
 from . import states
 from .executions import _iso, new_id
+
+
+async def stored_total_bytes(session: AsyncSession) -> int:
+    """Sum of stored ``build_artifacts.size_bytes`` (resource caps, B5 quota).
+
+    The aggregate the upload quota checks against. Each distinct artifact
+    (deduped on ``(artifact_type, content_hash)``) is counted once, so this is the
+    on-disk footprint the store is responsible for.
+    """
+    total = (
+        await session.execute(select(func.coalesce(func.sum(BuildArtifact.size_bytes), 0)))
+    ).scalar_one()
+    return int(total or 0)
 
 
 def scrapy_fetch_path(sha256: str) -> str:

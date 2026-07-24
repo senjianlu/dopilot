@@ -60,7 +60,8 @@ stream_token_ttl_seconds = 60
 url = "redis://:change-me-redis-pass@redis:6379/0"
 stream_maxlen_commands = 100000
 stream_maxlen_events = 100000
-stream_maxlen_logs = 1000000
+# Resource caps: bounded log-stream working set; retention sweep XTRIMs by time.
+stream_maxlen_logs = 100000
 log_retention_seconds = 86400
 consumer_name = "server-1"
 require_aof = true
@@ -99,6 +100,22 @@ eof_stable_seconds = 3
 final_drain_hard_timeout_seconds = 30
 log_drain_timeout_seconds = 30
 retention_days = 30
+# Resource caps: per-execution log-file size hard cap (100MiB). 0 disables.
+max_file_bytes = 104857600
+
+# Resource caps: automatic retention sweep (enforces retention_days, prunes
+# event_audit, XTRIMs Redis streams by time).
+[maintenance]
+enabled = true
+sweep_interval_seconds = 3600
+event_audit_retention_days = 30
+event_audit_delete_batch = 5000
+
+[artifacts]
+root_dir = "/server-data/artifacts"
+# Resource caps: per-upload cap (413, 200MiB) + aggregate store quota (507, 20GiB).
+max_upload_bytes = 209715200
+max_total_bytes = 21474836480
 
 [i18n]
 locale = "zh"

@@ -29,6 +29,26 @@ class AgentSettings(BaseModel):
     server_url: str = ""
     heartbeat_interval_seconds: int = 10
     agent_token: str = ""
+    # Resource caps (C1/C2): local-disk janitor + per-job log size cap.
+    # How often the janitor sweeps (seconds); it also runs once at startup.
+    janitor_interval_seconds: int = 600
+    # A TERMINAL execution's workspace/logs/state are removed once older than this
+    # many days (the server normally cleans them via cleanup_logs; this is the TTL
+    # fallback when that never arrives).
+    completed_log_ttl_days: int = 3
+    # An ORPHAN workspace (no readable state, no live process, quiet on disk) is
+    # removed once older than this many days — longer than completed, since we are
+    # less certain about it.
+    orphan_log_ttl_days: int = 7
+    # Per-job ``job.log`` size hard cap in bytes (Python wheel jobs). Past this the
+    # drain writes one truncation marker and drops further output; the subprocess
+    # keeps running and its exit status is unaffected. Default 100MiB. 0 disables.
+    max_job_log_bytes: int = 104857600
+    # Aggregate artifact/wheel cache size cap in bytes under
+    # ``{workdir}/artifacts``. The janitor evicts least-recently-used sha entries
+    # above this, never evicting one referenced by a running execution. Default
+    # 2GiB. 0 disables cache eviction.
+    artifact_cache_max_bytes: int = 2147483648
 
     @property
     def machine_auth_enabled(self) -> bool:
@@ -48,6 +68,17 @@ class RedisSettings(BaseModel):
     command_block_ms: int = 5000
     pending_idle_ms: int = 30000
     event_outbox_dir: str = "/agent-data/outbox"
+    # Resource caps (C7): approximate MAXLEN the agent passes on XADD, now
+    # config-driven (were hard-coded constructor defaults). Match the server
+    # defaults so the log stream working set stays bounded (see the 2.11GB Redis
+    # volume incident).
+    maxlen_logs: int = 100000
+    maxlen_events: int = 100000
+    # Resource caps (C5): hard cap on the durable event-outbox file count. During
+    # a long Redis outage the outbox would otherwise grow without bound; above the
+    # cap the OLDEST files are dropped (logged) so the agent never fills its disk.
+    # 0 disables the cap.
+    event_outbox_max_files: int = 100000
 
     @property
     def enabled(self) -> bool:
@@ -78,6 +109,12 @@ class ScrapydSettings(BaseModel):
     start: bool = True
     host: str = "127.0.0.1"
     port: int = 6801
+    # Resource caps (C3): scrapyd's own retention, now explicit + tunable instead
+    # of relying on scrapyd's built-in defaults. Written into the generated
+    # scrapyd.conf. jobs_to_keep bounds finished job logs/items per spider;
+    # finished_to_keep bounds the in-memory finished-job list.
+    jobs_to_keep: int = 5
+    finished_to_keep: int = 100
 
 
 class Settings(BaseModel):

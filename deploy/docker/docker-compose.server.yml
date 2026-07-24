@@ -55,9 +55,20 @@
 # DOPILOT_CONFIG. Single server replica only (hard constraint).
 # ---------------------------------------------------------------------------
 
+# Container log rotation (resource hard limit): cap every service's json-file
+# stdout/stderr log so a runaway container can never fill the host disk. Applied
+# to ALL services below via <<: *default-logging. Hosts on a different Docker log
+# driver must set an equivalent cap on the daemon.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:16
+    logging: *default-logging
     environment:
       POSTGRES_DB: dopilot
       POSTGRES_USER: dopilot
@@ -74,14 +85,28 @@ services:
   # Redis Streams transport. AUTH + AOF on; single instance (message bus, not an
   # HA store). Published so remote agents can reach it — keep it behind a
   # firewall / private network.
+  #
+  # Memory hard limit: --maxmemory backstops host OOM; noeviction makes XADD fail
+  # loudly at the cap instead of dropping stream data (both sides tolerate the
+  # failure). Primary bound stays the per-stream MAXLEN + server XTRIM sweep; AOF
+  # kept compact by auto-rewrite. Raise DOPILOT_REDIS_MAXMEMORY for high volume.
   redis:
     image: redis:7
+    logging: *default-logging
     command:
       - "redis-server"
       - "--appendonly"
       - "yes"
       - "--requirepass"
       - "${REDIS_PASSWORD:-change-me-redis-pass}"
+      - "--maxmemory"
+      - "${DOPILOT_REDIS_MAXMEMORY:-512mb}"
+      - "--maxmemory-policy"
+      - "noeviction"
+      - "--auto-aof-rewrite-percentage"
+      - "100"
+      - "--auto-aof-rewrite-min-size"
+      - "64mb"
     volumes:
       - dopilot-redis:/data
     ports:
@@ -103,6 +128,7 @@ services:
   migrate:
     image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
     command: ["alembic", "upgrade", "head"]
+    logging: *default-logging
     environment:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
     depends_on:
@@ -114,6 +140,7 @@ services:
     image: ${DOPILOT_IMAGE:-rabbir/dopilot:latest}
     command: ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
     init: true
+    logging: *default-logging
     environment:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
       DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0

@@ -40,3 +40,4 @@
 | [0016](0016-glibc-base-image-apscheduler-310.md) | glibc 基础镜像（非 Alpine）；APScheduler 3.10.x |
 | [0017](0017-testing-baseline-own-regression-net.md) | 测试基线：scrapydweb 测试仅为 oracle，dopilot 自有测试是回归网 |
 | [0018](0018-adopt-ai-workflow-template.md) | 采用 ai-workflow-template 的 rawf 治理流程，退役旧 Codex/Claude 治理 |
+| [0019](0019-resource-hard-limits.md) | 资源硬上限：部署层/server/agent 各增长面配置化上限 + 自动过期，防日志/磁盘/内存膨胀 |

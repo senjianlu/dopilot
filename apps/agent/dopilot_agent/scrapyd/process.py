@@ -52,11 +52,16 @@ class ScrapydProcess:
         host: str = "127.0.0.1",
         port: int = 6801,
         executable: str = "scrapyd",
+        jobs_to_keep: int = 5,
+        finished_to_keep: int = 100,
     ) -> None:
         self._scrapyd_dir = Path(workdir) / "scrapyd"
         self._host = host
         self._port = port
         self._executable = executable
+        # Resource caps (C3): scrapyd's own retention, made explicit + tunable.
+        self._jobs_to_keep = jobs_to_keep
+        self._finished_to_keep = finished_to_keep
         self._proc: subprocess.Popen[bytes] | None = None
 
     @property
@@ -109,6 +114,12 @@ class ScrapydProcess:
             f"logs_dir     = {dirs['logs_dir']}\n"
             f"dbs_dir      = {dirs['dbs_dir']}\n"
             f"items_dir    = {dirs['items_dir']}\n"
+            # Resource caps (C3): bound scrapyd's own on-disk retention explicitly
+            # (previously left to scrapyd's built-in defaults). jobs_to_keep caps
+            # finished job logs/items kept per spider; finished_to_keep caps the
+            # in-memory finished-job list.
+            f"jobs_to_keep = {self._jobs_to_keep}\n"
+            f"finished_to_keep = {self._finished_to_keep}\n"
         )
         conf_path.write_text(conf, encoding="utf-8")
         return conf_path

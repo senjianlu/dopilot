@@ -68,6 +68,7 @@ class EventPublisher:
         store: StateStore,
         maxlen_events: int = 100000,
         outbox_dir: str | os.PathLike[str] | None = None,
+        max_outbox_files: int = 0,
         status: RedisRuntimeStatus | None = None,
     ) -> None:
         self._redis = redis
@@ -76,12 +77,44 @@ class EventPublisher:
         self._store = store
         self._maxlen = maxlen_events
         self._outbox_dir = Path(outbox_dir) if outbox_dir else None
+        # Resource caps (C5): hard cap on outbox file count (0 = unbounded).
+        self._max_outbox_files = max_outbox_files
         self._status = status
 
     def _pending_outbox_count(self) -> int:
         if self._outbox_dir is None or not self._outbox_dir.is_dir():
             return 0
         return sum(1 for _ in self._outbox_dir.glob("*.json"))
+
+    def _enforce_outbox_cap(self) -> None:
+        """Drop the OLDEST outbox files so the count stays under the cap (C5).
+
+        During a long Redis outage the durable outbox would otherwise grow
+        without bound and fill the agent disk. Above the cap the oldest events are
+        dropped (they are the least likely to still matter — the server's
+        reconcile marks any resulting missing terminals ``lost``), logged at ERROR,
+        leaving room for the new event. No-op when the cap is disabled.
+        """
+        if self._outbox_dir is None or self._max_outbox_files <= 0:
+            return
+        try:
+            files = list(self._outbox_dir.glob("*.json"))
+        except OSError:
+            return
+        # Keep room for the one about to be written: trim to cap - 1.
+        excess = len(files) - self._max_outbox_files + 1
+        if excess <= 0:
+            return
+        files.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0.0)
+        for path in files[:excess]:
+            try:
+                path.unlink(missing_ok=True)
+                logger.error(
+                    "event outbox over cap (%d): dropped oldest event %s",
+                    self._max_outbox_files, path.name,
+                )
+            except OSError:
+                pass
 
     def _record_outbox_pending(self) -> None:
         if self._status is not None:
@@ -92,6 +125,7 @@ class EventPublisher:
         if self._outbox_dir is None:
             return None
         self._outbox_dir.mkdir(parents=True, exist_ok=True)
+        self._enforce_outbox_cap()
         final = self._outbox_dir / f"{event.event_id}.json"
         tmp = final.with_suffix(f".{os.getpid()}.tmp")
         with tmp.open("w", encoding="utf-8") as fh:

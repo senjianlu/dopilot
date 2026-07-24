@@ -39,6 +39,20 @@ logger = logging.getLogger(__name__)
 # branch without a real 10s sleep.
 TERM_GRACE_SECONDS = 10.0
 
+# Read chunk for the stdout drain (resource caps, C2).
+_DRAIN_CHUNK = 65536
+
+# Sidecar file (resource caps, C1): holds the job's process-group id so the
+# janitor can prove liveness even when the state JSON is missing/corrupt.
+PGID_SIDECAR = "job.pgid"
+
+
+def _job_log_truncation_marker(max_bytes: int) -> bytes:
+    return (
+        f"\n[dopilot:job-log-truncated max_bytes={max_bytes} "
+        f"reason=size-cap]\n"
+    ).encode()
+
 
 class WheelRunnerError(Exception):
     """A wheel spawn/working-dir error; carries a structured detail payload."""
@@ -78,14 +92,18 @@ class PythonWheelRunner:
         *,
         workspace_root: str | Path,
         grace_seconds: float = TERM_GRACE_SECONDS,
+        max_job_log_bytes: int = 0,
     ) -> None:
         self._root = Path(workspace_root)
         self._grace = grace_seconds
+        # Resource caps (C2): per-job log size cap (0 = disabled).
+        self._max_log_bytes = max_job_log_bytes
         self._procs: dict[str, asyncio.subprocess.Process] = {}
         self._pgids: dict[str, int] = {}
         self._logs: dict[str, object] = {}
         self._exits: dict[str, asyncio.Future[int]] = {}
         self._reapers: dict[str, asyncio.Task[None]] = {}
+        self._drains: dict[str, asyncio.Task[None]] = {}
         self._canceled: set[str] = set()
 
     # --- layout ------------------------------------------------------------
@@ -94,6 +112,21 @@ class PythonWheelRunner:
 
     def log_path_for(self, execution_id: str) -> Path:
         return self.workspace_for(execution_id) / "job.log"
+
+    def pgid_path_for(self, execution_id: str) -> Path:
+        return self.workspace_for(execution_id) / PGID_SIDECAR
+
+    def active_execution_ids(self) -> set[str]:
+        """Execution ids with a live in-process subprocess (resource caps, C1/C4).
+
+        The janitor uses this as the authoritative in-memory "running" set: an id
+        here must never have its workspace/cache evicted.
+        """
+        return {
+            eid
+            for eid, proc in self._procs.items()
+            if proc.returncode is None
+        }
 
     def _resolve_cwd(self, workspace: Path, working_dir: str | None) -> Path:
         """Resolve ``working_dir`` under the workspace; reject escapes.
@@ -142,6 +175,9 @@ class PythonWheelRunner:
         log_fh = open(log_path, "ab", buffering=0)  # noqa: SIM115 - closed in reaper
 
         child_env = dict(os.environ)
+        # Resource caps (C2): capture stdout/stderr via a PIPE + drain task so the
+        # runner can enforce the log size cap. The child MUST NOT block on a full
+        # pipe, so the drain keeps reading (and discarding) past the cap.
         site = str(install_path)
         existing_pp = child_env.get("PYTHONPATH", "")
         child_env["PYTHONPATH"] = (
@@ -163,7 +199,7 @@ class PythonWheelRunner:
                 shell_command,
                 cwd=str(cwd),
                 env=child_env,
-                stdout=log_fh,
+                stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 start_new_session=True,
             )
@@ -181,10 +217,28 @@ class PythonWheelRunner:
             # Child already exited; its own pid is its group leader id.
             pgid = proc.pid
 
+        # Resource caps (C1): write the pgid sidecar (atomic) right after spawn so
+        # the janitor can prove liveness without relying on the state JSON. If the
+        # sidecar cannot be written we must NOT leave a running-but-unattributable
+        # job: kill it and fail the spawn.
+        try:
+            self._write_pgid_sidecar(execution_id, pgid)
+        except OSError as exc:
+            self._signal_group(pgid, signal.SIGKILL)
+            log_fh.close()
+            raise WheelRunnerError(
+                "failed to write pgid sidecar",
+                error_code="wheel_spawn_error",
+                detail={"error": str(exc)},
+            ) from exc
+
         self._procs[execution_id] = proc
         self._pgids[execution_id] = pgid
         self._logs[execution_id] = log_fh
         self._exits[execution_id] = asyncio.get_running_loop().create_future()
+        self._drains[execution_id] = asyncio.create_task(
+            self._drain(execution_id, proc, log_fh)
+        )
         self._reapers[execution_id] = asyncio.create_task(
             self._reap(execution_id, proc)
         )
@@ -196,12 +250,71 @@ class PythonWheelRunner:
             workspace_path=str(workspace),
         )
 
+    def _write_pgid_sidecar(self, execution_id: str, pgid: int) -> None:
+        """Atomically write ``{workspace}/job.pgid`` (resource caps, C1)."""
+        path = self.pgid_path_for(execution_id)
+        tmp = path.with_suffix(f".pgid.{os.getpid()}.tmp")
+        tmp.write_text(str(pgid), encoding="utf-8")
+        os.replace(tmp, path)
+
+    async def _drain(
+        self,
+        execution_id: str,
+        proc: asyncio.subprocess.Process,
+        log_fh: object,
+    ) -> None:
+        """Pump child stdout into ``job.log`` under the size cap (C2).
+
+        Keeps reading the pipe until EOF so the child NEVER blocks on a full pipe,
+        even after the cap is hit: past the cap one truncation marker is written
+        and further output is read-and-discarded. Blocking file writes are
+        offloaded. Never raises — a drain failure must not affect the subprocess
+        or its exit reporting.
+        """
+        cap = self._max_log_bytes
+        reader = proc.stdout
+        if reader is None:  # pragma: no cover - PIPE always sets stdout
+            return
+        written = 0
+        truncated = False
+        try:
+            while True:
+                chunk = await reader.read(_DRAIN_CHUNK)
+                if not chunk:
+                    break
+                if truncated:
+                    continue  # cap reached: keep draining, discard
+                if cap <= 0:
+                    await asyncio.to_thread(log_fh.write, chunk)
+                    continue
+                room = cap - written
+                if len(chunk) <= room:
+                    await asyncio.to_thread(log_fh.write, chunk)
+                    written += len(chunk)
+                else:
+                    to_write = (
+                        chunk[: max(0, room)]
+                        + _job_log_truncation_marker(cap)
+                    )
+                    await asyncio.to_thread(log_fh.write, to_write)
+                    truncated = True
+        except Exception:  # noqa: BLE001 - drain must never break the job
+            logger.exception("wheel drain failed for %s", execution_id)
+
     async def _reap(self, execution_id: str, proc: asyncio.subprocess.Process) -> None:
         try:
             rc = await proc.wait()
         except Exception:  # noqa: BLE001 - never let the reaper crash silently
             logger.exception("wheel reaper failed for %s", execution_id)
             rc = -1
+        # Resource caps (C2): let the drain finish (reads until pipe EOF) before
+        # closing the log handle, so no tail output is lost.
+        drain = self._drains.get(execution_id)
+        if drain is not None:
+            try:
+                await drain
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         self._close_log(execution_id)
         fut = self._exits.get(execution_id)
         if fut is not None and not fut.done():
@@ -266,6 +379,22 @@ class PythonWheelRunner:
             except OSError:
                 pass
 
+    def forget(self, execution_id: str) -> None:
+        """Drop all per-execution bookkeeping for a terminal job (C6).
+
+        Called by the consumer once the execution is terminal AND its EOF has been
+        published, so these dicts/sets do not grow for the process lifetime. Safe
+        to call more than once (idempotent). The reaper/drain tasks have already
+        completed by this point; the log handle is closed defensively.
+        """
+        self._close_log(execution_id)
+        self._procs.pop(execution_id, None)
+        self._pgids.pop(execution_id, None)
+        self._exits.pop(execution_id, None)
+        self._reapers.pop(execution_id, None)
+        self._drains.pop(execution_id, None)
+        self._canceled.discard(execution_id)
+
     async def aclose(self) -> None:
         """Terminate live children, then cancel reapers and close log handles.
 
@@ -285,14 +414,15 @@ class PythonWheelRunner:
                 await self.terminate(execution_id)
             except Exception:  # noqa: BLE001 - best-effort; never block shutdown
                 logger.exception("wheel shutdown terminate failed for %s", execution_id)
-        for task in list(self._reapers.values()):
+        for task in (*self._reapers.values(), *self._drains.values()):
             task.cancel()
-        for task in list(self._reapers.values()):
+        for task in (*self._reapers.values(), *self._drains.values()):
             try:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
         self._reapers.clear()
+        self._drains.clear()
         for execution_id in list(self._logs.keys()):
             self._close_log(execution_id)
         # Drop stale bookkeeping so a reused runner keeps no dead handles.

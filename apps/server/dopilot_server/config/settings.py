@@ -82,7 +82,16 @@ class RedisSettings(BaseModel):
     url: str = "redis://localhost:6379/0"
     stream_maxlen_commands: int = 100000
     stream_maxlen_events: int = 100000
-    stream_maxlen_logs: int = 1000000
+    # Resource caps: the log stream is the dominant Redis memory consumer. At
+    # ~1-2KB/entry a 1_000_000 cap holds a 1-2GB working set (observed 2.11GB
+    # Redis volume in production), so the default is 100_000. This MAXLEN on XADD
+    # is the primary bound; the time-based XTRIM MINID sweep (see
+    # ``log_retention_seconds``) is the secondary bound.
+    stream_maxlen_logs: int = 100000
+    # Time bound for the log stream, enforced by the retention sweep as a periodic
+    # ``XTRIM <stream> MINID ~ <now - log_retention_seconds>``. Entries older than
+    # this window are trimmed regardless of MAXLEN. 0 disables the time-based
+    # trim (MAXLEN still applies).
     log_retention_seconds: int = 86400
     consumer_name: str = "server-1"
     require_aof: bool = True
@@ -147,15 +156,59 @@ class LogsSettings(BaseModel):
     # How long an attempt may stay unreachable (agent down) before it is
     # declared "lost" rather than left running forever.
     unreachable_lost_seconds: int = 120
-    retention_days: int = 14
+    # How many days a terminal task's log files + rows are retained before the
+    # automatic retention sweep deletes them (see [maintenance]). Also the cutoff
+    # the manual maintenance API uses by default. Default 30 (matches the docker
+    # config and the documented retention policy).
+    retention_days: int = 30
+    # Per-execution log-file size hard cap (resource caps). Once a single
+    # execution's on-disk log reaches this size the consumer stops appending body
+    # bytes but keeps consuming + ACKing the stream (never stalls), writes one
+    # visible truncation marker, and sets ``log_integrity='truncated'``. Default
+    # 100MiB. 0 disables the cap.
+    max_file_bytes: int = 104857600
     # First-screen tail when a web log window opens: last N lines or M bytes,
     # whichever boundary is reached first.
     first_screen_max_lines: int = 2000
     first_screen_max_bytes: int = 1048576
 
 
+class MaintenanceSettings(BaseModel):
+    """``[maintenance]`` — automatic retention sweep (resource caps).
+
+    A single always-on background loop (``RetentionSweepLoop``) enforces the
+    time-based retention that was previously only reachable via the manual
+    maintenance API. It deletes terminal task data older than
+    ``logs.retention_days``, prunes ``event_audit`` rows, and issues the periodic
+    Redis stream ``XTRIM MINID`` (see ``redis.log_retention_seconds``).
+    """
+
+    # Whether the automatic sweep runs. On by default: the whole point of the
+    # resource caps is that limits hold without operator action. Set false to
+    # fall back to the manual maintenance API only.
+    enabled: bool = True
+    # How often the sweep runs, in seconds. Default hourly.
+    sweep_interval_seconds: int = 3600
+    # How many days ``event_audit`` rows are retained (one row per consumed agent
+    # status event — the fastest-growing table). 0 disables event_audit pruning.
+    event_audit_retention_days: int = 30
+    # Batch size for the ``event_audit`` delete, to avoid long table locks.
+    event_audit_delete_batch: int = 5000
+
+
 class ArtifactsSettings(BaseModel):
     root_dir: str = "/server-data/artifacts"
+    # Per-upload size hard cap (resource caps). Uploads are read in bounded
+    # chunks and rejected with HTTP 413 once this many bytes have been read, so a
+    # single upload can never exhaust RAM or disk. Default 200MiB. 0 disables.
+    max_upload_bytes: int = 209715200
+    # Aggregate artifact-store size hard cap (resource caps). Before accepting a
+    # new upload the server checks the current stored total (sum of stored
+    # artifact ``size_bytes``) plus in-flight reservations plus this upload; over
+    # the quota it returns HTTP 507. Archived artifacts are never auto-deleted
+    # (product decision), so the quota bounds growth by refusing new uploads.
+    # Default 20GiB. 0 disables the aggregate quota.
+    max_total_bytes: int = 21474836480
 
 
 class I18nSettings(BaseModel):
@@ -174,5 +227,8 @@ class Settings(BaseModel):
     nodes: NodesSettings = Field(default_factory=NodesSettings)
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     logs: LogsSettings = Field(default_factory=LogsSettings)
+    maintenance: MaintenanceSettings = Field(
+        default_factory=MaintenanceSettings
+    )
     artifacts: ArtifactsSettings = Field(default_factory=ArtifactsSettings)
     i18n: I18nSettings = Field(default_factory=I18nSettings)

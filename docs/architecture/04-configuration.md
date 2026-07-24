@@ -22,14 +22,37 @@
 | server | `[server]` | `host`/`port`/`public_url`;`data_dir`（默认 `/server-data`，生成令牌的持久化锚点） |
 | server | `[database]` | PostgreSQL URL（env `DOPILOT_DATABASE_URL`） |
 | server | `[auth]` | `admin_username`/`admin_password`/`token_secret`（仅 TOML）/`admin_api_token`/`access_token_ttl_minutes`/`stream_token_ttl_seconds` |
-| server | `[redis]` | `url`、三条 stream 的 maxlen、`log_retention_seconds`、`consumer_name`、`require_aof` |
+| server | `[redis]` | `url`、三条 stream 的 maxlen（`stream_maxlen_logs` 默认 100000）、`log_retention_seconds`（由保留清扫实装为定时 `XTRIM MINID`）、`consumer_name`、`require_aof` |
 | server | `[agents]` | `heartbeat_timeout_seconds`/`stalled_attempt_seconds`/`lost_after_stalled_seconds`/`agent_token` |
 | server | `[scheduler]` | `enabled`（in-process runner 开关）、`timezone` |
-| server | `[logs]` | `root_dir=/server-data/logs`、drain/保留窗口参数 |
+| server | `[logs]` | `root_dir=/server-data/logs`、drain/保留窗口参数、`retention_days`（默认 30，自动保留清扫的 cutoff）、`max_file_bytes`（单执行日志硬上限，默认 100MiB，超限置 `log_integrity=truncated`） |
+| server | `[maintenance]` | 自动保留清扫:`enabled`（默认 true）、`sweep_interval_seconds`（默认 3600）、`event_audit_retention_days`（默认 30）、`event_audit_delete_batch` |
+| server | `[artifacts]` | `root_dir`、`max_upload_bytes`（单次上传上限 413，默认 200MiB）、`max_total_bytes`（聚合配额 507，默认 20GiB） |
 | server | `[nodes]` | `agents` 仅作未 heartbeat 节点的占位提示（不再是 poll 目标） |
 | server | `[i18n]` | `locale`（默认 `zh`）、`timezone` |
-| agent | `[redis]` | `url`/`command_block_ms`/`pending_idle_ms`/`event_outbox_dir` |
-| agent | `[agent]` | `agent_id`（稳定标识）/`server_url`（env `DOPILOT_SERVER_URL` 可覆盖）/`heartbeat_interval_seconds`/`agent_token` |
+| agent | `[redis]` | `url`/`command_block_ms`/`pending_idle_ms`/`event_outbox_dir`、`maxlen_logs`/`maxlen_events`（XADD 近似上限，默认 100000，env `DOPILOT_REDIS_STREAM_MAXLEN_LOGS/EVENTS`）、`event_outbox_max_files`（outbox 文件数上限，默认 100000） |
+| agent | `[agent]` | `agent_id`/`server_url`/`heartbeat_interval_seconds`/`agent_token`、`janitor_interval_seconds`（本地 janitor 周期）、`completed_log_ttl_days`（终态 3 天）/`orphan_log_ttl_days`（孤儿 7 天）、`max_job_log_bytes`（job.log 硬上限，默认 100MiB）、`artifact_cache_max_bytes`（缓存 LRU 上限，默认 2GiB） |
+| agent | `[scrapyd]` | `start`/`host`/`port`、`jobs_to_keep`（默认 5）/`finished_to_keep`（默认 100，写入生成的 scrapyd.conf） |
+
+### 资源硬上限（防磁盘/内存膨胀）
+
+长运行部署曾因日志/磁盘无界增长导致宿主机卡死;各增长面均有可配置硬上限
+与安全默认值,过期由后台自动执行(不依赖手动运维)。要点:
+
+- **部署层**:三份 compose 每个 service 均设 json-file 日志轮转
+  (`max-size=10m`,`max-file=3`);Redis 设 `--maxmemory`(默认 512mb,env
+  `DOPILOT_REDIS_MAXMEMORY`)+ `noeviction`(XADD 满则响亮报错而非静默丢流)
+  + AOF 自动重写阈值。详见 [05-deployment](05-deployment.md)。
+- **server**:单执行日志 100MiB 上限(超限继续消费/ACK,置
+  `log_integrity=truncated`);`RetentionSweepLoop` 每小时按 `retention_days`
+  自动清理终态数据(失败安全两阶段:先标 `expired` 提交、再删正文、再删行)、
+  按窗删 `event_audit`、对日志/事件流 `XTRIM MINID`;上传 413/聚合 507 配额;
+  SSE 订阅队列有界(满则断开重连)。
+- **agent**:`AgentJanitor` 周期 GC 终态/孤儿 workspace + `.logpos` + state
+  (三重安全判定:内存活跃集、`job.pgid` 存活、树静默期);job.log 100MiB 上限
+  (PIPE+drain,永不背压阻塞子进程);artifact/wheel 缓存按 LRU 淘汰;event
+  outbox 文件数上限(超限丢最旧)。
+- 决策见 [0019 资源硬上限](../decisions/0019-resource-hard-limits.md)。
 
 ## 认证体系
 

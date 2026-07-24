@@ -1,0 +1,5 @@
+# Command: ruff check apps packages
+# CWD: /workspaces/dopilot
+# ---- stdout/stderr ----
+All checks passed!
+# Exit code: 0

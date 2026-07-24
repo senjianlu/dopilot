@@ -105,6 +105,12 @@ class PythonWheelCache:
         site = self.site_dir(sha256)
         self._sha_dir(sha256).mkdir(parents=True, exist_ok=True)
         if self._ready_path(sha256).is_file():
+            # Resource caps (C4): touch the ready marker so a cache HIT counts as
+            # recent use for the janitor's LRU eviction.
+            try:
+                os.utime(self._ready_path(sha256), None)
+            except OSError:
+                pass
             return str(site)
 
         deadline = asyncio.get_running_loop().time() + self._wait_timeout

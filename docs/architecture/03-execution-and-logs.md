@@ -77,8 +77,21 @@ server log consumer ──追加写 /server-data/logs/YYYY/MM/{execution_id}/{at
   marker），与逻辑 offset 不混用。
 - **完整性与生命周期分离**:`execution_log_files.status`
   （`active/finalizing/complete/missing/expired`）表达生命周期;
-  `log_integrity`（`complete/partial/missing/expired`）表达完整性。日志
-  RPO≠0 是接受的设计行为，日志缺口永不阻塞执行状态收敛。
+  `log_integrity`（`complete/partial/truncated/missing/expired`）表达完整性。
+  日志 RPO≠0 是接受的设计行为，日志缺口永不阻塞执行状态收敛。
+  `truncated`（资源硬上限 B1）:单执行日志达到 `[logs].max_file_bytes`
+  （默认 100MiB）后停止追加正文但**继续消费 + ACK**（消费不失速），写一行
+  截断标记;粘滞、优先于 `partial`，且不被定稿路径覆盖（定稿只改生命周期
+  `status`）。
 - **清理**:terminal 事件 → bounded drain 窗口（`eof` 是优化信号非前置
   条件）→ 定稿 complete/partial → server 投 `cleanup_logs` → agent 删本地
-  日志与状态文件;agent 另有 TTL 兜底 GC。
+  日志与状态文件。此外:
+  - server 端 `RetentionSweepLoop`（资源硬上限 B2）每
+    `[maintenance].sweep_interval_seconds` 自动按 `[logs].retention_days`
+    清理终态数据,失败安全两阶段(先标 `expired` 提交、再删正文、再删行,
+    崩溃后下轮幂等续作),不再仅依赖手动 `POST /maintenance/terminal-cleanup`;
+  - agent 端 `AgentJanitor`（资源硬上限 C1）实装 TTL 兜底 GC:终态
+    workspace/日志/state/`.logpos` 超 `completed_log_ttl_days`、孤儿超
+    `orphan_log_ttl_days` 即删,运行中(内存活跃集 / `job.pgid` 存活 /
+    树静默期三重判定)永不删。
+  详见 [0019 资源硬上限](../decisions/0019-resource-hard-limits.md)。

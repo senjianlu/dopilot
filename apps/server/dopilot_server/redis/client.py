@@ -57,6 +57,15 @@ class RedisStreamClient(Protocol):
 
     async def xlen(self, stream: str) -> int: ...
 
+    async def xtrim(
+        self,
+        stream: str,
+        *,
+        minid: int | str | None = None,
+        maxlen: int | None = None,
+        approximate: bool = True,
+    ) -> int: ...
+
     async def aclose(self) -> None: ...
 
 
@@ -122,6 +131,26 @@ class RedisStreams:
 
     async def xlen(self, stream: str) -> int:
         return await self._c.xlen(stream)
+
+    async def xtrim(
+        self,
+        stream: str,
+        *,
+        minid: int | str | None = None,
+        maxlen: int | None = None,
+        approximate: bool = True,
+    ) -> int:
+        """Trim a stream by ``minid`` (drop entries with a smaller id) or by
+        ``maxlen``. Resource caps (B4): the retention sweep calls this with
+        ``minid=<now - log_retention_seconds>`` in ms to bound the log/event
+        streams by time (the primary bound stays the per-XADD MAXLEN)."""
+        if minid is not None:
+            return await self._c.xtrim(
+                stream, minid=minid, approximate=approximate
+            )
+        return await self._c.xtrim(
+            stream, maxlen=maxlen, approximate=approximate
+        )
 
     async def aclose(self) -> None:
         await self._c.aclose()

@@ -20,8 +20,10 @@ the existing :class:`ScrapyRunner`. Guarantees from refactor/00:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import shutil
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from dopilot_protocol import (
@@ -104,7 +106,8 @@ class CommandConsumer:
         self._stream = command_stream(agent_id)
         self._group = COMMAND_GROUP
         self._consumer = agent_id
-        self._locks: dict[str, asyncio.Lock] = {}
+        # Refcounted keyed locks: {execution_id: [asyncio.Lock, refcount]} (R-02).
+        self._locks: dict[str, list] = {}
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self._status = status
@@ -116,13 +119,75 @@ class CommandConsumer:
         # NOT in this set is an orphan we cannot reattach to (-> lost).
         self._inproc_wheel: set[str] = set()
         self._wait_tasks: dict[str, asyncio.Task[None]] = {}
+        # Resource caps (R-04): execution ids whose command is being handled RIGHT
+        # NOW (added around _process, before spawn/registration). The janitor uses
+        # this so it never deletes a workspace whose command is mid-flight but not
+        # yet in the runner's _procs / lacking a job.pgid sidecar.
+        self._processing: set[str] = set()
+        # Resource caps (C6): set after construction (the LogPublisher is built
+        # later); lets cleanup drop the cursor + EOF dedup state for an execution.
+        self._log_publisher: object | None = None
 
-    def _lock_for(self, execution_id: str) -> asyncio.Lock:
-        lock = self._locks.get(execution_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._locks[execution_id] = lock
-        return lock
+    def set_log_publisher(self, publisher: object) -> None:
+        """Wire the LogPublisher so cleanup can release its per-execution state."""
+        self._log_publisher = publisher
+
+    def active_execution_ids(self) -> set[str]:
+        """Execution ids the consumer is actively handling or running in-proc.
+
+        Union of the command currently being processed and started in-process
+        wheels. The janitor treats these as untouchable (resource caps, R-04).
+        """
+        return set(self._processing) | set(self._inproc_wheel)
+
+    def execution_lock(self, execution_id: str):
+        """Public per-execution lock context manager (janitor coordination, R-02).
+
+        Returns the SAME refcounted keyed lock the consumer uses, so the janitor
+        deleting an execution's files is mutually exclusive with a command handler
+        for that execution.
+        """
+        return self._execution_lock(execution_id)
+
+    def on_execution_eof(self, execution_id: str) -> None:
+        """Terminal + EOF published: drop EOF-safe bookkeeping (resource caps, C6).
+
+        Invoked by the LogPublisher right after it publishes an execution's EOF.
+        Releases the in-process-wheel marker and the wheel runner's per-execution
+        dicts/sets — safe at EOF because the terminal event is already delivered.
+        The per-execution lock and the EOF dedup set are NOT touched here; they
+        live until state cleanup (see :meth:`_handle_cleanup`).
+        """
+        self._inproc_wheel.discard(execution_id)
+        if self._wheel_runner is not None:
+            self._wheel_runner.forget(execution_id)
+
+    @contextlib.asynccontextmanager
+    async def _execution_lock(self, execution_id: str) -> AsyncIterator[None]:
+        """Refcounted keyed per-execution lock (resource caps, R-02).
+
+        The lock entry is created on first use and removed ONLY when the last
+        holder/waiter leaves (refcount back to 0). Because the whole consumer runs
+        on one event loop, the get-or-create + refcount increment below happens
+        with no ``await`` in between, so it is atomic — a lock is never dropped
+        while it is held or has waiters (which previously let two coroutines hold
+        two different locks for the same execution), and it does not leak (removed
+        at refcount 0 instead of only on cleanup).
+        """
+        entry = self._locks.get(execution_id)
+        if entry is None:
+            entry = [asyncio.Lock(), 0]
+            self._locks[execution_id] = entry
+        entry[1] += 1  # register as holder/waiter BEFORE awaiting acquire
+        lock: asyncio.Lock = entry[0]
+        await lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
+            entry[1] -= 1
+            if entry[1] == 0 and self._locks.get(execution_id) is entry:
+                del self._locks[execution_id]
 
     async def setup(self) -> None:
         await self._redis.ensure_group(self._stream, self._group)
@@ -277,7 +342,11 @@ class CommandConsumer:
 
     async def _process(self, msg_id: object, fields: object) -> None:
         cmd = from_stream_entry(AgentCommand, fields)
-        async with self._lock_for(cmd.execution_id):
+        # Mark in-flight BEFORE taking the lock so the janitor's active-set check
+        # (which it does under the same lock) always sees an in-progress command
+        # even before the runner registers _procs / writes job.pgid (R-04).
+        self._processing.add(cmd.execution_id)
+        async with self._execution_lock(cmd.execution_id):
             try:
                 if cmd.type == AgentCommandType.run:
                     await self._handle_run(cmd)
@@ -288,6 +357,7 @@ class CommandConsumer:
             except Exception:  # noqa: BLE001 - record + ack; never poison-loop
                 logger.exception("command handler failed: %s", cmd.command_id)
             finally:
+                self._processing.discard(cmd.execution_id)
                 # XACK = reliable takeover (success or idempotent skip).
                 await self._redis.xack(self._stream, self._group, msg_id)
 
@@ -580,7 +650,7 @@ class CommandConsumer:
         except Exception:  # noqa: BLE001 - never let the waiter crash the loop
             logger.exception("wheel wait failed for %s", execution_id)
             return
-        async with self._lock_for(execution_id):
+        async with self._execution_lock(execution_id):
             state = self._store.read(execution_id)
             if state is None or state.phase == "done":
                 # cancel/reclaim already recorded an authoritative terminal.
@@ -666,10 +736,30 @@ class CommandConsumer:
                 except (FileNotFoundError, IsADirectoryError):
                     pass
             # Python-wheel runs own a per-execution workspace (which contains the
-            # merged ``job.log``); remove it wholesale.
+            # merged ``job.log`` + the job.pgid sidecar); remove it wholesale.
             if state.workspace_path:
                 shutil.rmtree(state.workspace_path, ignore_errors=True)
         self._store.delete(cmd.execution_id)
+        # Resource caps (C1/C6): release per-execution bookkeeping now that the
+        # execution is gone — the .logpos cursor (previously leaked forever), the
+        # EOF dedup entry, and any residual runner state. The per-execution LOCK is
+        # NOT dropped here: its lifecycle is owned by the refcounted keyed lock
+        # (R-02), which removes the entry only when no holder/waiter remains, so
+        # cleanup can never orphan a held lock. Note: _handle_cleanup itself runs
+        # inside that lock, so the entry is released when this handler exits.
+        self._release_execution(cmd.execution_id)
+
+    def _release_execution(self, execution_id: str) -> None:
+        """Drop per-execution in-memory + on-disk artifacts for a gone id.
+
+        Does NOT touch ``_locks`` — see R-02 / :meth:`_execution_lock`.
+        """
+        self._inproc_wheel.discard(execution_id)
+        if self._wheel_runner is not None:
+            self._wheel_runner.forget(execution_id)
+        if self._log_publisher is not None:
+            # deletes the .logpos cursor file + clears _eof_sent (C1/C6).
+            self._log_publisher.forget(execution_id)
 
     # --- background loop ---------------------------------------------------
     async def _run(self) -> None:

@@ -231,6 +231,13 @@ async def finalize_drained_logs(
         log_file.status = states.LOG_COMPLETE
         log_file.final_offset = log_file.size_bytes
         log_file.finished_at = now
+        # Resource caps (B2): stamp the retention deadline at finalize so the UI
+        # can show expiry and the retention sweep's cutoff is auditable. The sweep
+        # selects by task terminal-time, not this column; retained_until is the
+        # human-facing "delete after" marker.
+        retention_days = settings.logs.retention_days
+        if retention_days > 0:
+            log_file.retained_until = now + timedelta(days=retention_days)
         outbox_svc.create_cleanup_outbox(
             session,
             task_id=log_file.task_id,

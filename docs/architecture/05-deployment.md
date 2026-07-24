@@ -45,6 +45,38 @@
 | `dopilot-agent{N}-data` → `/agent-data` | scrapyd `job.log`、attempt 状态文件、event/log outbox、wheel/egg 缓存 | 可不备份（server drain 完成前不得删 `job.log`） |
 | `dopilot-redis` | AOF | 不是备份目标（瞬时传输;丢失只影响在途消息，日志 RPO≠0 已接受） |
 
+## 资源硬上限（防宿主机膨胀）
+
+长运行部署曾因容器日志与应用文件无界增长把宿主机磁盘/内存耗尽。部署层
+在三份 compose 里设了两道硬边界(应用层上限见
+[04-configuration](04-configuration.md) 与
+[0019 决策](../decisions/0019-resource-hard-limits.md)):
+
+- **容器日志轮转**:每个 service(server / agent / redis / db / migrate)经
+  共享 `x-logging` anchor 设 json-file `max-size=10m` + `max-file=3`。宿主机
+  若用 journald 等其他 driver,需在 daemon 侧另设等价上限——该 anchor 只管
+  json-file。
+- **Redis 内存**:`--maxmemory ${DOPILOT_REDIS_MAXMEMORY:-512mb}` +
+  `--maxmemory-policy noeviction` + `--auto-aof-rewrite-percentage 100`
+  + `--auto-aof-rewrite-min-size 64mb`。`noeviction` 是刻意选择:到上限后
+  XADD 响亮失败(两侧可容忍:agent 日志游标不前进、事件留在磁盘 outbox、
+  server 派发重试),而非静默逐出流数据。首要边界仍是每条 stream 的
+  XADD MAXLEN 与 server 保留清扫的 `XTRIM MINID`。
+
+### 生产收缩 runbook（已膨胀的部署升级到本版本）
+
+若 `dopilot-redis` 卷已远超新 `maxmemory`(如观测到的 2.11GB):
+
+1. 先升级并启动新版 **server**——`RetentionSweepLoop` 首个 tick(≤60s)即对
+   日志/事件流执行 `XTRIM MINID`,把数据集收缩到保留窗内;`stream_maxlen_logs`
+   默认也由 1_000_000 降到 100_000。
+2. 再对 redis 应用 `maxmemory`(或接受收缩生效前最初一分钟可能的 XADD 失败
+   ——agent 侧可容忍,日志随后补传)。
+3. AOF 文件靠 `auto-aof-rewrite-*` 收缩;需要立即回收可一次性
+   `redis-cli BGREWRITEAOF`。
+4. PostgreSQL:保留清扫删行后空间由 autovacuum 复用、文件不立即回缩;需要
+   立即回收磁盘可择机停机 `VACUUM FULL`。
+
 ## 反向代理（可选）
 
 dopilot 不内置 nginx。用户自接反代时 SSE 路径必须关缓冲

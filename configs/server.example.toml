@@ -74,7 +74,11 @@ stream_token_ttl_seconds = 60
 url = "redis://localhost:6379/0"
 stream_maxlen_commands = 100000
 stream_maxlen_events = 100000
-stream_maxlen_logs = 1000000
+# Resource caps: the log stream dominates Redis memory. 100_000 entries hold a
+# bounded working set; the retention sweep additionally XTRIMs by time (below).
+stream_maxlen_logs = 100000
+# Time bound for the log stream (seconds), enforced as a periodic XTRIM MINID by
+# the retention sweep. 0 disables the time trim (MAXLEN still applies).
 log_retention_seconds = 86400
 consumer_name = "server-1"
 require_aof = true
@@ -116,7 +120,33 @@ eof_stable_seconds = 3
 final_drain_hard_timeout_seconds = 30
 # Phase 1.5: bounded drain window after a terminal event before finalize+cleanup.
 log_drain_timeout_seconds = 30
+# Days a terminal task's logs+rows are retained before the automatic sweep
+# deletes them (also the manual maintenance API default cutoff).
 retention_days = 30
+# Resource caps: per-execution log-file size hard cap in bytes (100MiB). Past
+# this the consumer keeps consuming/ACKing but stops appending body bytes, writes
+# one truncation marker, and sets log_integrity='truncated'. 0 disables.
+max_file_bytes = 104857600
+
+# Resource caps: automatic retention sweep. A background loop enforces
+# logs.retention_days, prunes event_audit, and XTRIMs the Redis log/event streams
+# by time — no operator action needed. Set enabled=false to rely on the manual
+# maintenance API only.
+[maintenance]
+enabled = true
+sweep_interval_seconds = 3600
+event_audit_retention_days = 30
+event_audit_delete_batch = 5000
+
+[artifacts]
+root_dir = "/server-data/artifacts"
+# Resource caps: reject a single upload larger than this (HTTP 413), read in
+# bounded chunks so RAM/disk stay bounded (200MiB). 0 disables.
+max_upload_bytes = 209715200
+# Resource caps: reject new uploads once the stored artifact total would exceed
+# this (HTTP 507). Archived artifacts are never auto-deleted, so this bounds
+# aggregate growth by refusing new uploads (20GiB). 0 disables.
+max_total_bytes = 21474836480
 
 [i18n]
 locale = "zh"

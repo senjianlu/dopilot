@@ -29,10 +29,12 @@ import argparse
 import asyncio
 import logging
 import signal
+from pathlib import Path
 
 from .config.loader import DEFAULT_CONFIG_PATH, load_settings
 from .config.settings import Settings
 from .deps import build_runtime
+from .janitor import AgentJanitor
 from .redis.client import build_redis
 from .redis.commands import CommandConsumer
 from .redis.events import EventPublisher
@@ -71,7 +73,9 @@ async def run_agent(settings: Settings, *, stop: asyncio.Event | None = None) ->
             agent_id=s.agent.agent_id,
             runner=runtime.runner,
             store=runtime.store,
+            maxlen_events=s.redis.maxlen_events,
             outbox_dir=s.redis.event_outbox_dir or None,
+            max_outbox_files=s.redis.event_outbox_max_files,
             status=runtime.redis_status,
         )
         consumer = CommandConsumer(
@@ -92,10 +96,38 @@ async def run_agent(settings: Settings, *, stop: asyncio.Event | None = None) ->
             agent_id=s.agent.agent_id,
             store=runtime.store,
             cursor_dir=str(runtime.store.dir / "logpos"),
+            maxlen_logs=s.redis.maxlen_logs,
             status=runtime.redis_status,
+            # Resource caps (C6): release EOF-safe bookkeeping the moment EOF is
+            # published for a terminal execution.
+            on_eof=consumer.on_execution_eof,
         )
+        # Let cleanup release the publisher's per-execution cursor/EOF state (C6).
+        consumer.set_log_publisher(log_publisher)
         consumer.start()
         log_publisher.start()
+
+    # Resource caps (C1/C4): local-disk janitor. Runs regardless of Redis (it only
+    # touches local files); when a consumer exists its cleanup callback is wired so
+    # GC also releases in-memory bookkeeping. Starts with an immediate sweep.
+    janitor = AgentJanitor(
+        settings=s,
+        store=runtime.store,
+        wheel_runner=runtime.wheel_runner,
+        cursor_dir=str(runtime.store.dir / "logpos"),
+        artifacts_root=str(Path(s.agent.workdir) / "artifacts"),
+        release=consumer._release_execution if consumer is not None else None,
+        # Resource caps (R-04): full active set (runner ∪ consumer in-flight) +
+        # the consumer's per-execution lock, so GC never races a mid-flight run.
+        active_ids=(
+            (lambda: runtime.wheel_runner.active_execution_ids()
+             | consumer.active_execution_ids())
+            if consumer is not None
+            else None
+        ),
+        lock_for=consumer.execution_lock if consumer is not None else None,
+    )
+    janitor.start()
     if runtime.heartbeat is not None:
         runtime.heartbeat.start()
 
@@ -109,6 +141,7 @@ async def run_agent(settings: Settings, *, stop: asyncio.Event | None = None) ->
     try:
         await stop_event.wait()
     finally:
+        await janitor.stop()
         if log_publisher is not None:
             await log_publisher.stop()
         if consumer is not None:

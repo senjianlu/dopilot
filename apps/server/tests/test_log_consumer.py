@@ -267,20 +267,22 @@ async def test_apply_log_event_uses_async_file_boundary(
     db_session, exec_settings, monkeypatch
 ):
     """Regression: ``apply_log_event`` (an async path) must reach disk through
-    the named async boundary ``files.aappend_increment`` (offloaded to a thread),
-    never via a direct synchronous ``files.append`` call on the event loop."""
+    the named async boundary ``files.aappend_increment_capped`` (offloaded to a
+    thread), never via a direct synchronous ``files.append`` call on the event
+    loop. The capped variant is the boundary since the resource-caps size limit
+    (B1); it behaves like the uncapped append when the cap is not reached."""
     from dopilot_server.logs import files as files_mod
     from dopilot_server.services import logs as logs_mod
 
     calls: list[tuple[bytes, bytes]] = []
-    real = files_mod.aappend_increment
+    real = files_mod.aappend_increment_capped
 
-    async def spy(path, marker, raw):
+    async def spy(path, marker, raw, max_bytes, trunc_marker):
         calls.append((marker, raw))
-        return await real(path, marker, raw)
+        return await real(path, marker, raw, max_bytes, trunc_marker)
 
     # Patch the symbol the service module resolves at call time.
-    monkeypatch.setattr(logs_mod.files, "aappend_increment", spy)
+    monkeypatch.setattr(logs_mod.files, "aappend_increment_capped", spy)
 
     _t, execution, lf = await _seed(db_session, exec_settings)
     out = await _apply(db_session, exec_settings, execution, 0, b"hi\n")
