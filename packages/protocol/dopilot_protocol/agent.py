@@ -4,7 +4,7 @@ These schemas described the HTTP contract the server used to drive a dopilot
 agent over its root API in phase 1: run a Scrapy job, stop it, poll its status,
 deploy a pre-built egg, and clean up its logs.
 
-Phase 1.5 (``docs/refactor/00-redis-streams-agent-communication.md``) replaces
+Phase 1.5 (``docs/decisions/0008-redis-streams-agent-communication.md``) replaces
 the run/status/stop/cleanup main paths with Redis Streams — see
 :mod:`dopilot_protocol.streams`. The types here are retained as **legacy**:
 ``AttemptStatus`` and ``AgentRunRequest`` are still reused (the latter as the

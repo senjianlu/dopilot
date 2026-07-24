@@ -1,8 +1,8 @@
 """Redis Streams protocol: server<->agent command/event/log/heartbeat schemas.
 
 Phase-1.5 communication model (see
-``docs/refactor/00-redis-streams-agent-communication.md``, the authoritative
-design):
+``docs/decisions/0008-redis-streams-agent-communication.md`` and
+``docs/architecture/03-execution-and-logs.md``, the authoritative design):
 
 - the **server** dispatches commands to a per-agent command stream,
 - the **agent** consumes commands, executes, and publishes status events and log

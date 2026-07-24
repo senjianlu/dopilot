@@ -1,0 +1,8 @@
+# 用例:全仓不存在指向已删除文档目录的“现行”引用。
+# 白名单(有意保留的历史陈述,均以“git 历史可查”口径成文):
+#   docs/README.md「历史」小节、docs/decisions/0018(记录本次迁移)、
+#   docs/decisions/README.md(迁移来源注记)、docs/decisions/0008 与
+#   docs/architecture/03(指向 git 历史中的 refactor 原文)、
+#   代码注释中已标注 "git history:" 的历史引用。
+$ grep -rnE "docs/(dopilot|agent-governance|phases|refactor)" --include=... . | 过滤白名单
+RESULT: NO UNEXPECTED REFS (pass)

@@ -5,7 +5,7 @@ Revises: 0002
 Create Date: 2026-06-19
 
 Redis Streams server<->agent communication (see
-docs/refactor/00-redis-streams-agent-communication.md). Adds the command outbox,
+git history: docs/refactor/00-redis-streams-agent-communication.md). Adds the command outbox,
 the event dedupe/audit table, log-integrity + gap columns, and the
 attempt reconcile/lost-reason columns. PostgreSQL types (JSONB) match the ORM
 models; the SQLite test DB is built from the models, not this migration.

@@ -5,7 +5,7 @@ Revises: 0004
 Create Date: 2026-06-19
 
 Adds the scheduling domain above :class:`Task` (see
-docs/phases/phase-1.7/00-brief.md and the packet-2 prompt):
+git history: docs/phases/phase-1.7/00-brief.md and the packet-2 prompt):
 
 - ``task_templates`` — reusable Scrapy run definitions.
 - ``schedules`` — timers (interval / cron) that reference one template.

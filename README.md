@@ -262,13 +262,16 @@ cd deploy/docker && docker compose config
 
 ## Documentation
 
-Goals, decisions, and the phased roadmap live under [`docs/`](docs/README.md):
+The durable design truth lives under [`docs/`](docs/README.md):
 
-- [`docs/dopilot/00-requirements.md`](docs/dopilot/00-requirements.md): the
-  north-star: product goals, confirmed decisions, the phased roadmap.
-- [`docs/dopilot/10-roadmap.md`](docs/dopilot/10-roadmap.md): the consolidated
-  build/port roadmap.
-- [`CLAUDE.md`](CLAUDE.md): architecture, hard constraints, current status.
+- [`docs/architecture/`](docs/architecture/README.md): the current system —
+  runtime topology, domain model, execution/log pipeline, configuration,
+  deployment, frontend, development & testing.
+- [`docs/decisions/`](docs/decisions/README.md): confirmed decisions and hard
+  constraints, one record per decision.
+- [`AGENTS.md`](AGENTS.md): project facts and conventions for AI coding tools
+  (tech stack, layout, commit convention); the AI development workflow itself is
+  described in [`CLAUDE.md`](CLAUDE.md).
 
 ## Contributing
 
