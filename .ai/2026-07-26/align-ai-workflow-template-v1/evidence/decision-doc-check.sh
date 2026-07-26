@@ -25,9 +25,13 @@ done
 
 note ""
 note "== 2. 有意偏离清单 D-1…D-5 齐全 =="
+# 注:此处**不截断**打印。`cut -c` 在 GNU coreutils 中实际按字节切,
+# 中文行会被切出不完整的 UTF-8 字节;`awk substr` 也不安全(本机 awk 为
+# mawk,同样按字节切)。纯 bash 下唯一 locale 安全的截断要引入 python3,
+# 为观感加依赖不划算——证据文件不受宽度约束,整行打印反而更利于复核。
 for d in D-1 D-2 D-3 D-4 D-5; do
   if grep -q "| $d |" "$D20" 2>/dev/null; then
-    grep -m1 "| $d |" "$D20" | cut -c1-100 | sed 's/^/    /'
+    grep -m1 "| $d |" "$D20" | sed 's/^/    /'
     ok "$d 已登记"
   else
     bad "偏离清单缺 $d"

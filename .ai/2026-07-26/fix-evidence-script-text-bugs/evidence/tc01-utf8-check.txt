@@ -1,0 +1,48 @@
+$ bash .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/utf8-check.sh
+
+== 1. 重跑 decision-doc-check.sh(功能须未被改坏)==
+  退出码=0
+  | == 1. 0020 存在且为 docs/decisions/README.md 约定的四段体例 ==
+  | PASS  文件存在:docs/decisions/0020-ai-workflow-template-version-anchor.md
+  | PASS  含「- 日期:」段
+  | PASS  含「- 背景:」段
+  | PASS  含「- 决定:」段
+  | PASS  含「- 影响:」段
+  | 
+  | == 2. 有意偏离清单 D-1…D-5 齐全 ==
+  |         | D-1 | `.ai-workflow/review-standards.md` | 缺 v1.0.0 的 Scrapy 评审关注点 4 行 | 三处联动删除;该处有 `<!-- TEMPLATE: 按需删减。 -->` 注释显式授权裁剪 |
+  | PASS  D-1 已登记
+  |         | D-2 | `CLAUDE.md` | 少一处 "(机制见 docs/decisions/0003)" 尾注 | 该引用指向**模板仓库**的 0003(可配置评审轮数上限);本仓库的 `0003` 是「单管理员」,照抄会指向错误文档 |
+  | PASS  D-2 已登记
+  |         | D-3 | `AGENTS.md` | 无「技术栈 > 爬虫」章节 | 同 D-1;dopilot 非 Scrapy 应用 |
+  | PASS  D-3 已登记
+  |         | D-4 | `.claude/skills/rawf-stack-scrapy/` | 整个 skill 目录不存在 | 同 D-1;dopilot 不承载 Scrapy 应用的初始化/编码/测试约定 |
+  | PASS  D-4 已登记
+  |         | D-5 | `AGENTS.md` / `README.md` / `.agents/skills/` / `skills-lock.json` | 与模板结构性不同源 | 属「需人工合并」类:前两者已按项目重写(dopilot 的 README 是产品文档,模板 README 是模板使用说明);后两者模板 v1.0.0 侧不存在,无可并项 |
+  | PASS  D-5 已登记
+  | 
+  | == 3. 索引表含 0020 且链接目标存在 ==
+  |   | [0020](0020-ai-workflow-template-version-anchor.md) | 认领 ai-workflow-template v1.0.0 版本锚点；不采用其 Scrapy 标准栈 |
+  | PASS  docs/decisions/README.md 索引表含 0020 行
+  | PASS  索引链接目标存在:docs/decisions/0020-ai-workflow-template-version-anchor.md
+  | 
+  | == 4. 0018 含指向 0020 的交叉引用,且未被标记为已取代 ==
+  |     31:    [`0020`](0020-ai-workflow-template-version-anchor.md)（本记录的结论不变，
+  | PASS  0018 含指向 0020 的交叉引用
+  | PASS  0018 未被标记为已取代(符合 docs/decisions/README.md:该标记只用于推翻)
+  | 
+  | RESULT: PASS
+PASS  脚本自身仍 exit=0,断言逻辑未被改坏
+
+== 2. 全部输出的 UTF-8 合法性校验 ==
+PASS  iconv -f UTF-8 -t UTF-8 校验通过,输出无非法字节
+
+== 3. D-1…D-5 五行完整性(与 0020 源文件逐行比对)==
+PASS  D-1 完整打印(123 字符,与源文件逐字符一致)
+PASS  D-2 完整打印(121 字符,与源文件逐字符一致)
+PASS  D-3 完整打印(65 字符,与源文件逐字符一致)
+PASS  D-4 完整打印(104 字符,与源文件逐字符一致)
+PASS  D-5 完整打印(175 字符,与源文件逐字符一致)
+
+RESULT: PASS —— 输出合法 UTF-8 且五行完整
+exit=0

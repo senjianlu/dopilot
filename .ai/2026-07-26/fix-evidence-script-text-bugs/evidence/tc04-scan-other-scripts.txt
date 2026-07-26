@@ -1,0 +1,82 @@
+$ bash .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/scan-other-scripts.sh
+
+== 扫描范围:.ai/**/evidence/ 下的 *.sh 与 *.py ==
+  发现 20 个文件
+
+== 显式排除(按设计必须包含这些模式串的文件)==
+  排除 .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/regression-selfcheck.sh —— 回退副本生成器,把 bug 作为字符串常量注入
+  排除 .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/scan-other-scripts.sh —— 本扫描器自身,模式串写在 grep/awk 参数里
+  实际参与扫描:18 个文件(已剔除注释行)
+
+== 模式 1:cut -c / cut -b(GNU coreutils 下均按字节切,中文会被切坏) ==
+  OK   .ai/2026-07-24/adopt-ai-workflow-template/evidence/link-check-round02.py
+  OK   .ai/2026-07-24/adopt-ai-workflow-template/evidence/stale-refs-check-round02.sh
+  OK   .ai/2026-07-24/maintenance-resource-dashboard/evidence/tc17-postgres.sh
+  OK   .ai/2026-07-24/resource-hard-limits/evidence/tc14-compose-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/baseline-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/changeset-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/decision-doc-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/link-check.py
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/manual-merge-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/scrapy-absence-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/template-version-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/changeset-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/env-scope-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/pure-reorder-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/reverse-selfcheck.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/step-order-check.py
+  OK   .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/changeset-check.sh
+  OK   .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/utf8-check.sh
+  小计:命中 0 个文件 / 0 行(共扫描 18 个文件)
+
+== 模式 2:awk substr(本机 awk 为 mawk,同样按字节切) ==
+  OK   .ai/2026-07-24/adopt-ai-workflow-template/evidence/link-check-round02.py
+  OK   .ai/2026-07-24/adopt-ai-workflow-template/evidence/stale-refs-check-round02.sh
+  OK   .ai/2026-07-24/maintenance-resource-dashboard/evidence/tc17-postgres.sh
+  OK   .ai/2026-07-24/resource-hard-limits/evidence/tc14-compose-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/baseline-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/changeset-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/decision-doc-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/link-check.py
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/manual-merge-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/scrapy-absence-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/template-version-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/changeset-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/env-scope-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/pure-reorder-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/reverse-selfcheck.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/step-order-check.py
+  OK   .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/changeset-check.sh
+  OK   .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/utf8-check.sh
+  小计:命中 0 个文件 / 0 行(共扫描 18 个文件)
+
+== 模式 3:f-string 表达式内含反斜杠转义引号(SyntaxError 来源) ==
+  OK   .ai/2026-07-24/adopt-ai-workflow-template/evidence/link-check-round02.py
+  OK   .ai/2026-07-24/adopt-ai-workflow-template/evidence/stale-refs-check-round02.sh
+  OK   .ai/2026-07-24/maintenance-resource-dashboard/evidence/tc17-postgres.sh
+  OK   .ai/2026-07-24/resource-hard-limits/evidence/tc14-compose-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/baseline-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/changeset-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/decision-doc-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/link-check.py
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/manual-merge-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/scrapy-absence-check.sh
+  OK   .ai/2026-07-26/align-ai-workflow-template-v1/evidence/template-version-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/changeset-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/env-scope-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/pure-reorder-check.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/reverse-selfcheck.sh
+  OK   .ai/2026-07-26/ci-docker-login-before-buildx/evidence/step-order-check.py
+  OK   .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/changeset-check.sh
+  OK   .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/utf8-check.sh
+  小计:命中 0 个文件 / 0 行(共扫描 18 个文件)
+
+== 本次已修的两个文件复核(剔注释后应无命中)==
+  OK .ai/2026-07-26/align-ai-workflow-template-v1/evidence/decision-doc-check.sh 三种模式均无命中
+  OK .ai/2026-07-26/ci-docker-login-before-buildx/evidence/reverse-selfcheck.sh 三种模式均无命中
+
+== 扫描结论 ==
+  参与扫描:18 个文件 × 3 个模式
+  命中:0 个文件 / 0 行 —— 其余 evidence 脚本未发现同类模式,无需后续处理
+RESULT: PASS(扫描完成;命中与否不影响本用例通过)
+exit=0

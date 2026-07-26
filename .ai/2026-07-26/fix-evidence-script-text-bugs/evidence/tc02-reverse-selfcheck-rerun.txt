@@ -1,0 +1,96 @@
+$ bash .ai/2026-07-26/ci-docker-login-before-buildx/evidence/reverse-selfcheck.sh
+
+== 1. 生成旧顺序副本(把 Login 块移回 Buildx 之后)==
+  job [base]:Login 由下标 1 移到 Buildx(3) 之后
+  job [app]:Login 由下标 1 移到 Buildx(3) 之后
+  已写出:/tmp/claude-1000/-home-rabbir-Projects-dopilot/c710bc7e-e506-4ef8-a504-c70181b8a2f7/scratchpad/tc03/docker.old-order.yml
+
+  --- 副本中两个 job 的步骤顺序 ---
+    [base]
+      [0] actions/checkout@v4
+      [1] Set up QEMU
+      [2] Set up Docker Buildx
+      [3] Login to Docker Hub
+      [4] Compute base image tags
+      [5] Check Python base manifest
+      [6] Check Web base manifest
+      [7] Build and push Python base
+      [8] Build and push Web base
+    [app]
+      [0] actions/checkout@v4
+      [1] Set up QEMU
+      [2] Set up Docker Buildx
+      [3] Login to Docker Hub
+      [4] Compute app image tags
+      [5] Build and push app image
+
+== 2. 对旧顺序副本运行顺序断言 —— 必须非零退出,且必须是顺序违例 ==
+$ python3 .ai/2026-07-26/ci-docker-login-before-buildx/evidence/step-order-check.py /tmp/claude-1000/-home-rabbir-Projects-dopilot/c710bc7e-e506-4ef8-a504-c70181b8a2f7/scratchpad/tc03/docker.old-order.yml
+  == 解析 /tmp/claude-1000/-home-rabbir-Projects-dopilot/c710bc7e-e506-4ef8-a504-c70181b8a2f7/scratchpad/tc03/docker.old-order.yml ==
+    YAML 合法,顶层 keys: ['True', 'env', 'jobs', 'name']
+  
+  == job: base ==
+      [0] <无 name, uses=actions/checkout@v4>
+      [1] Set up QEMU
+      [2] Set up Docker Buildx
+      [3] Login to Docker Hub
+      [4] Compute base image tags
+      [5] Check Python base manifest
+      [6] Check Web base manifest
+      [7] Build and push Python base
+      [8] Build and push Web base
+    下标:Login to Docker Hub=3  Set up QEMU=1  Set up Docker Buildx=2
+    FAIL  Login to Docker Hub(3) 未早于 Set up QEMU(1) —— 该步骤的镜像拉取仍是匿名的
+    FAIL  Login to Docker Hub(3) 未早于 Set up Docker Buildx(2) —— 该步骤的镜像拉取仍是匿名的
+  
+  == job: app ==
+      [0] <无 name, uses=actions/checkout@v4>
+      [1] Set up QEMU
+      [2] Set up Docker Buildx
+      [3] Login to Docker Hub
+      [4] Compute app image tags
+      [5] Build and push app image
+    下标:Login to Docker Hub=3  Set up QEMU=1  Set up Docker Buildx=2
+    FAIL  Login to Docker Hub(3) 未早于 Set up QEMU(1) —— 该步骤的镜像拉取仍是匿名的
+    FAIL  Login to Docker Hub(3) 未早于 Set up Docker Buildx(2) —— 该步骤的镜像拉取仍是匿名的
+  
+  RESULT: FAIL
+  退出码=1
+PASS  旧顺序副本被判 FAIL,且给出 4 条顺序违例(每个 job 各 2 条:QEMU 与 Buildx)
+
+== 3. 对当前工作区版本运行同一断言 —— 必须退出 0 ==
+$ python3 .ai/2026-07-26/ci-docker-login-before-buildx/evidence/step-order-check.py .github/workflows/docker.yml
+  == 解析 .github/workflows/docker.yml ==
+    YAML 合法,顶层 keys: ['True', 'env', 'jobs', 'name']
+  
+  == job: base ==
+      [0] <无 name, uses=actions/checkout@v4>
+      [1] Login to Docker Hub
+      [2] Set up QEMU
+      [3] Set up Docker Buildx
+      [4] Compute base image tags
+      [5] Check Python base manifest
+      [6] Check Web base manifest
+      [7] Build and push Python base
+      [8] Build and push Web base
+    下标:Login to Docker Hub=1  Set up QEMU=2  Set up Docker Buildx=3
+    OK    Login to Docker Hub(1) < Set up QEMU(2)
+    OK    Login to Docker Hub(1) < Set up Docker Buildx(3)
+  
+  == job: app ==
+      [0] <无 name, uses=actions/checkout@v4>
+      [1] Login to Docker Hub
+      [2] Set up QEMU
+      [3] Set up Docker Buildx
+      [4] Compute app image tags
+      [5] Build and push app image
+    下标:Login to Docker Hub=1  Set up QEMU=2  Set up Docker Buildx=3
+    OK    Login to Docker Hub(1) < Set up QEMU(2)
+    OK    Login to Docker Hub(1) < Set up Docker Buildx(3)
+  
+  RESULT: PASS —— 两个 job 均为 login 前置
+  退出码=0
+PASS  当前版本被判 PASS
+
+RESULT: PASS —— 顺序断言正反两向均有效,非恒真通过
+exit=0
