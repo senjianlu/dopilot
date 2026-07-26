@@ -26,3 +26,7 @@
     `codex login`）、jq；克隆后执行
     `git config core.hooksPath .githooks && git config commit.template .gitmessage`。
   - 此后任务改变架构或关键决策时，须在收尾前回写 `docs/`，与代码同一提交。
+  - 采用时模板尚无版本机制，故本记录未锚定模板版本；采用的版本、有意偏离
+    清单与后续升级流程见
+    [`0020`](0020-ai-workflow-template-version-anchor.md)（本记录的结论不变，
+    由 0020 补充版本维度）。

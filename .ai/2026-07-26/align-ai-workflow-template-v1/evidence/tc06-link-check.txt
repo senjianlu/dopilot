@@ -1,0 +1,32 @@
+$ python3 .ai/2026-07-26/align-ai-workflow-template-v1/evidence/link-check.py docs/decisions/README.md docs/decisions/0018-adopt-ai-workflow-template.md docs/decisions/0020-ai-workflow-template-version-anchor.md
+
+== docs/decisions/README.md ==
+  OK      0001-scrapydweb-behavior-reference-only.md -> /home/rabbir/Projects/dopilot/docs/decisions/0001-scrapydweb-behavior-reference-only.md
+  OK      0002-three-job-types-strict-order.md -> /home/rabbir/Projects/dopilot/docs/decisions/0002-three-job-types-strict-order.md
+  OK      0003-single-admin.md -> /home/rabbir/Projects/dopilot/docs/decisions/0003-single-admin.md
+  OK      0004-two-docker-roles-unified-image.md -> /home/rabbir/Projects/dopilot/docs/decisions/0004-two-docker-roles-unified-image.md
+  OK      0005-monorepo-apps-packages.md -> /home/rabbir/Projects/dopilot/docs/decisions/0005-monorepo-apps-packages.md
+  OK      0006-fastapi-backend-nextjs-static-frontend.md -> /home/rabbir/Projects/dopilot/docs/decisions/0006-fastapi-backend-nextjs-static-frontend.md
+  OK      0007-postgresql-only-log-bodies-on-disk.md -> /home/rabbir/Projects/dopilot/docs/decisions/0007-postgresql-only-log-bodies-on-disk.md
+  OK      0008-redis-streams-agent-communication.md -> /home/rabbir/Projects/dopilot/docs/decisions/0008-redis-streams-agent-communication.md
+  OK      0009-realtime-logs-redis-push-sse.md -> /home/rabbir/Projects/dopilot/docs/decisions/0009-realtime-logs-redis-push-sse.md
+  OK      0010-single-instance-server.md -> /home/rabbir/Projects/dopilot/docs/decisions/0010-single-instance-server.md
+  OK      0011-auth-boundaries.md -> /home/rabbir/Projects/dopilot/docs/decisions/0011-auth-boundaries.md
+  OK      0012-domain-model-clean-cut.md -> /home/rabbir/Projects/dopilot/docs/decisions/0012-domain-model-clean-cut.md
+  OK      0013-python-wheel-execution-model.md -> /home/rabbir/Projects/dopilot/docs/decisions/0013-python-wheel-execution-model.md
+  OK      0014-node-strategy-and-push-mode.md -> /home/rabbir/Projects/dopilot/docs/decisions/0014-node-strategy-and-push-mode.md
+  OK      0015-toml-config-no-scrapydweb-quirks.md -> /home/rabbir/Projects/dopilot/docs/decisions/0015-toml-config-no-scrapydweb-quirks.md
+  OK      0016-glibc-base-image-apscheduler-310.md -> /home/rabbir/Projects/dopilot/docs/decisions/0016-glibc-base-image-apscheduler-310.md
+  OK      0017-testing-baseline-own-regression-net.md -> /home/rabbir/Projects/dopilot/docs/decisions/0017-testing-baseline-own-regression-net.md
+  OK      0018-adopt-ai-workflow-template.md -> /home/rabbir/Projects/dopilot/docs/decisions/0018-adopt-ai-workflow-template.md
+  OK      0019-resource-hard-limits.md -> /home/rabbir/Projects/dopilot/docs/decisions/0019-resource-hard-limits.md
+  OK      0020-ai-workflow-template-version-anchor.md -> /home/rabbir/Projects/dopilot/docs/decisions/0020-ai-workflow-template-version-anchor.md
+== docs/decisions/0018-adopt-ai-workflow-template.md ==
+  SKIP    https://github.com/senjianlu/ai-workflow-template
+  OK      0020-ai-workflow-template-version-anchor.md -> /home/rabbir/Projects/dopilot/docs/decisions/0020-ai-workflow-template-version-anchor.md
+== docs/decisions/0020-ai-workflow-template-version-anchor.md ==
+  OK      0018-adopt-ai-workflow-template.md -> /home/rabbir/Projects/dopilot/docs/decisions/0018-adopt-ai-workflow-template.md
+
+相对链接检查数:22,BROKEN:0
+RESULT: PASS
+exit=0

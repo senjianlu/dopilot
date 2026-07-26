@@ -1,0 +1,43 @@
+== TC-04 ① 正向:plan.md 的 15 轮授权被脚本真实解析 ==
+$ bash .ai-workflow/scripts/plan-review.sh __resolve_max_rounds .ai/2026-07-26/align-ai-workflow-template-v1/plan.md
+15
+exit=0
+
+   (对照)plan.md frontmatter 实际内容:
+     ---
+     status: approved
+     task: align-ai-workflow-template-v1
+     date: 2026-07-26
+     approved_at: 2026-07-26 14:36:55+0900
+     plan_review_max_rounds: 15
+     impl_fix_max_rounds: 15
+     ---
+
+== TC-04 ② 异常路径:仓库外伪造 plan 的三种非法值 ==
+--- plan-empty.md ---
+     ---
+     status: approved
+     plan_review_max_rounds:
+     ---
+$ bash .ai-workflow/scripts/plan-review.sh __resolve_max_rounds /tmp/claude-1000/-home-rabbir-Projects-dopilot/c710bc7e-e506-4ef8-a504-c70181b8a2f7/scratchpad/tc04/plan-empty.md
+plan.md 的 plan_review_max_rounds 非法(须为正整数,实际为:空)
+exit=3
+
+--- plan-abc.md ---
+     ---
+     status: approved
+     plan_review_max_rounds: abc
+     ---
+$ bash .ai-workflow/scripts/plan-review.sh __resolve_max_rounds /tmp/claude-1000/-home-rabbir-Projects-dopilot/c710bc7e-e506-4ef8-a504-c70181b8a2f7/scratchpad/tc04/plan-abc.md
+plan.md 的 plan_review_max_rounds 非法(须为正整数,实际为:abc)
+exit=3
+
+--- plan-zero.md ---
+     ---
+     status: approved
+     plan_review_max_rounds: 0
+     ---
+$ bash .ai-workflow/scripts/plan-review.sh __resolve_max_rounds /tmp/claude-1000/-home-rabbir-Projects-dopilot/c710bc7e-e506-4ef8-a504-c70181b8a2f7/scratchpad/tc04/plan-zero.md
+plan.md 的 plan_review_max_rounds 非法(须为正整数,实际为:0)
+exit=3
+
