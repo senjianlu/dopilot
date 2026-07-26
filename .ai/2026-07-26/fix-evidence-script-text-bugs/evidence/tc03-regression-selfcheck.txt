@@ -1,0 +1,34 @@
+$ bash .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/regression-selfcheck.sh
+
+== 回退 A:decision-doc-check.sh 恢复 cut -c1-100 ==
+  已生成带 bug 的副本,差异行:
+    34c34
+    <     grep -m1 "| $d |" "$D20" | sed 's/^/    /'
+    ---
+    >     grep -m1 "| $d |" "$D20" | cut -c1-100 | sed 's/^/    /'
+
+  运行回退 A 副本并做 UTF-8 校验(期望:校验失败)
+  副本退出码=0
+PASS  回退 A 重现了坏字节(iconv 校验失败),TC-01 的检测确实在测这个 bug
+  出问题的行(cat -A,截取尾部):
+    == 2. M-fM-^\M-^IM-fM-^DM-^OM-eM-^AM-^OM-gM-&M-;M-fM-8M-^EM-eM-^MM-^U D-1M-bM-^@M-&D-5 M-iM-=M-^PM-eM-^EM-( ==$
+
+
+== 回退 B:reverse-selfcheck.sh 恢复 f-string 内反斜杠 ==
+  已生成带 bug 的副本(两行合并回反斜杠单行写法)
+  差异行:
+    55,56c55
+    <         label = s.get("name") or s.get("uses")
+    <         print(f"      [{i}] {label}")
+    ---
+    >         print(f"      [{i}] {s.get(\"name\", s.get(\"uses\"))}")
+
+  运行回退 B 副本(期望:出现 SyntaxError)
+  副本退出码=0
+PASS  回退 B 重现了 SyntaxError,TC-02 的检测确实在测这个 bug
+    8-    print(f"      [{i}] {s.get(\"name\", s.get(\"uses\"))}")
+    9-                                ^
+    10:SyntaxError: unexpected character after line continuation character
+
+RESULT: PASS —— 两个缺陷在回退副本上均可重现,检测非恒真通过
+exit=0

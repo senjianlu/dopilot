@@ -1,0 +1,87 @@
+$ bash .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/changeset-check.sh
+
+== 1. git status --porcelain --untracked-files=all 原始输出 ==
+   M .ai/2026-07-26/align-ai-workflow-template-v1/evidence/decision-doc-check.sh
+   M .ai/2026-07-26/ci-docker-login-before-buildx/evidence/reverse-selfcheck.sh
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/assets/.gitkeep
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/.gitkeep
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/changeset-check.sh
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/regression-selfcheck.sh
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/scan-other-scripts.sh
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/tc01-utf8-check.txt
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/tc02-reverse-selfcheck-rerun.txt
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/tc03-regression-selfcheck.txt
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/tc04-scan-other-scripts.txt
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/tc05-changeset.txt
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/utf8-check.sh
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/implementation-round-01.md
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/implementation-round-02.md
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/implementation-round-03.md
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/plan.md
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/review-round-01-pass.md
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/review-round-02-fail.md
+  ?? .ai/2026-07-26/fix-evidence-script-text-bugs/summary.md
+
+== 2. 源文件改动:与 plan 声明清单做集合相等断言 ==
+  实际(排除本任务 .ai/ 产物):
+    .ai/2026-07-26/align-ai-workflow-template-v1/evidence/decision-doc-check.sh
+    .ai/2026-07-26/ci-docker-login-before-buildx/evidence/reverse-selfcheck.sh
+  plan 声明:
+    .ai/2026-07-26/align-ai-workflow-template-v1/evidence/decision-doc-check.sh
+    .ai/2026-07-26/ci-docker-login-before-buildx/evidence/reverse-selfcheck.sh
+PASS  集合相等:恰好 2 个脚本
+
+== 3. 【专项】两份历史证据必须保持未修改 ==
+PASS  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc05-decision-docs.txt 未被改动
+      git diff 确认无内容变化
+PASS  .ai/2026-07-26/ci-docker-login-before-buildx/evidence/tc03-reverse-selfcheck.txt 未被改动
+      git diff 确认无内容变化
+
+== 4. 明确不动的目录/文件必须零改动 ==
+PASS  apps/ 零改动
+PASS  packages/ 零改动
+PASS  deploy/ 零改动
+PASS  configs/ 零改动
+PASS  scripts/ 零改动
+PASS  examples/ 零改动
+PASS  tests/ 零改动
+PASS  docs/ 零改动
+PASS  .github/ 零改动
+PASS  .ai-workflow/ 零改动
+PASS  .claude/ 零改动
+PASS  .agents/ 零改动
+PASS  .githooks/ 零改动
+PASS  AGENTS.md 零改动
+PASS  CLAUDE.md 零改动
+PASS  README.md 零改动
+PASS  README.zh-CN.md 零改动
+PASS  .gitignore 零改动
+PASS  .gitmessage 零改动
+PASS  skills-lock.json 零改动
+
+== 5. 两个来源任务的轮次记录必须零改动 ==
+PASS  align-ai-workflow-template-v1 的 plan / 轮次记录 / summary 零改动
+PASS  ci-docker-login-before-buildx 的 plan / 轮次记录 / summary 零改动
+
+== 6. 本任务目录产物一览 ==
+  .ai/2026-07-26/fix-evidence-script-text-bugs/assets/.gitkeep
+  .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/changeset-check.sh
+  .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/.gitkeep
+  .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/regression-selfcheck.sh
+  .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/scan-other-scripts.sh
+  .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/tc01-utf8-check.txt
+  .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/tc02-reverse-selfcheck-rerun.txt
+  .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/tc03-regression-selfcheck.txt
+  .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/tc04-scan-other-scripts.txt
+  .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/tc05-changeset.txt
+  .ai/2026-07-26/fix-evidence-script-text-bugs/evidence/utf8-check.sh
+  .ai/2026-07-26/fix-evidence-script-text-bugs/implementation-round-01.md
+  .ai/2026-07-26/fix-evidence-script-text-bugs/implementation-round-02.md
+  .ai/2026-07-26/fix-evidence-script-text-bugs/implementation-round-03.md
+  .ai/2026-07-26/fix-evidence-script-text-bugs/plan.md
+  .ai/2026-07-26/fix-evidence-script-text-bugs/review-round-01-pass.md
+  .ai/2026-07-26/fix-evidence-script-text-bugs/review-round-02-fail.md
+  .ai/2026-07-26/fix-evidence-script-text-bugs/summary.md
+
+RESULT: PASS
+exit=0

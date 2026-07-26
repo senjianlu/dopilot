@@ -44,13 +44,16 @@ PY
 
 note ""
 note "  --- 副本中两个 job 的步骤顺序 ---"
+# 注:标签先赋给局部变量再放进 f-string。内联 python 用单引号包裹,串中的
+# \" 会原样传给 Python,而 f-string 表达式内不允许反斜杠 → SyntaxError。
 python3 -c '
 import sys, yaml
 wf = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 for job in ("base", "app"):
     print(f"    [{job}]")
     for i, s in enumerate(wf["jobs"][job]["steps"]):
-        print(f"      [{i}] {s.get(\"name\", s.get(\"uses\"))}")
+        label = s.get("name") or s.get("uses")
+        print(f"      [{i}] {label}")
 ' "$SCRATCH/docker.old-order.yml"
 
 note ""
