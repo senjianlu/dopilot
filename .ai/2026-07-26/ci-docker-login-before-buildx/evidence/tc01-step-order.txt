@@ -1,0 +1,32 @@
+$ python3 .ai/2026-07-26/ci-docker-login-before-buildx/evidence/step-order-check.py .github/workflows/docker.yml
+
+== 解析 .github/workflows/docker.yml ==
+  YAML 合法,顶层 keys: ['True', 'env', 'jobs', 'name']
+
+== job: base ==
+    [0] <无 name, uses=actions/checkout@v4>
+    [1] Login to Docker Hub
+    [2] Set up QEMU
+    [3] Set up Docker Buildx
+    [4] Compute base image tags
+    [5] Check Python base manifest
+    [6] Check Web base manifest
+    [7] Build and push Python base
+    [8] Build and push Web base
+  下标:Login to Docker Hub=1  Set up QEMU=2  Set up Docker Buildx=3
+  OK    Login to Docker Hub(1) < Set up QEMU(2)
+  OK    Login to Docker Hub(1) < Set up Docker Buildx(3)
+
+== job: app ==
+    [0] <无 name, uses=actions/checkout@v4>
+    [1] Login to Docker Hub
+    [2] Set up QEMU
+    [3] Set up Docker Buildx
+    [4] Compute app image tags
+    [5] Build and push app image
+  下标:Login to Docker Hub=1  Set up QEMU=2  Set up Docker Buildx=3
+  OK    Login to Docker Hub(1) < Set up QEMU(2)
+  OK    Login to Docker Hub(1) < Set up Docker Buildx(3)
+
+RESULT: PASS —— 两个 job 均为 login 前置
+exit=0

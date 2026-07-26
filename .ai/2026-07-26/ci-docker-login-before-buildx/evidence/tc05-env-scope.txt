@@ -1,0 +1,24 @@
+$ bash .ai/2026-07-26/ci-docker-login-before-buildx/evidence/env-scope-check.sh
+
+== 1. DOCKERHUB_USERNAME 的定义层级 ==
+  workflow 级 env keys: ['DOCKERHUB_USERNAME', 'DOCKER_PLATFORMS']
+  DOCKERHUB_USERNAME 定义于 workflow 级:${{ secrets.DOCKERHUB_USERNAME }}
+  LEVEL=workflow
+PASS  DOCKERHUB_USERNAME 在 workflow 级 env,对 job 内任意位置的步骤可见
+
+== 2. login 块不依赖 steps.* 输出 ==
+  块内容:
+    |       - name: Login to Docker Hub
+    |         uses: docker/login-action@v4
+    |         with:
+    |           username: ${{ env.DOCKERHUB_USERNAME }}
+    |           password: ${{ secrets.DOCKERHUB_TOKEN }}
+PASS  login 块只引用 env.* 与 secrets.*,不依赖任何步骤输出
+
+== 3. 两个 job 中 login 仍在 checkout 之后 ==
+  OK   job [base]: checkout=0  login=1
+  OK   job [app]: checkout=0  login=1
+PASS  两个 job 均满足 checkout < login
+
+RESULT: PASS
+exit=0
