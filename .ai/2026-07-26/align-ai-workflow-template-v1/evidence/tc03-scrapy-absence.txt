@@ -1,0 +1,26 @@
+$ bash .ai/2026-07-26/align-ai-workflow-template-v1/evidence/scrapy-absence-check.sh
+
+== 1. AGENTS.md 无「### 爬虫」章节、无 scrapyd-client / TWISTED_REACTOR ==
+PASS  ABSENT —— AGENTS.md 无 Scrapy 栈章节(D-3)
+
+== 2. review-standards.md 无 Scrapy 评审关注点行 ==
+  现存技术栈关注点:
+    - TypeScript:类型逃逸(as any / @ts-ignore)、未处理的 Promise、状态管理一致性
+    - Python/FastAPI:阻塞调用混入 async 路径、Pydantic 校验缺失、异常吞噬
+    - 通用:plan 中测试用例是否被偷工减料(只测 happy path 即 major)
+PASS  ABSENT —— review-standards.md 无 Scrapy 关注点(D-1)
+
+== 3. .claude/skills/rawf-stack-scrapy 路径不存在 ==
+  现存 rawf skills:
+    rawf-implement
+    rawf-plan
+    rawf-report
+    rawf-review
+PASS  ABSENT —— 无 rawf-stack-scrapy skill(D-4)
+
+== 4. 反向自检:向副本注入残留必须被检出 ==
+PASS  注入 '- Scrapy:' 关注点行 -> 被检出(检测函数有效)
+PASS  注入「### 爬虫」章节 -> 被检出(检测函数有效)
+
+RESULT: PASS —— 三处同时缺席,且检测函数经反向自检有效
+exit=0

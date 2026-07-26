@@ -1,0 +1,18 @@
+# 需人工合并类:模板 48a435a -> v1.0.0 增量的逐 hunk 处置台账
+# 列:path <TAB> hunk(规范化的 @@ 范围头) <TAB> disposition <TAB> note
+# disposition 词表(四选一):
+#   divergence:D-NN    有意偏离,须在 docs/decisions/0020-*.md 中有同号条目
+#   absorbed:<锚点>    语义已被本任务吸收进 dopilot 产物,锚点须真实存在
+#   n/a-template-doc   模板仓库自身的使用说明,consumer 不承载
+#   no-op              模板侧无增量且无内容,无可并项
+# 由 manual-merge-check.sh 与模板现算的 hunk 集合做集合相等断言。
+AGENTS.md	@@ -110,0 +111,62 @@	divergence:D-3	新增「### 爬虫」Scrapy 标准栈章节;dopilot 非 Scrapy 应用,按模板决策 0007 第 4 条三处联动不采纳
+README.md	@@ -31 +31,3 @@	absorbed:.ai-workflow/TEMPLATE-VERSION	「开新项目」新增"填写 adopted 采用日期"一步;该动作已执行,adopted 已写入
+README.md	@@ -33 +35 @@	n/a-template-doc	「开新项目」步骤 3 重编号为 4,纯模板使用说明
+README.md	@@ -35 +37 @@	n/a-template-doc	「开新项目」步骤 4 重编号为 5,纯模板使用说明
+README.md	@@ -37 +39 @@	n/a-template-doc	「开新项目」步骤 5 重编号为 6,纯模板使用说明
+README.md	@@ -41 +43 @@	n/a-template-doc	「开新项目」步骤 6 重编号为 7,纯模板使用说明
+README.md	@@ -44 +46 @@	n/a-template-doc	「开新项目」步骤 7 重编号为 8,纯模板使用说明
+README.md	@@ -55 +57,4 @@	absorbed:docs/decisions/0020-ai-workflow-template-version-anchor.md	存量迁移新增"剔除无关技术栈须三处联动删除";已执行并记为 D-1/D-3/D-4
+README.md	@@ -58,3 +63,9 @@	absorbed:docs/decisions/0020-ai-workflow-template-version-anchor.md	存量迁移新增"版本认领前须全量基线对齐";已由 TC-01/TC-08 完成并在 0020 决定 1 记录
+README.md	@@ -79,0 +91,37 @@	absorbed:docs/decisions/0020-ai-workflow-template-version-anchor.md	新增「版本与升级」章节(SemVer 语义 + consumer 升级流程);升级流程已写入 0020 决定 3

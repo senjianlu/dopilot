@@ -1,0 +1,101 @@
+$ bash .ai/2026-07-26/align-ai-workflow-template-v1/evidence/changeset-check.sh
+
+== 1. git status --porcelain --untracked-files=all 原始输出 ==
+   M docs/decisions/0018-adopt-ai-workflow-template.md
+   M docs/decisions/README.md
+  ?? .ai-workflow/TEMPLATE-VERSION
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/assets/.gitkeep
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/.gitkeep
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/baseline-check.sh
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/changeset-check.sh
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/decision-doc-check.sh
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/link-check.py
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/manual-merge-check.sh
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/manual-merge-ledger.tsv
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/scrapy-absence-check.sh
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc01-baseline-check.txt
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc02-template-version.txt
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc03-scrapy-absence.txt
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc04-round-caps.txt
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc05-decision-docs.txt
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc06-link-check.txt
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc07-changeset.txt
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc08-manual-merge.txt
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/evidence/template-version-check.sh
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/implementation-round-01.md
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/implementation-round-02.md
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/implementation-round-03.md
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/plan-review-round-01-fail.md
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/plan-review-round-02-fail.md
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/plan-review-round-03-pass.md
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/plan.md
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/review-round-01-fail.md
+  ?? .ai/2026-07-26/align-ai-workflow-template-v1/review-round-02-fail.md
+  ?? docs/decisions/0020-ai-workflow-template-version-anchor.md
+
+== 2. 受管/文档改动:与 plan 声明清单做集合相等断言 ==
+  实际(排除本任务 .ai/ 产物):
+    .ai-workflow/TEMPLATE-VERSION
+    docs/decisions/0018-adopt-ai-workflow-template.md
+    docs/decisions/0020-ai-workflow-template-version-anchor.md
+    docs/decisions/README.md
+  plan 声明:
+    .ai-workflow/TEMPLATE-VERSION
+    docs/decisions/0018-adopt-ai-workflow-template.md
+    docs/decisions/0020-ai-workflow-template-version-anchor.md
+    docs/decisions/README.md
+PASS  集合相等:恰好 4 个受管/文档文件
+
+== 3. 其余改动必须全部落在本任务目录内 ==
+PASS  无越界改动
+
+== 4. 明确不动的目录必须零改动 ==
+PASS  apps/ 零改动
+PASS  packages/ 零改动
+PASS  deploy/ 零改动
+PASS  configs/ 零改动
+PASS  scripts/ 零改动
+PASS  examples/ 零改动
+PASS  tests/ 零改动
+PASS  .github/ 零改动
+PASS  .githooks/ 零改动
+PASS  .agents/ 零改动
+PASS  AGENTS.md 零改动
+PASS  CLAUDE.md 零改动
+PASS  README.md 零改动
+PASS  README.zh-CN.md 零改动
+PASS  .gitignore 零改动
+PASS  .gitmessage 零改动
+PASS  skills-lock.json 零改动
+
+== 5. 本任务目录产物一览 ==
+  .ai/2026-07-26/align-ai-workflow-template-v1/assets/.gitkeep
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/baseline-check.sh
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/changeset-check.sh
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/decision-doc-check.sh
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/.gitkeep
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/link-check.py
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/manual-merge-check.sh
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/manual-merge-ledger.tsv
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/scrapy-absence-check.sh
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc01-baseline-check.txt
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc02-template-version.txt
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc03-scrapy-absence.txt
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc04-round-caps.txt
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc05-decision-docs.txt
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc06-link-check.txt
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc07-changeset.txt
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/tc08-manual-merge.txt
+  .ai/2026-07-26/align-ai-workflow-template-v1/evidence/template-version-check.sh
+  .ai/2026-07-26/align-ai-workflow-template-v1/implementation-round-01.md
+  .ai/2026-07-26/align-ai-workflow-template-v1/implementation-round-02.md
+  .ai/2026-07-26/align-ai-workflow-template-v1/implementation-round-03.md
+  .ai/2026-07-26/align-ai-workflow-template-v1/plan.md
+  .ai/2026-07-26/align-ai-workflow-template-v1/plan-review-round-01-fail.md
+  .ai/2026-07-26/align-ai-workflow-template-v1/plan-review-round-02-fail.md
+  .ai/2026-07-26/align-ai-workflow-template-v1/plan-review-round-03-pass.md
+  .ai/2026-07-26/align-ai-workflow-template-v1/review-round-01-fail.md
+  .ai/2026-07-26/align-ai-workflow-template-v1/review-round-02-fail.md
+
+RESULT: PASS
+exit=0

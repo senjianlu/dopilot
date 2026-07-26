@@ -1,0 +1,28 @@
+$ bash .ai/2026-07-26/align-ai-workflow-template-v1/evidence/template-version-check.sh
+
+== 正向:核验仓库内的 .ai-workflow/TEMPLATE-VERSION ==
+  [1] 文件存在:.ai-workflow/TEMPLATE-VERSION
+  [2] 行数=3
+  [3] 字段名与顺序=version,source,adopted
+  [4] version=1.0.0
+  [5] source=https://github.com/senjianlu/ai-workflow-template
+  [6a] adopted 整行严格匹配:[adopted: 2026-07-26]
+  [6b] 不含模板占位文案「拷入 consumer」
+PASS  6 项断言全部通过
+
+== 反向自检:adopted 换成另一合法日期(2026-07-24)必须被拒 ==
+  副本内容:
+    version: 1.0.0
+    source: https://github.com/senjianlu/ai-workflow-template
+    adopted: 2026-07-24
+  [1] 文件存在:/tmp/claude-1000/-home-rabbir-Projects-dopilot/c710bc7e-e506-4ef8-a504-c70181b8a2f7/scratchpad/tc02/TEMPLATE-VERSION.bad-date
+  [2] 行数=3
+  [3] 字段名与顺序=version,source,adopted
+  [4] version=1.0.0
+  [5] source=https://github.com/senjianlu/ai-workflow-template
+  [6a] adopted 整行=[adopted: 2026-07-24],期望 [adopted: 2026-07-26]
+  [6b] 不含模板占位文案「拷入 consumer」
+PASS  反向自检有效:错误的 adopted 日期被拒
+
+RESULT: PASS
+exit=0

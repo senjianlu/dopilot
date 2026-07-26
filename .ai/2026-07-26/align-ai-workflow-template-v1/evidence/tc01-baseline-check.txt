@@ -1,0 +1,179 @@
+$ export TPL=/tmp/claude-1000/-home-rabbir-Projects-dopilot/c710bc7e-e506-4ef8-a504-c70181b8a2f7/scratchpad/tpl
+$ bash .ai/2026-07-26/align-ai-workflow-template-v1/evidence/baseline-check.sh "$TPL"
+
+== 0. 基准锚定 ==
+模板克隆路径 : /tmp/claude-1000/-home-rabbir-Projects-dopilot/c710bc7e-e506-4ef8-a504-c70181b8a2f7/scratchpad/tpl
+v1.0.0 解析为: 2aeab2eaca28b1364a46ec7cfc9195849cc61b68
+期望(钉死)  : 2aeab2eaca28b1364a46ec7cfc9195849cc61b68
+OK    v1.0.0 tag 未漂移
+
+== 1. 从模板 v1.0.0 现算受管路径全集 ==
+  .ai-workflow/prompts/plan-review.md
+  .ai-workflow/prompts/review.md
+  .ai-workflow/review-standards.md
+  .ai-workflow/schemas/plan-review.schema.json
+  .ai-workflow/schemas/review.schema.json
+  .ai-workflow/scripts/.gitkeep
+  .ai-workflow/scripts/plan-review.sh
+  .ai-workflow/scripts/review.sh
+  .ai-workflow/templates/implementation-round.md
+  .ai-workflow/templates/plan.md
+  .ai-workflow/templates/summary.md
+  .ai-workflow/TEMPLATE-VERSION
+  .claude/hooks/gate-plan.sh
+  .claude/hooks/gate-review.sh
+  .claude/settings.json
+  .claude/skills/rawf-implement/SKILL.md
+  .claude/skills/rawf-plan/SKILL.md
+  .claude/skills/rawf-report/SKILL.md
+  .claude/skills/rawf-review/SKILL.md
+  .claude/skills/rawf-stack-scrapy/SKILL.md
+  .githooks/commit-msg
+  .gitmessage
+模板侧受管路径数:22
+
+== 2. 从 dopilot 侧现算同一组 glob 的路径全集(双向比对用)==
+  .ai-workflow/prompts/plan-review.md
+  .ai-workflow/prompts/review.md
+  .ai-workflow/review-standards.md
+  .ai-workflow/schemas/plan-review.schema.json
+  .ai-workflow/schemas/review.schema.json
+  .ai-workflow/scripts/.gitkeep
+  .ai-workflow/scripts/plan-review.sh
+  .ai-workflow/scripts/review.sh
+  .ai-workflow/templates/implementation-round.md
+  .ai-workflow/templates/plan.md
+  .ai-workflow/templates/summary.md
+  .ai-workflow/TEMPLATE-VERSION
+  .claude/hooks/gate-plan.sh
+  .claude/hooks/gate-review.sh
+  .claude/settings.json
+  .claude/skills/rawf-implement/SKILL.md
+  .claude/skills/rawf-plan/SKILL.md
+  .claude/skills/rawf-report/SKILL.md
+  .claude/skills/rawf-review/SKILL.md
+  .githooks/commit-msg
+  .gitmessage
+dopilot 侧受管路径数:21
+
+== 3. 逐路径比对(SHA-256)==
+  .ai-workflow/prompts/plan-review.md
+        tpl-sha256=d2708b6855acc26b552e205a8012e1935cdacb597279f1ebdca46a4c8068851a
+        loc-sha256=d2708b6855acc26b552e205a8012e1935cdacb597279f1ebdca46a4c8068851a
+        -> IDENTICAL
+  .ai-workflow/prompts/review.md
+        tpl-sha256=4680f755d3474b12458d097608cf31586afda84c8e446abbea83d979b3c2412b
+        loc-sha256=4680f755d3474b12458d097608cf31586afda84c8e446abbea83d979b3c2412b
+        -> IDENTICAL
+  .ai-workflow/review-standards.md
+        tpl-sha256=5090431ca14385ed7a2b12e5856ed45722ecf5150e06bfbbb402b780a6957e1c
+        loc-sha256=c2c094e74b76f7aa39cc91f517e34540fe1ecd43815188c3a95c0939946c80a5
+        -> EXPECTED-DIFF(D-1):被删块须与模板新增块逐字节相等
+        新增行=0 删除行=4 模板新增块行数=4
+        —— 模板 48a435a..v1.0.0 新增的块(预期被删块,现算):
+           | - Scrapy:阻塞调用混入 reactor/事件循环、selector 取值无防御(裸下标/
+           |   无 default 导致页面结构变化即崩)、pipeline/middleware 异常吞噬致
+           |   item 静默丢失、去重/限速/重试配置被关闭或绕过、解析测试依赖真网
+           |   (须用本地 fixture 响应)
+        —— dopilot 侧实际被删块:
+           | - Scrapy:阻塞调用混入 reactor/事件循环、selector 取值无防御(裸下标/
+           |   无 default 导致页面结构变化即崩)、pipeline/middleware 异常吞噬致
+           |   item 静默丢失、去重/限速/重试配置被关闭或绕过、解析测试依赖真网
+           |   (须用本地 fixture 响应)
+        OK 被删块与模板新增块**逐字节相等**(4 行)
+  .ai-workflow/schemas/plan-review.schema.json
+        tpl-sha256=b0c1ff4faab4dfa6edb86832e877ec1ecb81d9de4c046698c3fdc8b0183d1d8e
+        loc-sha256=b0c1ff4faab4dfa6edb86832e877ec1ecb81d9de4c046698c3fdc8b0183d1d8e
+        -> IDENTICAL
+  .ai-workflow/schemas/review.schema.json
+        tpl-sha256=6f5815c46bff4fda8404046c5cb12a75decfbbdfd42837373e7269be43213d59
+        loc-sha256=6f5815c46bff4fda8404046c5cb12a75decfbbdfd42837373e7269be43213d59
+        -> IDENTICAL
+  .ai-workflow/scripts/.gitkeep
+        tpl-sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        loc-sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        -> IDENTICAL
+  .ai-workflow/scripts/plan-review.sh
+        tpl-sha256=460b0b7434d42fb677468993fe4bae8b59483bf630c683ad3c4e74cd3761119e
+        loc-sha256=460b0b7434d42fb677468993fe4bae8b59483bf630c683ad3c4e74cd3761119e
+        -> IDENTICAL
+  .ai-workflow/scripts/review.sh
+        tpl-sha256=2664ecbed2b23f5e8649344cd057e1ec4a093d2c55aa7e0c67b1cf67bbe70f07
+        loc-sha256=2664ecbed2b23f5e8649344cd057e1ec4a093d2c55aa7e0c67b1cf67bbe70f07
+        -> IDENTICAL
+  .ai-workflow/templates/implementation-round.md
+        tpl-sha256=597fdc1399f144950b7574a9fc336b22f951f934a208a632034152824bf26cfc
+        loc-sha256=597fdc1399f144950b7574a9fc336b22f951f934a208a632034152824bf26cfc
+        -> IDENTICAL
+  .ai-workflow/templates/plan.md
+        tpl-sha256=12db22210099efa15e60f5601c9eda213536b931a48fea591a26e0358adfa708
+        loc-sha256=12db22210099efa15e60f5601c9eda213536b931a48fea591a26e0358adfa708
+        -> IDENTICAL
+  .ai-workflow/templates/summary.md
+        tpl-sha256=92b9db5924b2ccf2814112f2688c087a674c2100a01690db79594c75e276be0a
+        loc-sha256=92b9db5924b2ccf2814112f2688c087a674c2100a01690db79594c75e276be0a
+        -> IDENTICAL
+  .ai-workflow/TEMPLATE-VERSION
+        tpl-sha256=9ea36c3dbf368467823773326eba8fd3175bf35ae23d3b459c2b238fa27e53d2
+        loc-sha256=b6ce7ea64ed70450956147fb95da541e981a4a3547f0a6ec45bec5286a7a4f1b
+        -> EXPECTED-DIFF:除 adopted 行外与 v1.0.0 全等 OK
+        -> adopted 整行严格匹配:[adopted: 2026-07-26]
+  .claude/hooks/gate-plan.sh
+        tpl-sha256=879a7ab139729af2bf98e56bbf3606e9a9fa96e8630632e65fa3b588e2b9d41b
+        loc-sha256=879a7ab139729af2bf98e56bbf3606e9a9fa96e8630632e65fa3b588e2b9d41b
+        -> IDENTICAL
+  .claude/hooks/gate-review.sh
+        tpl-sha256=c724067ac1fb57d74d60bb1e4c41e633e0cef04f09bec52af8c99920f5d78b1a
+        loc-sha256=c724067ac1fb57d74d60bb1e4c41e633e0cef04f09bec52af8c99920f5d78b1a
+        -> IDENTICAL
+  .claude/settings.json
+        tpl-sha256=0e1f9bf6eaf1def71c41fde003a903ccf4a10abf17d2cff0777dc44d7b6898f0
+        loc-sha256=0e1f9bf6eaf1def71c41fde003a903ccf4a10abf17d2cff0777dc44d7b6898f0
+        -> IDENTICAL
+  .claude/skills/rawf-implement/SKILL.md
+        tpl-sha256=d1340b8405fdbd2c9cc79457503e665441e071de15ff5818f466c1e1abce4800
+        loc-sha256=d1340b8405fdbd2c9cc79457503e665441e071de15ff5818f466c1e1abce4800
+        -> IDENTICAL
+  .claude/skills/rawf-plan/SKILL.md
+        tpl-sha256=e09b348629034f37ab222960b5880f56e094af14d2a2164d883220228b09e02c
+        loc-sha256=e09b348629034f37ab222960b5880f56e094af14d2a2164d883220228b09e02c
+        -> IDENTICAL
+  .claude/skills/rawf-report/SKILL.md
+        tpl-sha256=8bd1cfb1336a0467e0726c1b5c328f6b9444e7db50b5323bb38849e0bc805dbb
+        loc-sha256=8bd1cfb1336a0467e0726c1b5c328f6b9444e7db50b5323bb38849e0bc805dbb
+        -> IDENTICAL
+  .claude/skills/rawf-review/SKILL.md
+        tpl-sha256=fac6368f19602e7a3b242d33ae708523b4ae0643d0ba5dc96e1249cdefc86778
+        loc-sha256=fac6368f19602e7a3b242d33ae708523b4ae0643d0ba5dc96e1249cdefc86778
+        -> IDENTICAL
+  .claude/skills/rawf-stack-scrapy/SKILL.md
+        tpl-sha256=5f60fe624ab94f5ab1954cbc9153ad8edbc4c18fcd5ab7a52564c38a9c49d286
+        loc-sha256=<ABSENT>
+        -> EXPECTED-ABSENT(D-4:Scrapy 栈 skill 有意不引入)
+  .githooks/commit-msg
+        tpl-sha256=f5f50c5c846fb66a2db37f4db9eeb53f8644a4228c21b39965c3acfaf794dacb
+        loc-sha256=f5f50c5c846fb66a2db37f4db9eeb53f8644a4228c21b39965c3acfaf794dacb
+        -> IDENTICAL
+  .gitmessage
+        tpl-sha256=f349b2c108f2c95e6afe767f1719032ab3912a81dd40c03a9d52db04c95f2570
+        loc-sha256=f349b2c108f2c95e6afe767f1719032ab3912a81dd40c03a9d52db04c95f2570
+        -> IDENTICAL
+
+== 4. 反向:dopilot 侧多出的受管路径(模板 v1.0.0 无)==
+OK    无 UNEXPECTED-EXTRA
+
+== 5. 反向自检:D-1 断言必须能识破删了 4 行但不是那 4 行 ==
+  伪造 A(删 1 行 Scrapy + 3 行其它标准,共 4 行):
+  OK  伪造 A 被拒(逐字节断言生效)
+  伪造 B(删掉整块 4 行,但把其中 1 行改写后留在原处 —— 应同时触发有新增行与逐字节不等):
+  OK  伪造 B 被拒(逐字节断言生效)
+  反向自检结论:D-1 断言不是恒真通过
+
+== 6. 计数汇总(脚本现算,非预写死)==
+  IDENTICAL       : 19
+  EXPECTED-DIFF   : 2
+  EXPECTED-ABSENT : 1
+  UNEXPECTED-*    : 0
+
+RESULT: PASS —— 可整体替换类已完成对 v1.0.0 的全量基线对齐
+exit=0
