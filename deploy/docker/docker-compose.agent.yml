@@ -18,23 +18,31 @@
 #                           http://<server-ip-or-dns>:5000
 #                           http://dopilot-server.dopilot.svc.cluster.local:5000
 #                           https://dopilot.example.com
-#   REDIS_PASSWORD        Redis AUTH password of the server's Redis (used to build
+#   DOPILOT_REDIS_PASSWORD  Redis AUTH password of the server's Redis (used to build
 #                         the Redis URL below), OR set DOPILOT_REDIS_URL directly.
 #
 # Optional env:
 #   DOPILOT_REDIS_URL     Full Redis URL to the server's Redis. When set it wins
-#                         over the REDIS_PASSWORD/REDIS_HOST builder below, e.g.
+#                         over the DOPILOT_REDIS_PASSWORD/DOPILOT_REDIS_HOST
+#                         builder below, e.g.
 #                           redis://:<password>@<server-host>:6379/0
-#   REDIS_HOST            Hostname/IP of the server's Redis (default
+#   DOPILOT_REDIS_HOST    Hostname/IP of the server's Redis (default
 #                         host.docker.internal). Used only when DOPILOT_REDIS_URL
 #                         is not set.
-#   AGENT_ID             Stable agent id (default scrapy-agent-remote-1). Each
+#   DOPILOT_AGENT_ID      Stable agent id (default scrapy-agent-remote-1). Each
 #                         agent in a fleet needs a DISTINCT id.
+#
+# Every dopilot deployment env var is DOPILOT_-prefixed, including the ones this
+# file only consumes at the compose substitution layer. The bare generic names
+# (REDIS_PASSWORD / REDIS_HOST / AGENT_ID / AGENT_WORKDIR) are gone with NO
+# fallback — upgrading a deployment that used them means renaming them in .env
+# AND pulling the new image, since an old image's code still reads the old names
+# and would silently fall back to the baked TOML agent id.
 #
 # Deploy:
 #   cd deploy/docker
 #   DOPILOT_AGENT_TOKEN=<token-from-server> DOPILOT_SERVER_URL=http://<server-host>:5000 \
-#     REDIS_PASSWORD=<server-redis-pass> REDIS_HOST=<server-host> \
+#     DOPILOT_REDIS_PASSWORD=<server-redis-pass> DOPILOT_REDIS_HOST=<server-host> \
 #     docker compose -f docker-compose.agent.yml up -d
 #
 # Agents NEVER receive DOPILOT_ADMIN_API_TOKEN (admin-only) and this file sets no
@@ -60,12 +68,12 @@ services:
     init: true
     logging: *default-logging
     environment:
-      AGENT_ID: ${AGENT_ID:-scrapy-agent-remote-1}
-      AGENT_WORKDIR: /agent-data
+      DOPILOT_AGENT_ID: ${DOPILOT_AGENT_ID:-scrapy-agent-remote-1}
+      DOPILOT_AGENT_WORKDIR: /agent-data
       # Connect to the REMOTE server's Redis. DOPILOT_REDIS_URL wins; otherwise it
-      # is built from REDIS_PASSWORD (required) + REDIS_HOST (default
-      # host.docker.internal).
-      DOPILOT_REDIS_URL: ${DOPILOT_REDIS_URL:-redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD or DOPILOT_REDIS_URL}@${REDIS_HOST:-host.docker.internal}:6379/0}
+      # is built from DOPILOT_REDIS_PASSWORD (required) + DOPILOT_REDIS_HOST
+      # (default host.docker.internal).
+      DOPILOT_REDIS_URL: ${DOPILOT_REDIS_URL:-redis://:${DOPILOT_REDIS_PASSWORD:?set DOPILOT_REDIS_PASSWORD or DOPILOT_REDIS_URL}@${DOPILOT_REDIS_HOST:-host.docker.internal}:6379/0}
       # The single server<->agent machine token. REQUIRED — no dev fallback. Must
       # match the server's token; agents never get DOPILOT_ADMIN_API_TOKEN.
       DOPILOT_AGENT_TOKEN: ${DOPILOT_AGENT_TOKEN:?set DOPILOT_AGENT_TOKEN to the server's machine token (docker compose -f docker-compose.server.yml exec server dopilot-server agent-token print)}

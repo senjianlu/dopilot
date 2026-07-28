@@ -96,7 +96,7 @@ cat > .env <<'EOF'
 DOPILOT_ADMIN_PASSWORD=replace-with-admin-login-password
 DOPILOT_ADMIN_API_TOKEN=replace-with-long-random-token
 DOPILOT_AGENT_TOKEN=replace-with-long-random-agent-token
-REDIS_PASSWORD=replace-with-redis-password
+DOPILOT_REDIS_PASSWORD=replace-with-redis-password
 EOF
 docker compose pull
 docker compose up -d
@@ -105,6 +105,15 @@ docker compose up -d
 随后 server 可在 **http://localhost:5000** 访问（Web UI 与 API）。server 仅支持
 单副本运行（进程内调度器 + 进程内 SSE 表）。可用 `DOPILOT_IMAGE` 覆盖镜像（默认
 `rabbir/dopilot:latest`）。
+
+**dopilot 的所有环境变量一律以 `DOPILOT_` 开头**，包括只在 compose 变量替换层
+消费的（`DOPILOT_REDIS_PASSWORD`、`DOPILOT_REDIS_HOST`）与 agent 身份相关的
+（`DOPILOT_AGENT_ID`、`DOPILOT_AGENT_WORKDIR`）。不带前缀的通用名会被宿主机上
+其他服务的同名变量静默继承，从而串改 Redis 连接串或 agent 身份。若你此前部署的
+版本仍在用裸名（`REDIS_PASSWORD`、`REDIS_HOST`、`AGENT_ID`、`AGENT_WORKDIR`），
+请在 `.env` / 清单里改名，并**同时** `docker compose pull`：旧名没有兜底，而旧
+镜像里的代码只认旧名——配上新 compose 会回落到烤进镜像的 TOML agent id，导致
+一体栈里三个 agent 共用同一 id。
 
 API 客户端最简单的方式是用静态 admin API token：直接把 `DOPILOT_ADMIN_API_TOKEN`
 作为 Bearer token 调用，无需登录：
@@ -161,7 +170,7 @@ docker compose -f docker-compose.server.yml exec server dopilot-server agent-tok
 # token 鉴权不等于传输加密，跨主机 HTTP 仍需私网 / VPN / TLS / 反代。
 # agent 绝不接收 DOPILOT_ADMIN_API_TOKEN。
 DOPILOT_AGENT_TOKEN=<token-from-server> DOPILOT_SERVER_URL=http://<server-host>:5000 \
-  REDIS_PASSWORD=<server-redis-pass> REDIS_HOST=<server-host> \
+  DOPILOT_REDIS_PASSWORD=<server-redis-pass> DOPILOT_REDIS_HOST=<server-host> \
   docker compose -f docker-compose.agent.yml up -d
 ```
 

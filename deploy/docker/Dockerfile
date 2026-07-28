@@ -116,7 +116,7 @@ COPY apps/server/migrations ./migrations
 # (dopilot-server -> /app/configs/server.toml, dopilot-agent ->
 # /app/configs/agent.toml), so there is NO global DOPILOT_CONFIG env (which would
 # wrongly make the agent read the server TOML). compose env vars override
-# per-agent fields like AGENT_ID. Advanced deployments may mount their own TOML
+# per-agent fields like DOPILOT_AGENT_ID. Advanced deployments may mount their own TOML
 # over these baked paths; compose uses environment overrides for normal changes.
 RUN mkdir -p /app/configs
 COPY configs/server.docker.toml ./configs/server.toml
@@ -129,7 +129,7 @@ COPY --from=web-build /build/apps/web/out ./web
 
 ENV DOPILOT_WEB_DIST=/app/web
 ENV DOPILOT_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
-ENV AGENT_WORKDIR=/agent-data
+ENV DOPILOT_AGENT_WORKDIR=/agent-data
 
 RUN mkdir -p /agent-data /server-data
 VOLUME ["/agent-data", "/server-data"]

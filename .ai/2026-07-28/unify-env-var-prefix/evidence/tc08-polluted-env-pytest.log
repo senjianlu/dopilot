@@ -1,0 +1,8 @@
+# TC-08:故意用常规部署变量污染环境跑全量 agent 测试;判别力见 tc08-reverse-selfcheck.log。PYTHONPATH=/home/rabbir/Projects/dopilot/apps/agent:/home/rabbir/Projects/dopilot/packages/protocol:/home/rabbir/Projects/dopilot/apps/server
+$ cd /home/rabbir/Projects/dopilot
+$ 'env' 'DOPILOT_AGENT_ID=polluted' 'DOPILOT_AGENT_WORKDIR=/polluted' 'DOPILOT_REDIS_PASSWORD=polluted' 'PYTHONPATH=/home/rabbir/Projects/dopilot/apps/agent:/home/rabbir/Projects/dopilot/packages/protocol:/home/rabbir/Projects/dopilot/apps/server' '.venv/bin/python' '-m' 'pytest' 'apps/agent' '-q'
+........................................................................ [ 49%]
+........................................................................ [ 99%]
+.                                                                        [100%]
+145 passed in 3.53s
+EXIT=0

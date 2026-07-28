@@ -56,7 +56,7 @@ spec:
               - matchExpressions:
                   - key: node-role.kubernetes.io/control-plane
                     operator: DoesNotExist
-        # One agent per node: distinct AGENT_ID (pod name) per host so their
+        # One agent per node: distinct DOPILOT_AGENT_ID (pod name) per host so their
         # local-disk working sets never collide.
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -73,11 +73,15 @@ spec:
           command: ["dopilot-agent"]
           env:
             # Stable, unique agent id per pod: dopilot-agent-0 / -1 / ...
-            - name: AGENT_ID
+            # Every dopilot env var is DOPILOT_-prefixed; the bare AGENT_ID /
+            # AGENT_WORKDIR names are gone with no fallback (an unprefixed generic
+            # name can be inherited from the node/sidecar environment and would
+            # silently rewrite this agent's identity).
+            - name: DOPILOT_AGENT_ID
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: AGENT_WORKDIR
+            - name: DOPILOT_AGENT_WORKDIR
               value: /agent-data
             # REQUIRED: the server's HTTP base URL for heartbeat + artifact/wheel
             # fetch. The baked default http://server:5000 only resolves inside the

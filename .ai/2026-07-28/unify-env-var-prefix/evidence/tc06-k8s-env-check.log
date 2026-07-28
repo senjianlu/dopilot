@@ -1,0 +1,25 @@
+# TC-06:K8s StatefulSet env 键名 + fieldRef 关联 + 反向自检
+$ cd /home/rabbir/Projects/dopilot
+$ 'bash' '.ai/2026-07-28/unify-env-var-prefix/evidence/tc06-k8s-env-check.sh'
+== 1. env 键名原文(含上下文) ==
+    80:            - name: DOPILOT_AGENT_ID
+    81-              valueFrom:
+    82-                fieldRef:
+    83-                  fieldPath: metadata.name
+    84:            - name: DOPILOT_AGENT_WORKDIR
+    85-              value: /agent-data
+    86-            # REQUIRED: the server's HTTP base URL for heartbeat + artifact/wheel
+    87-            # fetch. The baked default http://server:5000 only resolves inside the
+
+== 2. 断言 ==
+PASS  存在 DOPILOT_AGENT_ID
+PASS  存在 DOPILOT_AGENT_WORKDIR
+PASS  DOPILOT_AGENT_ID 仍由 fieldRef metadata.name 取值(每 Pod 唯一 id 未丢)
+PASS  DOPILOT_AGENT_WORKDIR 值仍为 /agent-data
+PASS  无裸旧键
+
+== 3. 反向自检:把新键改回旧名的副本必须被上面的断言判失败 ==
+PASS  裸旧键检测在回退副本上确实命中(断言有效,非恒真)
+
+RESULT: PASS
+EXIT=0

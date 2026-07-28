@@ -1,0 +1,17 @@
+# TC-05:缺 DOPILOT_REDIS_PASSWORD 时 compose :? 快速失败
+$ cd /home/rabbir/Projects/dopilot
+$ 'bash' '.ai/2026-07-28/unify-env-var-prefix/evidence/tc05-compose-failfast.sh'
+== 1. 两者皆缺(期望非 0 退出 + 点名 DOPILOT_REDIS_PASSWORD) ==
+    error while interpolating services.scrapy-agent-remote-1.environment.DOPILOT_REDIS_URL: required variable DOPILOT_REDIS_PASSWORD is missing a value: set DOPILOT_REDIS_PASSWORD or DOPILOT_REDIS_URL
+  退出码=1
+PASS  缺 DOPILOT_REDIS_PASSWORD 时快速失败
+PASS  错误信息点名 DOPILOT_REDIS_PASSWORD
+PASS  错误信息不含裸旧名
+
+== 2. 对照:补 DOPILOT_REDIS_URL 后应解析成功 ==
+          DOPILOT_REDIS_URL: redis://:pw@h:6379/0
+  退出码=0
+PASS  补 DOPILOT_REDIS_URL 即解除 => :? 仅在两者皆缺时触发
+
+RESULT: PASS
+EXIT=0

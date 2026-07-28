@@ -104,7 +104,7 @@ cat > .env <<'EOF'
 DOPILOT_ADMIN_PASSWORD=replace-with-admin-login-password
 DOPILOT_ADMIN_API_TOKEN=replace-with-long-random-token
 DOPILOT_AGENT_TOKEN=replace-with-long-random-agent-token
-REDIS_PASSWORD=replace-with-redis-password
+DOPILOT_REDIS_PASSWORD=replace-with-redis-password
 EOF
 docker compose pull
 docker compose up -d
@@ -113,6 +113,18 @@ docker compose up -d
 The server is then reachable at **http://localhost:5000** (web UI and API). The
 server runs single-replica only (in-process scheduler + in-memory SSE tables).
 Override the image with `DOPILOT_IMAGE` (default `rabbir/dopilot:latest`).
+
+**Every dopilot environment variable is `DOPILOT_`-prefixed**, including the ones
+the compose files only consume at the variable-substitution layer
+(`DOPILOT_REDIS_PASSWORD`, `DOPILOT_REDIS_HOST`) and the agent identity
+(`DOPILOT_AGENT_ID`, `DOPILOT_AGENT_WORKDIR`). Unprefixed generic names are
+inherited from whatever else the host exports, which would silently rewrite the
+Redis URL or an agent's identity. If you deployed a build that still used the
+bare names (`REDIS_PASSWORD`, `REDIS_HOST`, `AGENT_ID`, `AGENT_WORKDIR`), rename
+them in your `.env` / manifests **and** `docker compose pull` in the same step:
+they have no fallback, and an old image's code only reads the old names — with
+the new compose file it would fall back to the baked TOML agent id, giving every
+agent in the all-in-one stack the same id.
 
 For API clients, the simplest path is the static admin API token: present
 `DOPILOT_ADMIN_API_TOKEN` directly as a Bearer token, no login round-trip:
@@ -178,7 +190,7 @@ docker compose -f docker-compose.server.yml exec server dopilot-server agent-tok
 # cross-host HTTP still needs a private network / VPN / TLS / reverse proxy.
 # Agents never receive DOPILOT_ADMIN_API_TOKEN.
 DOPILOT_AGENT_TOKEN=<token-from-server> DOPILOT_SERVER_URL=http://<server-host>:5000 \
-  REDIS_PASSWORD=<server-redis-pass> REDIS_HOST=<server-host> \
+  DOPILOT_REDIS_PASSWORD=<server-redis-pass> DOPILOT_REDIS_HOST=<server-host> \
   docker compose -f docker-compose.agent.yml up -d
 ```
 

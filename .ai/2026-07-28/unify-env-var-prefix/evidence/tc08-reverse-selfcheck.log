@@ -1,0 +1,43 @@
+# TC-08b:回退隔离元组后锚点用例必须失败(证明 TC-08 非恒真)
+$ cd /home/rabbir/Projects/dopilot
+$ 'bash' '.ai/2026-07-28/unify-env-var-prefix/evidence/tc08-reverse-selfcheck.sh'
+== 0. 基线:改动后的工作区,在污染环境下该锚点用例必须通过 ==
+.                                                                        [100%]
+1 passed in 0.01s
+  退出码=0
+PASS  现状下锚点用例通过(隔离有效)
+
+== 1. 回退副本:把隔离元组改回旧名 ==
+    37:    for var in ("AGENT_ID", "AGENT_WORKDIR", "DOPILOT_AGENT_TOKEN"):
+PASS  副本已回退为旧名
+
+== 2. 污染环境下重跑锚点用例(期望失败) ==
+        # helper must clear them and leave the test TOML as the only input. This
+        # asserts the CONFIG-LOAD stage, not hc.main(): with the overrides leaking in,
+        # the agent_id-less TOML below loads fine (id taken from the environment) yet
+        # test_healthcheck_fails_on_bad_config still returns 1 via the scrapyd probe
+        # that follows — its exit code alone cannot reveal the lost isolation.
+        monkeypatch.setenv("DOPILOT_AGENT_ID", "polluted")
+        monkeypatch.setenv("DOPILOT_AGENT_WORKDIR", "/polluted")
+        cfg = tmp_path / "agent.toml"
+        cfg.write_text('[agent]\n# missing agent_id\n', encoding="utf-8")
+        _use_config(monkeypatch, cfg)
+    
+>       with pytest.raises(ConfigError):
+E       Failed: DID NOT RAISE ConfigError
+
+apps/agent/tests/test_healthcheck.py:116: Failed
+=========================== short test summary info ============================
+FAILED apps/agent/tests/test_healthcheck.py::test_use_config_isolates_deployment_env_overrides
+1 failed in 0.07s
+  退出码=1
+PASS  回退副本在污染环境下确实失败 => 该断言有判别力,不是恒真
+
+== 3. 还原并与运行前校验和比对 ==
+  before=24b7cca3f547871ccbf45edec32c78e64a569a830ee1506c3c89eb4bdb013627  -
+  after =24b7cca3f547871ccbf45edec32c78e64a569a830ee1506c3c89eb4bdb013627  -
+PASS  apps/agent/tests/test_healthcheck.py 已按运行前内容还原
+PASS  隔离元组仍为新名
+
+RESULT: PASS
+EXIT=0

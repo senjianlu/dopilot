@@ -1,0 +1,5 @@
+# TC-07(前半):ruff
+$ cd /home/rabbir/Projects/dopilot
+$ '.venv/bin/python' '-m' 'ruff' 'check' 'apps' 'packages'
+All checks passed!
+EXIT=0

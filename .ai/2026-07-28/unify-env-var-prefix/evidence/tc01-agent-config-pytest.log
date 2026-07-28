@@ -1,0 +1,36 @@
+# TC-01/TC-02:agent 配置加载器用例(含 TC-02 反向用例 test_legacy_unprefixed_env_names_have_no_effect)。PYTHONPATH=/home/rabbir/Projects/dopilot/apps/agent:/home/rabbir/Projects/dopilot/packages/protocol:/home/rabbir/Projects/dopilot/apps/server
+$ cd /home/rabbir/Projects/dopilot
+$ 'env' '-u' 'DOPILOT_AGENT_ID' '-u' 'DOPILOT_AGENT_WORKDIR' 'PYTHONPATH=/home/rabbir/Projects/dopilot/apps/agent:/home/rabbir/Projects/dopilot/packages/protocol:/home/rabbir/Projects/dopilot/apps/server' '.venv/bin/python' '-m' 'pytest' 'apps/agent/tests/test_config.py' '-v'
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot/apps/agent
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 21 items
+
+apps/agent/tests/test_config.py::test_loads_from_toml PASSED             [  4%]
+apps/agent/tests/test_config.py::test_redis_defaults_when_section_absent PASSED [  9%]
+apps/agent/tests/test_config.py::test_redis_url_env_override PASSED      [ 14%]
+apps/agent/tests/test_config.py::test_server_url_env_override PASSED     [ 19%]
+apps/agent/tests/test_config.py::test_server_url_keeps_toml_without_env PASSED [ 23%]
+apps/agent/tests/test_config.py::test_scrapyd_defaults_when_section_absent PASSED [ 28%]
+apps/agent/tests/test_config.py::test_agent_id_env_override PASSED       [ 33%]
+apps/agent/tests/test_config.py::test_workdir_env_override PASSED        [ 38%]
+apps/agent/tests/test_config.py::test_legacy_unprefixed_env_names_have_no_effect PASSED [ 42%]
+apps/agent/tests/test_config.py::test_missing_config_raises PASSED       [ 47%]
+apps/agent/tests/test_config.py::test_missing_file_raises PASSED         [ 52%]
+apps/agent/tests/test_config.py::test_agent_token_env_populates_field PASSED [ 57%]
+apps/agent/tests/test_config.py::test_admin_api_token_ignored_for_machine_auth PASSED [ 61%]
+apps/agent/tests/test_config.py::test_old_split_machine_token_envs_have_no_effect PASSED [ 66%]
+apps/agent/tests/test_config.py::test_old_admin_api_secret_env_is_ignored PASSED [ 71%]
+apps/agent/tests/test_config.py::test_agent_token_env_wins_over_toml PASSED [ 76%]
+apps/agent/tests/test_config.py::test_no_machine_auth_without_agent_token PASSED [ 80%]
+apps/agent/tests/test_config.py::test_short_agent_token_raises PASSED    [ 85%]
+apps/agent/tests/test_config.py::test_short_agent_token_env_raises PASSED [ 90%]
+apps/agent/tests/test_config.py::test_default_path_used_when_no_explicit_or_env PASSED [ 95%]
+apps/agent/tests/test_config.py::test_env_config_wins_over_default_path PASSED [100%]
+
+============================== 21 passed in 0.06s ==============================
+EXIT=0

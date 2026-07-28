@@ -1,0 +1,18 @@
+# TC-09/TC-09b:runtime context 覆盖优先于继承的 agent 进程环境 + 非平凡性对照。PYTHONPATH=/home/rabbir/Projects/dopilot/apps/agent:/home/rabbir/Projects/dopilot/packages/protocol:/home/rabbir/Projects/dopilot/apps/server
+$ cd /home/rabbir/Projects/dopilot
+$ 'env' 'PYTHONPATH=/home/rabbir/Projects/dopilot/apps/agent:/home/rabbir/Projects/dopilot/packages/protocol:/home/rabbir/Projects/dopilot/apps/server' '.venv/bin/python' '-m' 'pytest' 'apps/agent/tests/test_python_wheel.py' '-v' '-k' 'runtime_context or inherit'
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot/apps/agent
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 25 items / 22 deselected / 3 selected
+
+apps/agent/tests/test_python_wheel.py::test_wheel_run_injects_runtime_context_env_last PASSED [ 33%]
+apps/agent/tests/test_python_wheel.py::test_wheel_run_runtime_context_beats_inherited_agent_env PASSED [ 66%]
+apps/agent/tests/test_python_wheel.py::test_wheel_run_inherits_agent_env_without_runtime_context PASSED [100%]
+
+======================= 3 passed, 22 deselected in 0.10s =======================
+EXIT=0

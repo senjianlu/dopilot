@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 import pytest
 from dopilot_agent import healthcheck as hc
+from dopilot_agent.config.loader import ConfigError, load_settings
 from dopilot_agent.scrapyd import client as scrapyd_client
 
 
@@ -29,7 +30,11 @@ def _write_config(tmp_path: Path, *, start: bool) -> Path:
 
 def _use_config(monkeypatch: pytest.MonkeyPatch, cfg: Path) -> None:
     monkeypatch.setenv("DOPILOT_CONFIG", str(cfg))
-    for var in ("AGENT_ID", "AGENT_WORKDIR", "DOPILOT_AGENT_TOKEN"):
+    # Clear the deployment env overrides so the test TOML is the only input: a
+    # host that already exports these (the normal deployment case) would
+    # otherwise rewrite agent_id/workdir and could make the "missing agent_id
+    # must fail" case pass for the wrong reason.
+    for var in ("DOPILOT_AGENT_ID", "DOPILOT_AGENT_WORKDIR", "DOPILOT_AGENT_TOKEN"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -91,3 +96,22 @@ def test_healthcheck_fails_on_bad_config(
     cfg.write_text('[agent]\n# missing agent_id\n', encoding="utf-8")
     _use_config(monkeypatch, cfg)
     assert hc.main() == 1
+
+
+def test_use_config_isolates_deployment_env_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A deployed host exports DOPILOT_AGENT_ID / DOPILOT_AGENT_WORKDIR, so the
+    # helper must clear them and leave the test TOML as the only input. This
+    # asserts the CONFIG-LOAD stage, not hc.main(): with the overrides leaking in,
+    # the agent_id-less TOML below loads fine (id taken from the environment) yet
+    # test_healthcheck_fails_on_bad_config still returns 1 via the scrapyd probe
+    # that follows — its exit code alone cannot reveal the lost isolation.
+    monkeypatch.setenv("DOPILOT_AGENT_ID", "polluted")
+    monkeypatch.setenv("DOPILOT_AGENT_WORKDIR", "/polluted")
+    cfg = tmp_path / "agent.toml"
+    cfg.write_text('[agent]\n# missing agent_id\n', encoding="utf-8")
+    _use_config(monkeypatch, cfg)
+
+    with pytest.raises(ConfigError):
+        load_settings()
