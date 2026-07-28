@@ -14,7 +14,7 @@ server 侧的部署仍走
 
 | 文件 | 内容 |
 |---|---|
-| `statefulset.yaml` | Namespace `dopilot` + StatefulSet `dopilot-agent`(单容器、hostNetwork、控制面排除 + 每节点一实例反亲和、exec 探针、`AGENT_ID` 取 pod 名、20Gi PVC volumeClaimTemplate) |
+| `statefulset.yaml` | Namespace `dopilot` + StatefulSet `dopilot-agent`(单容器、hostNetwork、控制面排除 + 每节点一实例反亲和、exec 探针、`DOPILOT_AGENT_ID` 取 pod 名、20Gi PVC volumeClaimTemplate) |
 | `secret.example.yaml` | Secret `dopilot-agent` 占位示例(`agent-token` / `redis-url`);**填真值的副本绝不入库** |
 
 ## 部署

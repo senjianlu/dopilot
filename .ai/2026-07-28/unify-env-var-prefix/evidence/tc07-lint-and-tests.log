@@ -1,0 +1,8 @@
+# TC-07(后半):agent + protocol 全量测试。PYTHONPATH=/home/rabbir/Projects/dopilot/apps/agent:/home/rabbir/Projects/dopilot/packages/protocol:/home/rabbir/Projects/dopilot/apps/server;ruff 结果见 tc07-lint.log
+$ cd /home/rabbir/Projects/dopilot
+$ 'env' '-u' 'DOPILOT_AGENT_ID' '-u' 'DOPILOT_AGENT_WORKDIR' 'PYTHONPATH=/home/rabbir/Projects/dopilot/apps/agent:/home/rabbir/Projects/dopilot/packages/protocol:/home/rabbir/Projects/dopilot/apps/server' '.venv/bin/python' '-m' 'pytest' 'apps/agent' 'packages/protocol' '-q'
+........................................................................ [ 33%]
+........................................................................ [ 67%]
+......................................................................   [100%]
+214 passed in 3.48s
+EXIT=0

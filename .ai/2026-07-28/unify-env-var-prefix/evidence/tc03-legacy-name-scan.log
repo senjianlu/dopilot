@@ -1,0 +1,94 @@
+# TC-03:旧名收口检查,5 组断言 + 反向自检(契约见 plan.md 3.1 修订版)
+$ cd /home/rabbir/Projects/dopilot
+$ 'bash' '.ai/2026-07-28/unify-env-var-prefix/evidence/tc03-legacy-name-scan.sh'
+== ① 正则自检 ==
+    1:AGENT_ID
+    4:REDIS_PASSWORD
+PASS  ANY_OLD 只命中裸旧名(第 1、4 行;不误伤 DOPILOT_ 前缀名与 AGENT_IDS)
+
+  USE_OLD 正样本(6 种使用形态,应逐条命中):
+    1:  DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-x}@redis:6379/0
+    2:      AGENT_ID: scrapy-agent-1
+    3:            - name: AGENT_WORKDIR
+    4:  REDIS_PASSWORD=<server-redis-pass> \
+    5:    env_agent_id = os.environ.get("AGENT_ID")
+    6:ENV AGENT_WORKDIR /agent-data
+PASS  6 种使用形态全部命中
+
+  USE_OLD 负样本(散文 / markdown 反引号 / 新名,应全部不命中):
+PASS  负样本全部未命中(反引号/散文归入第 ③④ 组判定)
+
+== ② 使用形态残留必须为 0 ==
+PASS  扫描范围内无旧名以使用形态残留
+
+== ③ 逐文件旧名→新名映射断言(任意形态,含 markdown 反引号) ==
+  apps/agent/dopilot_agent/config/loader.py      AGENT_ID         HEAD旧名=2 -> 现新名=3
+  apps/agent/dopilot_agent/config/loader.py      AGENT_WORKDIR    HEAD旧名=2 -> 现新名=2
+  apps/agent/tests/test_config.py                AGENT_ID         HEAD旧名=11 -> 现新名=12
+  apps/agent/tests/test_config.py                AGENT_WORKDIR    HEAD旧名=11 -> 现新名=12
+  apps/agent/tests/test_healthcheck.py           AGENT_ID         HEAD旧名=1 -> 现新名=3
+  apps/agent/tests/test_healthcheck.py           AGENT_WORKDIR    HEAD旧名=1 -> 现新名=3
+  apps/agent/tests/test_python_wheel.py          AGENT_ID         HEAD旧名=12 -> 现新名=5
+  deploy/docker/Dockerfile                       AGENT_ID         HEAD旧名=1 -> 现新名=1
+  deploy/docker/Dockerfile                       AGENT_WORKDIR    HEAD旧名=1 -> 现新名=1
+  deploy/docker/docker-compose.yml               AGENT_ID         HEAD旧名=5 -> 现新名=5
+  deploy/docker/docker-compose.yml               AGENT_WORKDIR    HEAD旧名=4 -> 现新名=4
+  deploy/docker/docker-compose.yml               REDIS_PASSWORD   HEAD旧名=8 -> 现新名=8
+  deploy/docker/docker-compose.server.yml        REDIS_PASSWORD   HEAD旧名=4 -> 现新名=4
+  deploy/docker/docker-compose.agent.yml         AGENT_ID         HEAD旧名=3 -> 现新名=3
+  deploy/docker/docker-compose.agent.yml         AGENT_WORKDIR    HEAD旧名=1 -> 现新名=1
+  deploy/docker/docker-compose.agent.yml         REDIS_PASSWORD   HEAD旧名=6 -> 现新名=6
+  deploy/docker/docker-compose.agent.yml         REDIS_HOST       HEAD旧名=5 -> 现新名=5
+  deploy/kubernetes/agent/statefulset.yaml       AGENT_ID         HEAD旧名=2 -> 现新名=2
+  deploy/kubernetes/agent/statefulset.yaml       AGENT_WORKDIR    HEAD旧名=1 -> 现新名=1
+  deploy/kubernetes/agent/README.md              AGENT_ID         HEAD旧名=1 -> 现新名=1
+  docs/architecture/04-configuration.md          (HEAD 无旧名,无需映射)
+  README.md                                      REDIS_PASSWORD   HEAD旧名=2 -> 现新名=3
+  README.md                                      REDIS_HOST       HEAD旧名=1 -> 现新名=2
+  README.zh-CN.md                                REDIS_PASSWORD   HEAD旧名=2 -> 现新名=3
+  README.zh-CN.md                                REDIS_HOST       HEAD旧名=1 -> 现新名=2
+
+== ④ 废弃说明预算:裸旧名出现次数 <= 声明预算,预算外文件为 0 ==
+  README.md                                      裸旧名出现=4  预算=4
+  README.zh-CN.md                                裸旧名出现=4  预算=4
+  apps/agent/dopilot_agent/config/loader.py      裸旧名出现=2  预算=2
+  deploy/docker/docker-compose.agent.yml         裸旧名出现=4  预算=4
+  deploy/docker/docker-compose.server.yml        裸旧名出现=1  预算=1
+  deploy/docker/docker-compose.yml               裸旧名出现=2  预算=2
+  deploy/kubernetes/agent/statefulset.yaml       裸旧名出现=2  预算=2
+  docs/architecture/04-configuration.md          裸旧名出现=2  预算=2
+  逐行清单(供复核每处提及是否确为废弃说明):
+    deploy/docker/docker-compose.agent.yml:37:# (REDIS_PASSWORD / REDIS_HOST / AGENT_ID / AGENT_WORKDIR) are gone with NO
+    deploy/docker/docker-compose.yml:50:#   (REDIS_PASSWORD, AGENT_ID, ...) are gone with no fallback: they collide with
+    deploy/docker/docker-compose.server.yml:43:#   (REDIS_PASSWORD, ...) are gone with no fallback.
+    deploy/kubernetes/agent/statefulset.yaml:76:            # Every dopilot env var is DOPILOT_-prefixed; the bare AGENT_ID /
+    deploy/kubernetes/agent/statefulset.yaml:77:            # AGENT_WORKDIR names are gone with no fallback (an unprefixed generic
+    docs/architecture/04-configuration.md:22:`DOPILOT_REDIS_HOST`)。不带前缀的通用名(`REDIS_PASSWORD`、`AGENT_ID` 之类)
+    apps/agent/dopilot_agent/config/loader.py:89:    # Every deployment env override is DOPILOT_-prefixed (no bare AGENT_ID /
+    apps/agent/dopilot_agent/config/loader.py:90:    # AGENT_WORKDIR): unprefixed generic names are silently inherited from an
+    README.md:123:bare names (`REDIS_PASSWORD`, `REDIS_HOST`, `AGENT_ID`, `AGENT_WORKDIR`), rename
+    README.zh-CN.md:113:版本仍在用裸名（`REDIS_PASSWORD`、`REDIS_HOST`、`AGENT_ID`、`AGENT_WORKDIR`），
+PASS  所有文件均在预算内(预算外文件裸旧名为 0)
+
+== ⑤ agent 测试目录:含旧名的文件集合必须与允许清单相等 ==
+  实际:
+    apps/agent/tests/test_command_consumer.py
+    apps/agent/tests/test_config.py
+    apps/agent/tests/test_event_outbox.py
+    apps/agent/tests/test_log_publisher.py
+    apps/agent/tests/test_python_wheel.py
+  允许:
+    apps/agent/tests/test_command_consumer.py
+    apps/agent/tests/test_config.py
+    apps/agent/tests/test_event_outbox.py
+    apps/agent/tests/test_log_publisher.py
+    apps/agent/tests/test_python_wheel.py
+PASS  测试目录集合相等
+PASS  test_healthcheck 隔离元组已改新名
+
+== ⑥ 反向自检:第 ③ 组断言对回退副本必须报错(证明非恒真) ==
+  回退副本(把反引号里的名字改回旧名):HEAD旧名=1 -> 现新名=0
+PASS  第 ③ 组会对该副本判 FAIL => R-03 的反引号盲区确已修掉
+
+RESULT: PASS
+EXIT=0

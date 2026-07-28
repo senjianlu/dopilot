@@ -281,6 +281,62 @@ async def test_wheel_run_injects_runtime_context_env_last(workdir, fake_redis):
     assert "forged" not in merged
 
 
+async def test_wheel_run_runtime_context_beats_inherited_agent_env(
+    workdir, fake_redis, monkeypatch
+):
+    # DOPILOT_AGENT_ID is BOTH the agent's own config override (compose / K8s set
+    # it on the agent process) and the runtime-context key handed to workloads.
+    # The two carry the same fact and agree by construction, but the child must
+    # take the runtime-context value regardless of what the agent process
+    # inherited — the runner overlays dopilot-owned context last.
+    monkeypatch.setenv("DOPILOT_AGENT_ID", "inherited-wrong")
+    fake = fake_redis()
+    store, _r, _wr, _cache, consumer, _s = _build(workdir, fake)
+    await consumer.setup()
+
+    ctx = DopilotRuntimeContext(
+        task_id="t-inherit",
+        execution_id="w-inherit",
+        agent_id=AGENT_ID,
+        artifact_type="python_wheel",
+        task_type="python_wheel",
+        source="manual",
+    )
+    cmd = _wheel_cmd(
+        execution_id="w-inherit",
+        task_id="t-inherit",
+        shell_command='echo "AGENT=$DOPILOT_AGENT_ID"',
+    )
+    cmd.payload["runtime_context"] = ctx.model_dump()
+    await fake.xadd(STREAM, to_stream_entry(cmd))
+    await consumer.drain_once()
+    await _settle(consumer)
+
+    merged = Path(store.read("w-inherit").log_path).read_text(encoding="utf-8")
+    assert f"AGENT={AGENT_ID}" in merged
+    assert "inherited-wrong" not in merged
+
+
+async def test_wheel_run_inherits_agent_env_without_runtime_context(
+    workdir, fake_redis, monkeypatch
+):
+    # Companion to the test above: the agent's process env DOES reach the child
+    # (the runner starts from dict(os.environ)), so the assertion there really is
+    # about overlay precedence and not about the value being unreachable.
+    monkeypatch.setenv("DOPILOT_AGENT_ID", "inherited-wrong")
+    fake = fake_redis()
+    store, _r, _wr, _cache, consumer, _s = _build(workdir, fake)
+    await consumer.setup()
+
+    cmd = _wheel_cmd(shell_command='echo "AGENT=$DOPILOT_AGENT_ID"')
+    await fake.xadd(STREAM, to_stream_entry(cmd))
+    await consumer.drain_once()
+    await _settle(consumer)
+
+    merged = Path(store.read("w1").log_path).read_text(encoding="utf-8")
+    assert "AGENT=inherited-wrong" in merged
+
+
 async def test_wheel_run_working_dir_escape_emits_failed(workdir, fake_redis):
     fake = fake_redis()
     store, _r, _wr, _c, consumer, _s = _build(workdir, fake)

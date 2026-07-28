@@ -56,7 +56,8 @@ def load_settings(
     ``DOPILOT_CONFIG`` environment variable, then ``default_path`` (``main()``
     passes the baked agent default so the image runs without an explicit
     ``DOPILOT_CONFIG``). Environment overrides applied after parsing:
-    ``AGENT_ID`` -> ``[agent].agent_id``, ``AGENT_WORKDIR`` -> ``[agent].workdir``,
+    ``DOPILOT_AGENT_ID`` -> ``[agent].agent_id``, ``DOPILOT_AGENT_WORKDIR`` ->
+    ``[agent].workdir``,
     ``DOPILOT_SERVER_URL`` -> ``[agent].server_url`` (the server HTTP base URL the
     agent uses for heartbeat and artifact/wheel fetch; needed by agent-only / K3s
     deployments where the baked ``http://server:5000`` does not resolve),
@@ -85,10 +86,21 @@ def load_settings(
     scrapyd_section: dict[str, Any] = dict(data.get("scrapyd") or {})
     redis_section: dict[str, Any] = dict(data.get("redis") or {})
 
-    env_agent_id = os.environ.get("AGENT_ID")
+    # Every deployment env override is DOPILOT_-prefixed (no bare AGENT_ID /
+    # AGENT_WORKDIR): unprefixed generic names are silently inherited from an
+    # unrelated service on the same host / sidecar and would then rewrite this
+    # agent's identity or working set.
+    #
+    # ``DOPILOT_AGENT_ID`` deliberately reuses the name that
+    # dopilot_protocol.execution exposes to user workloads as the runtime-context
+    # agent id: both carry the SAME fact ("the id of this agent"), and they agree
+    # by construction because an agent only consumes the command stream addressed
+    # to its own id. Job children still take the runtime-context value — the
+    # wheel runner overlays it last over the inherited process env.
+    env_agent_id = os.environ.get("DOPILOT_AGENT_ID")
     if env_agent_id:
         agent_section["agent_id"] = env_agent_id
-    env_workdir = os.environ.get("AGENT_WORKDIR")
+    env_workdir = os.environ.get("DOPILOT_AGENT_WORKDIR")
     if env_workdir:
         agent_section["workdir"] = env_workdir
     # Server HTTP base URL (heartbeat + artifact/wheel fetch): env wins over TOML.

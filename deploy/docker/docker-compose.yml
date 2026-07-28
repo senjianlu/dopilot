@@ -43,7 +43,13 @@
 #                                non-empty value must be >= 16 characters; leave
 #                                unset to disable machine auth. Agents never
 #                                receive DOPILOT_ADMIN_API_TOKEN.
-#     REDIS_PASSWORD             Redis AUTH password (used in the redis URL).
+#     DOPILOT_REDIS_PASSWORD     Redis AUTH password (used in the redis URL).
+#
+#   Every dopilot deployment env var is DOPILOT_-prefixed, including the ones
+#   this file only consumes at the compose substitution layer. Bare generic names
+#   (REDIS_PASSWORD, AGENT_ID, ...) are gone with no fallback: they collide with
+#   whatever else the host already exports and would silently rewrite the Redis
+#   URL or an agent's identity.
 #
 #   The login/SSE signing key (server [auth].token_secret) is TOML-only and is
 #   baked into the image (a generated long value, not a per-deployment secret);
@@ -72,8 +78,9 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
-# Shared agent definition. The three agents differ only by AGENT_ID + data
-# volume; the agent config loader lets AGENT_ID / AGENT_WORKDIR / DOPILOT_REDIS_URL
+# Shared agent definition. The three agents differ only by DOPILOT_AGENT_ID + data
+# volume; the agent config loader lets DOPILOT_AGENT_ID / DOPILOT_AGENT_WORKDIR /
+# DOPILOT_REDIS_URL
 # env vars override the baked TOML (read from the role default /app/configs/agent.toml
 # — no DOPILOT_CONFIG needed). Each advertises endpoint=None, so its node endpoint
 # becomes the distinct `agent://{agent_id}` => three distinct nodes.
@@ -120,7 +127,7 @@ services:
   # Redis Streams transport for server<->agent comms (phase 1.5). AUTH +
   # append-only file (AOF) on; single instance (matches the single-server
   # constraint — Redis here is a message bus, NOT a multi-replica HA store).
-  # Override the password with REDIS_PASSWORD in the environment.
+  # Override the password with DOPILOT_REDIS_PASSWORD in the environment.
   #
   # Memory hard limit (resource caps): --maxmemory backstops the host against
   # Redis OOM; --maxmemory-policy noeviction makes XADD fail LOUDLY at the cap
@@ -138,7 +145,7 @@ services:
       - "--appendonly"
       - "yes"
       - "--requirepass"
-      - "${REDIS_PASSWORD:-change-me-redis-pass}"
+      - "${DOPILOT_REDIS_PASSWORD:-change-me-redis-pass}"
       - "--maxmemory"
       - "${DOPILOT_REDIS_MAXMEMORY:-512mb}"
       - "--maxmemory-policy"
@@ -155,7 +162,7 @@ services:
         - "redis-cli"
         - "--no-auth-warning"
         - "-a"
-        - "${REDIS_PASSWORD:-change-me-redis-pass}"
+        - "${DOPILOT_REDIS_PASSWORD:-change-me-redis-pass}"
         - "ping"
       interval: 5s
       timeout: 5s
@@ -179,9 +186,9 @@ services:
   scrapy-agent-1:
     <<: *agent
     environment:
-      AGENT_ID: scrapy-agent-1
-      AGENT_WORKDIR: /agent-data
-      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      DOPILOT_AGENT_ID: scrapy-agent-1
+      DOPILOT_AGENT_WORKDIR: /agent-data
+      DOPILOT_REDIS_URL: redis://:${DOPILOT_REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
       # The single server<->agent machine token (phase 2.2.3): the SAME value as
       # the server's DOPILOT_AGENT_TOKEN. Agents NEVER get DOPILOT_ADMIN_API_TOKEN
       # (admin-only). Dev default is >= 16 chars.
@@ -195,9 +202,9 @@ services:
   scrapy-agent-2:
     <<: *agent
     environment:
-      AGENT_ID: scrapy-agent-2
-      AGENT_WORKDIR: /agent-data
-      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      DOPILOT_AGENT_ID: scrapy-agent-2
+      DOPILOT_AGENT_WORKDIR: /agent-data
+      DOPILOT_REDIS_URL: redis://:${DOPILOT_REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
       # Single server<->agent token (same value as the server); never the admin token.
       DOPILOT_AGENT_TOKEN: ${DOPILOT_AGENT_TOKEN:-change-me-agent-token}
     volumes:
@@ -206,9 +213,9 @@ services:
   scrapy-agent-3:
     <<: *agent
     environment:
-      AGENT_ID: scrapy-agent-3
-      AGENT_WORKDIR: /agent-data
-      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      DOPILOT_AGENT_ID: scrapy-agent-3
+      DOPILOT_AGENT_WORKDIR: /agent-data
+      DOPILOT_REDIS_URL: redis://:${DOPILOT_REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
       # Single server<->agent token (same value as the server); never the admin token.
       DOPILOT_AGENT_TOKEN: ${DOPILOT_AGENT_TOKEN:-change-me-agent-token}
     volumes:
@@ -221,7 +228,7 @@ services:
     logging: *default-logging
     environment:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
-      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      DOPILOT_REDIS_URL: redis://:${DOPILOT_REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
       # Web admin password + static admin API token (override the dev-only
       # defaults). token_secret is TOML-only (baked into the image).
       DOPILOT_ADMIN_PASSWORD: ${DOPILOT_ADMIN_PASSWORD:-change-me}

@@ -34,7 +34,13 @@
 #                                only; never sent to agents and never a source for
 #                                the machine token. A non-empty value must be
 #                                >= 16 characters.
-#     REDIS_PASSWORD             Redis AUTH password (used in the redis URL).
+#     DOPILOT_REDIS_PASSWORD     Redis AUTH password (used in the redis URL). The
+#                                agents joining this stack must be given the SAME
+#                                password (see docker-compose.agent.yml).
+#
+#   Every dopilot deployment env var is DOPILOT_-prefixed, including the ones this
+#   file only consumes at the compose substitution layer. Bare generic names
+#   (REDIS_PASSWORD, ...) are gone with no fallback.
 #
 #   Optional:
 #     DOPILOT_AGENT_TOKEN        The single server<->agent machine token. Omit it
@@ -98,7 +104,7 @@ services:
       - "--appendonly"
       - "yes"
       - "--requirepass"
-      - "${REDIS_PASSWORD:-change-me-redis-pass}"
+      - "${DOPILOT_REDIS_PASSWORD:-change-me-redis-pass}"
       - "--maxmemory"
       - "${DOPILOT_REDIS_MAXMEMORY:-512mb}"
       - "--maxmemory-policy"
@@ -117,7 +123,7 @@ services:
         - "redis-cli"
         - "--no-auth-warning"
         - "-a"
-        - "${REDIS_PASSWORD:-change-me-redis-pass}"
+        - "${DOPILOT_REDIS_PASSWORD:-change-me-redis-pass}"
         - "ping"
       interval: 5s
       timeout: 5s
@@ -143,7 +149,7 @@ services:
     logging: *default-logging
     environment:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
-      DOPILOT_REDIS_URL: redis://:${REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
+      DOPILOT_REDIS_URL: redis://:${DOPILOT_REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0
       # Web admin password + static admin API token (override the dev defaults).
       DOPILOT_ADMIN_PASSWORD: ${DOPILOT_ADMIN_PASSWORD:-change-me}
       # Admin-only static API token: server-side only, never sent to agents.

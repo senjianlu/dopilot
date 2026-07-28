@@ -15,6 +15,28 @@
   `DOPILOT_REDIS_URL` 等覆盖关键连接。
 - `load_settings()` 无副作用:不建文件、不生成密钥。
 
+### 环境变量命名:`DOPILOT_` 前缀无例外
+
+**所有面向部署的环境变量一律以 `DOPILOT_` 开头**,包括只在 compose
+变量替换层消费、不进容器的那些(`DOPILOT_REDIS_PASSWORD`、
+`DOPILOT_REDIS_HOST`)。不带前缀的通用名(`REDIS_PASSWORD`、`AGENT_ID` 之类)
+会被宿主机上其他服务、K8s 同 Pod sidecar 或 CI runner 的同名变量静默继承,
+从而串改 Redis 连接串或 agent 身份,故一律不用、也不留旧名兜底。
+
+不受此约束的三类(经核实):Next.js 强制前缀的 `NEXT_PUBLIC_*`、
+GitHub Actions 作用域内的 CI 变量、以及 `E2E_*` 等测试专用变量。
+
+agent 侧身份与工作目录的 env 覆盖为 `DOPILOT_AGENT_ID` /
+`DOPILOT_AGENT_WORKDIR`(后者也是镜像 `ENV` 的烤入名)。其中
+`DOPILOT_AGENT_ID` **刻意与** `dopilot_protocol.execution` 交给用户工作负载的
+runtime context 键**同名**:二者表达同一事实("本 agent 的 id"),且由构造
+必然相等——agent 只消费寻址到自己 id 的命令流;子进程侧仍取 runtime context
+的值(wheel runner 在合并子进程环境时最后覆盖)。
+
+> **升级注意**:改名无兜底。只更新 compose/清单而不拉新镜像时,旧镜像的代码
+> 只认旧名,`agent_id` 会静默回落到烤进镜像的 TOML 值,导致一体栈三个 agent
+> 共用同一 id(症状隐蔽,探针不报错)。改名与 `docker compose pull` 必须同批做。
+
 关键配置段（键名以 `configs/*.toml` 为准）:
 
 | 端 | 段 | 要点 |
@@ -31,7 +53,7 @@
 | server | `[nodes]` | `agents` 仅作未 heartbeat 节点的占位提示（不再是 poll 目标） |
 | server | `[i18n]` | `locale`（默认 `zh`）、`timezone` |
 | agent | `[redis]` | `url`/`command_block_ms`/`pending_idle_ms`/`event_outbox_dir`、`maxlen_logs`/`maxlen_events`（XADD 近似上限，默认 100000，env `DOPILOT_REDIS_STREAM_MAXLEN_LOGS/EVENTS`）、`event_outbox_max_files`（outbox 文件数上限，默认 100000） |
-| agent | `[agent]` | `agent_id`/`server_url`/`heartbeat_interval_seconds`/`agent_token`、`janitor_interval_seconds`（本地 janitor 周期）、`completed_log_ttl_days`（终态 3 天）/`orphan_log_ttl_days`（孤儿 7 天）、`max_job_log_bytes`（job.log 硬上限，默认 100MiB）、`artifact_cache_max_bytes`（缓存 LRU 上限，默认 2GiB） |
+| agent | `[agent]` | `agent_id`（env `DOPILOT_AGENT_ID`）/`workdir`（env `DOPILOT_AGENT_WORKDIR`）/`server_url`/`heartbeat_interval_seconds`/`agent_token`、`janitor_interval_seconds`（本地 janitor 周期）、`completed_log_ttl_days`（终态 3 天）/`orphan_log_ttl_days`（孤儿 7 天）、`max_job_log_bytes`（job.log 硬上限，默认 100MiB）、`artifact_cache_max_bytes`（缓存 LRU 上限，默认 2GiB） |
 | agent | `[scrapyd]` | `start`/`host`/`port`、`jobs_to_keep`（默认 5）/`finished_to_keep`（默认 100，写入生成的 scrapyd.conf） |
 
 ### 资源硬上限（防磁盘/内存膨胀）
