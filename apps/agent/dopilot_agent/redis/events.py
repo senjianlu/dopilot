@@ -242,6 +242,36 @@ class EventPublisher:
             )
         )
 
+    async def emit_heartbeat(self, task_id: str, execution_id: str) -> bool:
+        """Publish a liveness heartbeat; returns True iff the XADD succeeded.
+
+        Deliberately NOT durable (no on-disk outbox): a heartbeat is a
+        transient "alive right now" signal — queuing it during a Redis outage
+        would replay stale liveness later and crowd real state events out of
+        the capped outbox (C5). On failure it is dropped and the caller's next
+        reconcile pass retries.
+        """
+        event = self._event(
+            task_id=task_id,
+            execution_id=execution_id,
+            type=AgentEventType.heartbeat,
+        )
+        try:
+            await self._redis.xadd(
+                EVENT_STREAM, to_stream_entry(event),
+                maxlen=self._maxlen, approximate=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - Redis unavailable
+            if self._status is not None:
+                self._status.mark_error(exc)
+            logger.warning(
+                "heartbeat XADD failed for %s (dropped): %s", execution_id, exc
+            )
+            return False
+        if self._status is not None:
+            self._status.mark_ok()
+        return True
+
     async def emit_terminal(
         self,
         task_id: str,

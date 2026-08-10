@@ -124,6 +124,26 @@ def create_cleanup_outbox(
     return row
 
 
+async def reclaim_ever_issued(session: AsyncSession, execution_id: str) -> bool:
+    """True if a ``stop(intent=reclaim)`` was EVER enqueued for this execution.
+
+    Deliberately status-blind (a ``sent`` or even ``failed`` row still counts):
+    both consumers ask "was a reclaim ever attempted", not "is one in flight" —
+    the heartbeat path uses it for its at-most-once reclaim (a heartbeat is
+    periodic; an unresolved-only check would re-enqueue every interval once the
+    first stop turns ``sent``), and ``finalize_drained_logs`` uses it as the
+    cleanup gate for server-lost attempts.
+    """
+    res = await session.execute(
+        select(CommandOutbox.command_id).where(
+            CommandOutbox.execution_id == execution_id,
+            CommandOutbox.type == "stop",
+            CommandOutbox.intent == StopIntent.reclaim.value,
+        )
+    )
+    return res.first() is not None
+
+
 async def cancel_unsent_outbox(session: AsyncSession, task_id: str) -> int:
     """CAS every still-unsent outbox row of a task to ``canceled``.
 

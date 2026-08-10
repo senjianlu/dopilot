@@ -175,3 +175,33 @@ async def test_fresh_heartbeat_and_recent_event_no_action(db_session, settings):
     assert (report.heartbeat_lost, report.event_stall_lost, report.stalled) == (0, 0, 0)
     e = await _execution(db_session, execution.id)
     assert e.status == states.EXEC_RUNNING and e.stalled_at is None
+
+
+async def test_old_attempt_with_fresh_heartbeat_event_not_lost(db_session, settings):
+    # TC-04: a LONG-RUNNING attempt (started far beyond lost_after) whose
+    # last_event_at was just refreshed by an attempt.heartbeat is NOT stalled,
+    # NOT lost, NOT reclaimed — runtime alone must never kill a healthy attempt.
+    _settings(settings, hb_timeout=30, stall=300, lost_after=900)
+    now = datetime.now(UTC)
+    _node, _t, execution = await _seed(
+        db_session, now, last_seen_age=2, last_event_age=30
+    )
+    e = await _execution(db_session, execution.id)
+    e.started_at = now - timedelta(seconds=7200)  # running for 2h
+    await db_session.commit()
+
+    report = await reconcile_once(db_session, settings, now=now)
+    await db_session.commit()
+    assert (report.heartbeat_lost, report.event_stall_lost, report.stalled) == (0, 0, 0)
+    e = await _execution(db_session, execution.id)
+    assert e.status == states.EXEC_RUNNING and e.stalled_at is None
+    assert await _stop_outbox(db_session, execution.id) == []
+
+    # control: same 2h-old attempt with a STALE last_event_at is still caught.
+    e.last_event_at = now - timedelta(seconds=1200)
+    await db_session.commit()
+    report = await reconcile_once(db_session, settings, now=now)
+    await db_session.commit()
+    assert report.event_stall_lost == 1 and report.reclaim_stops == 1
+    e = await _execution(db_session, execution.id)
+    assert e.status == states.EXEC_LOST and e.lost_reason == "event_stall"

@@ -28,6 +28,14 @@ class AgentSettings(BaseModel):
     workdir: str = "/agent-data"
     server_url: str = ""
     heartbeat_interval_seconds: int = 10
+    # Per-ATTEMPT liveness heartbeat pacing (distinct from the node-level
+    # heartbeat above): while the command consumer confirms an attempt's process
+    # alive (scrapyd lists the job / the wheel child has no returncode), it
+    # re-emits ``attempt.heartbeat`` at most once per this many seconds so the
+    # server's event-stall clock measures liveness, not time-since-transition.
+    # Must stay well below the server's ``stalled_attempt_seconds`` (default
+    # 300). 0 disables attempt heartbeats.
+    attempt_heartbeat_interval_seconds: int = 60
     agent_token: str = ""
     # Resource caps (C1/C2): local-disk janitor + per-job log size cap.
     # How often the janitor sweeps (seconds); it also runs once at startup.

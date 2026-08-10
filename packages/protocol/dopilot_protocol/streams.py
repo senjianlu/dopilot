@@ -113,7 +113,13 @@ class AgentCommand(BaseModel):
 
 
 class AgentEventType(str, Enum):
-    """Attempt lifecycle events the agent publishes to the event stream."""
+    """Attempt lifecycle events the agent publishes to the event stream.
+
+    ``heartbeat`` is NOT a lifecycle transition: the agent emits it periodically
+    for a still-running attempt it has just confirmed alive (scrapyd lists the
+    job / the wheel child has no returncode), so the server's event-stall clock
+    (``last_event_at``) measures liveness instead of time-since-last-transition.
+    """
 
     accepted = "attempt.accepted"
     running = "attempt.running"
@@ -121,6 +127,7 @@ class AgentEventType(str, Enum):
     failed = "attempt.failed"
     canceled = "attempt.canceled"
     lost = "attempt.lost"
+    heartbeat = "attempt.heartbeat"
 
     @property
     def short(self) -> str:

@@ -37,13 +37,32 @@ coalesce 抑制同源堆积。取消先 CAS 置未 sent outbox 为 `canceled`，
   `reconciled_from=lost`。lost 必须带 reason:server 推断
   `heartbeat_timeout` / `event_stall`，agent 上报 `state_missing` /
   `process_missing` / `runner_recovered_unknown`。
+- **运行期存活心跳（attempt.heartbeat）**:agent 的 reconcile 循环在确认
+  attempt 进程真的活着时（scrapyd `listjobs` 仍列出该 job / wheel 子进程
+  `returncode` 为 None），按 `attempt_heartbeat_interval_seconds`（默认
+  60s）限频重发 `attempt.heartbeat`。server 收到后仅刷新
+  `last_event_at`、清 `stalled_at`——不进状态机、不写事件审计表;心跳
+  **直接 XADD、不走 agent 持久 event outbox**（瞬时信号,断连期间落盘重放
+  无意义且会挤占 outbox 容量上限）。scrapyd 不可达（status unknown）或
+  进程已退出时**不发**——心跳的语义是「我确认它还活着」。
 - server reconcile loop 只做 heartbeat/event 对账（不访问 agent HTTP）:
   heartbeat 超时 → 相关 running attempt 标 `lost(heartbeat_timeout)`;
   事件停滞先出 operator 可见的 `stalled` 告警（非 terminal），持续超阈值
-  转 `lost(event_stall)` 并投 `stop(intent=reclaim)` 回收真实进程。
+  转 `lost(event_stall)` 并投 `stop(intent=reclaim)` 回收真实进程。有了
+  运行期心跳,`stalled` / `lost(event_stall)` 的含义从「久无状态转换事件」
+  收敛为「agent 在线但持续无法确认该 attempt 存活」——
+  `lost_after_stalled_seconds`（默认 3600）**不再是任务运行时长上限**,
+  健康长任务可运行任意时长。
 - agent 恢复后先 reconcile（进程仍在 → 重发 `attempt.running`，server 先
   stop 再清理;有真实终态 → outbox 补发;无法判定 → 上报 lost），避免删掉
-  仍活跃 attempt 的日志/状态文件。
+  仍活跃 attempt 的日志/状态文件。心跳到达 server 侧已标 `lost` 的
+  execution 时同样触发该保护:状态保持 lost,并投递
+  `stop(intent=reclaim)`（按「曾投递过即不再投」持久去重,每 execution
+  终生至多一条）。
+- **事件消费者毒丸容错**:server event consumer 对无法解析的事件条目
+  （如版本偏斜下的未知事件类型）记 warning 后 XACK 跳过,不让单条坏消息
+  卡死整条事件流。注意这只保护新版 server;升级顺序约束见
+  [05-deployment](05-deployment.md)。
 
 ## 执行器与 runner
 

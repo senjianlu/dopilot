@@ -28,7 +28,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config.settings import Settings
-from ..models.command_outbox import CommandOutbox
 from ..models.execution import Execution, ExecutionLogFile, Task
 from ..models.node import Node
 from ..services import executions as svc
@@ -225,7 +224,7 @@ async def finalize_drained_logs(
         cleanup_ok = execution.status in _CLEANUP_TERMINALS
         if execution.status == states.EXEC_LOST:
             # reclaimed-lost -> safe to clean; pure server-lost -> leave draining.
-            cleanup_ok = await _reclaim_issued(session, execution.id)
+            cleanup_ok = await outbox_svc.reclaim_ever_issued(session, execution.id)
             if not cleanup_ok:
                 continue
         log_file.status = states.LOG_COMPLETE
@@ -246,18 +245,6 @@ async def finalize_drained_logs(
         )
         count += 1
     return count
-
-
-async def _reclaim_issued(session: AsyncSession, execution_id: str) -> bool:
-    """True if a ``stop(intent=reclaim)`` was ever enqueued for this execution."""
-    res = await session.execute(
-        select(CommandOutbox.command_id).where(
-            CommandOutbox.execution_id == execution_id,
-            CommandOutbox.type == "stop",
-            CommandOutbox.intent == StopIntent.reclaim.value,
-        )
-    )
-    return res.first() is not None
 
 
 class RedisReconcileLoop:

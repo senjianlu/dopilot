@@ -123,7 +123,11 @@ class AgentsSettings(BaseModel):
 
     heartbeat_timeout_seconds: int = 30
     stalled_attempt_seconds: int = 300
-    lost_after_stalled_seconds: int = 900
+    # With per-attempt heartbeats (~60s while confirmed alive) a healthy attempt
+    # never idles anywhere near this; it now bounds "agent online but liveness
+    # unconfirmable" before reclaim, so it errs toward not killing healthy work
+    # (900 used to act as a hard task-runtime cap for pre-heartbeat agents).
+    lost_after_stalled_seconds: int = 3600
     agent_token: str | None = None
 
     @property

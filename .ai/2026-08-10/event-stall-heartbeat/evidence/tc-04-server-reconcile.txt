@@ -1,0 +1,19 @@
+$ .venv/bin/python -m pytest apps/server/tests/test_reconcile_redis.py -v
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 6 items
+
+apps/server/tests/test_reconcile_redis.py::test_heartbeat_timeout_marks_lost_no_stop [32mPASSED[0m[32m [ 16%][0m
+apps/server/tests/test_reconcile_redis.py::test_event_stall_sets_one_shot_alert [32mPASSED[0m[32m [ 33%][0m
+apps/server/tests/test_reconcile_redis.py::test_event_stall_past_threshold_lost_and_reclaim [32mPASSED[0m[32m [ 50%][0m
+apps/server/tests/test_reconcile_redis.py::test_terminal_execution_short_circuits [32mPASSED[0m[32m [ 66%][0m
+apps/server/tests/test_reconcile_redis.py::test_fresh_heartbeat_and_recent_event_no_action [32mPASSED[0m[32m [ 83%][0m
+apps/server/tests/test_reconcile_redis.py::test_old_attempt_with_fresh_heartbeat_event_not_lost [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m6 passed[0m[32m in 0.41s[0m[32m ===============================[0m
+exit_code=0

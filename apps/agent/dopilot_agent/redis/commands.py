@@ -23,6 +23,7 @@ import asyncio
 import contextlib
 import logging
 import shutil
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -94,6 +95,7 @@ class CommandConsumer:
         artifact_cache: ScrapyArtifactCache | None = None,
         wheel_runner: PythonWheelRunner | None = None,
         wheel_cache: PythonWheelCache | None = None,
+        attempt_heartbeat_interval_seconds: int = 60,
     ) -> None:
         self._redis = redis
         self._agent_id = agent_id
@@ -127,6 +129,10 @@ class CommandConsumer:
         # Resource caps (C6): set after construction (the LogPublisher is built
         # later); lets cleanup drop the cursor + EOF dedup state for an execution.
         self._log_publisher: object | None = None
+        # Attempt-liveness heartbeat pacing: {execution_id: last-emit monotonic}.
+        # Only stamped on a SUCCESSFUL emit, so a failed XADD retries next pass.
+        self._attempt_hb_interval = attempt_heartbeat_interval_seconds
+        self._last_attempt_heartbeat: dict[str, float] = {}
 
     def set_log_publisher(self, publisher: object) -> None:
         """Wire the LogPublisher so cleanup can release its per-execution state."""
@@ -283,12 +289,26 @@ class CommandConsumer:
                 continue
             # Python-wheel terminals come from the in-process background wait
             # task (or boot orphan recovery); never poll Scrapy status for them.
+            # Liveness: heartbeat iff the in-process child is confirmed alive
+            # (returncode still None).
             if state.runner_type == WHEEL_RUNNER_TYPE:
+                if (
+                    execution_id in self._inproc_wheel
+                    and self._wheel_runner is not None
+                    and execution_id in self._wheel_runner.active_execution_ids()
+                ):
+                    await self._maybe_emit_heartbeat(state.task_id, execution_id)
                 continue
             resp = await self._runner.status(execution_id, state.task_id)
             terminal = _STATUS_TO_TERMINAL.get(resp.status)
             if terminal is None:
+                # ``running`` = scrapyd just listed the job (running/pending) ->
+                # confirmed alive -> rate-limited heartbeat. ``unknown`` (scrapyd
+                # unreachable / no state) is NOT confirmation; never heartbeat it.
+                if resp.status == AttemptStatus.running:
+                    await self._maybe_emit_heartbeat(state.task_id, execution_id)
                 continue
+            self._last_attempt_heartbeat.pop(execution_id, None)
             self._store.mark_done(
                 execution_id,
                 result=terminal.short,
@@ -302,6 +322,19 @@ class CommandConsumer:
             )
             reconciled += 1
         return reconciled
+
+    async def _maybe_emit_heartbeat(self, task_id: str, execution_id: str) -> None:
+        """Rate-limited attempt-liveness heartbeat (caller confirmed alive)."""
+        if self._attempt_hb_interval <= 0:
+            return
+        now = time.monotonic()
+        last = self._last_attempt_heartbeat.get(execution_id)
+        if last is not None and (now - last) < self._attempt_hb_interval:
+            return
+        # emit_heartbeat never raises; stamp only on success so a failed XADD
+        # is retried on the next reconcile pass instead of a full interval later.
+        if await self._events.emit_heartbeat(task_id, execution_id):
+            self._last_attempt_heartbeat[execution_id] = now
 
     # --- draining ----------------------------------------------------------
     async def _claim_pending(self) -> int:
@@ -651,6 +684,9 @@ class CommandConsumer:
             logger.exception("wheel wait failed for %s", execution_id)
             return
         async with self._execution_lock(execution_id):
+            # The child exited (or was already finalized) either way: drop the
+            # heartbeat pacing stamp so it cannot outlive the attempt (R-01).
+            self._last_attempt_heartbeat.pop(execution_id, None)
             state = self._store.read(execution_id)
             if state is None or state.phase == "done":
                 # cancel/reclaim already recorded an authoritative terminal.
@@ -679,6 +715,9 @@ class CommandConsumer:
                 )
 
     async def _handle_stop(self, cmd: AgentCommand) -> None:
+        # Every stop path below ends the attempt (canceled / real terminal /
+        # stays-lost kill): drop the heartbeat pacing stamp up front (R-01).
+        self._last_attempt_heartbeat.pop(cmd.execution_id, None)
         # Stop commands do not reliably carry the task type (the server stop
         # outbox sends an empty payload, so the dispatcher defaults to
         # ``scrapy``). Branch on the LOCAL state's ``runner_type`` instead.
@@ -755,6 +794,7 @@ class CommandConsumer:
         Does NOT touch ``_locks`` — see R-02 / :meth:`_execution_lock`.
         """
         self._inproc_wheel.discard(execution_id)
+        self._last_attempt_heartbeat.pop(execution_id, None)
         if self._wheel_runner is not None:
             self._wheel_runner.forget(execution_id)
         if self._log_publisher is not None:

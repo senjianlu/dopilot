@@ -90,6 +90,9 @@ async def run_agent(settings: Settings, *, stop: asyncio.Event | None = None) ->
             artifact_cache=runtime.artifact_cache,
             wheel_runner=runtime.wheel_runner,
             wheel_cache=runtime.wheel_cache,
+            attempt_heartbeat_interval_seconds=(
+                s.agent.attempt_heartbeat_interval_seconds
+            ),
         )
         log_publisher = LogPublisher(
             redis=redis_client,

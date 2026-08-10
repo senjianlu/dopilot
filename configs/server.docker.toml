@@ -69,7 +69,9 @@ require_aof = true
 [agents]
 heartbeat_timeout_seconds = 30
 stalled_attempt_seconds = 300
-lost_after_stalled_seconds = 900
+# Bounds "agent online but attempt liveness unconfirmable" before reclaim; the
+# agent heartbeats each live attempt (~60s), so this is NOT a task runtime cap.
+lost_after_stalled_seconds = 3600
 # The agent machine token (phase 2.2.3). Empty here so the compose stack injects
 # it via DOPILOT_AGENT_TOKEN; it must match the agents' [agent].agent_token. The
 # agent presents it on outbound heartbeat + artifact/wheel fetch calls. Phase

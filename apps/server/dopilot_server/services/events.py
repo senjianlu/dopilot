@@ -54,6 +54,10 @@ from .states import (
 
 EVENT_STREAM_NAME = "dopilot:server:agent-events"
 OUTCOME_SKIPPED_NO_ATTEMPT = "skipped_no_attempt"
+# Return-value-only outcome for heartbeat events (never persisted to the audit
+# table: at one heartbeat per attempt per minute, audit rows would dwarf the
+# real lifecycle audit; a heartbeat is idempotent so it needs no dedupe either).
+OUTCOME_HEARTBEAT = "heartbeat"
 
 _EVENT_TO_EXEC = {
     AgentEventType.accepted: states.EXEC_PENDING,
@@ -168,6 +172,34 @@ async def apply_event(
     session: AsyncSession, event: AgentEvent, redis_msg_id: str
 ) -> str:
     """Apply one event to its execution/task; returns the audit outcome."""
+    if event.type == AgentEventType.heartbeat:
+        # Liveness-only: refresh the event-stall clock, never touch the state
+        # machine (heartbeat has no _EVENT_TO_EXEC mapping), the task rollup,
+        # or (except below) the audit table.
+        execution = await svc.get_execution(session, event.execution_id)
+        if execution is None:
+            return OUTCOME_SKIPPED_NO_ATTEMPT
+        now = datetime.now(UTC)
+        execution.last_event_at = now
+        execution.stalled_at = None
+        if execution.status == EXEC_LOST:
+            # cleanup-reconcile guard: on a server-lost execution a heartbeat
+            # proves the process is still alive -> reclaim it; it stays lost.
+            # At-most-once per execution: the ever-issued check is status-blind
+            # (a heartbeat is periodic; an unresolved-only check would re-enqueue
+            # every interval once the first stop turns ``sent``).
+            if not await outbox_svc.reclaim_ever_issued(session, execution.id):
+                outbox_svc.create_stop_outbox(
+                    session,
+                    task_id=execution.task_id,
+                    execution_id=execution.id,
+                    agent_id=execution.agent_id or "",
+                    intent=StopIntent.reclaim,
+                )
+                _audit(session, event, redis_msg_id, OUTCOME_RECLAIM_REQUESTED)
+            return OUTCOME_RECLAIM_REQUESTED
+        return OUTCOME_HEARTBEAT
+
     # dedupe on the exact stream entry
     dup = await session.execute(
         select(EventAudit).where(
