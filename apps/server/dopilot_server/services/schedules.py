@@ -25,7 +25,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config.settings import Settings
@@ -229,6 +229,34 @@ async def list_enabled_schedules(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def disable_all_schedules(session: AsyncSession) -> int:
+    """Bulk-disable every enabled schedule; returns the number disabled.
+
+    One-shot pre-upgrade brake: a single UPDATE (atomic, unlike a per-row PUT
+    loop) so a partial failure can never leave half the schedules firing. The
+    column-level ``onupdate`` refreshes ``updated_at`` on the touched rows.
+    """
+    result = await session.execute(
+        update(Schedule).where(Schedule.enabled.is_(True)).values(enabled=False)
+    )
+    return int(result.rowcount or 0)
+
+
+async def count_enabled_schedules(session: AsyncSession) -> int:
+    """Global enabled count, deliberately NOT bounded by the list limit.
+
+    Backs the Web "disable all" button state + confirm copy: the list endpoint
+    truncates at 200 rows, so inferring "nothing enabled" from the loaded page
+    would wrongly disable the button when only older rows are enabled.
+    """
+    result = await session.execute(
+        select(func.count())
+        .select_from(Schedule)
+        .where(Schedule.enabled.is_(True))
+    )
+    return int(result.scalar_one())
 
 
 async def delete_schedule(session: AsyncSession, schedule: Schedule) -> None:

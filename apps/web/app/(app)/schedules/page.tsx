@@ -53,6 +53,7 @@ import { matchesPrefix } from "@/lib/search";
 import {
   createSchedule,
   deleteSchedule,
+  disableAllSchedules,
   listSchedules,
   previewNextRun,
   triggerSchedule,
@@ -84,6 +85,10 @@ export default function SchedulesPage() {
   const confirm = useConfirm();
 
   const [schedules, setSchedules] = React.useState<Schedule[]>([]);
+  // Global enabled count from the server (the list truncates at 200 rows, so
+  // deriving this from `schedules` would wrongly disable the button).
+  const [enabledTotal, setEnabledTotal] = React.useState(0);
+  const [disablingAll, setDisablingAll] = React.useState(false);
   const [search, setSearch] = React.useState("");
   const [templates, setTemplates] = React.useState<ExecutionTemplate[]>([]);
   const [nodes, setNodes] = React.useState<NodeInfo[]>([]);
@@ -185,7 +190,8 @@ export default function SchedulesPage() {
         listTemplates(),
         listNodes(),
       ]);
-      setSchedules(sch);
+      setSchedules(sch.schedules);
+      setEnabledTotal(sch.enabled_total);
       setTemplates(tpls);
       setNodes(nds);
     } finally {
@@ -315,6 +321,25 @@ export default function SchedulesPage() {
     }
   }
 
+  // Pre-upgrade brake: disable every enabled schedule in one confirmed shot.
+  async function onDisableAll() {
+    const ok = await confirm({
+      title: t("confirm.title"),
+      message: t("schedules.confirmDisableAll", { count: enabledTotal }),
+      confirmText: t("confirm.confirm"),
+      cancelText: t("confirm.cancel"),
+      destructive: true,
+    });
+    if (!ok) return;
+    setDisablingAll(true);
+    try {
+      await disableAllSchedules();
+      await load();
+    } finally {
+      setDisablingAll(false);
+    }
+  }
+
   async function onDelete(schedule: Schedule) {
     const ok = await confirm({
       title: t("confirm.title"),
@@ -343,6 +368,16 @@ export default function SchedulesPage() {
             />
             <Button data-testid="schedule-create" onClick={openCreate}>
               {t("schedules.create")}
+            </Button>
+            <Button
+              variant="outline"
+              className="text-destructive"
+              data-testid="schedule-disable-all"
+              disabled={enabledTotal === 0 || disablingAll}
+              onClick={onDisableAll}
+            >
+              {disablingAll && <Spinner data-icon="inline-start" />}
+              {t("schedules.disableAll")}
             </Button>
             <Button variant="outline" onClick={load}>
               {t("schedules.refresh")}

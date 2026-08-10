@@ -461,3 +461,93 @@ async def test_rename_schedule_to_existing_name_409(exec_client, seeder):
     )
     assert r.status_code == 409
     assert r.json()["code"] == "schedule.name_conflict"
+
+
+# ---------------------------------------------------------------------------
+# disable-all (pre-upgrade brake) + enabled_total metadata
+# ---------------------------------------------------------------------------
+
+
+class _CountingRunner:
+    """Fake schedule runner: counts how many times the endpoint reloads it."""
+
+    def __init__(self) -> None:
+        self.reloads = 0
+
+    async def reload(self) -> None:
+        self.reloads += 1
+
+
+async def test_disable_all_disables_every_enabled_schedule(exec_client, seeder):
+    # TC-01: 2 enabled + 1 disabled -> {"disabled": 2}, list all-disabled after.
+    template = await _create_template(exec_client, seeder)
+    await _create_schedule(exec_client, template["id"], name="on-1", enabled=True)
+    await _create_schedule(exec_client, template["id"], name="on-2", enabled=True)
+    await _create_schedule(exec_client, template["id"], name="off-1")
+
+    before = (await exec_client.get("/api/v1/schedules")).json()
+    assert before["enabled_total"] == 2
+
+    r = await exec_client.post("/api/v1/schedules/disable-all")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"disabled": 2}
+
+    after = (await exec_client.get("/api/v1/schedules")).json()
+    assert [s["enabled"] for s in after["schedules"]] == [False, False, False]
+    assert after["enabled_total"] == 0
+
+
+async def test_disable_all_idempotent_when_nothing_enabled(exec_client, seeder):
+    # TC-02 (boundary): nothing enabled -> {"disabled": 0}, twice, no error.
+    template = await _create_template(exec_client, seeder)
+    await _create_schedule(exec_client, template["id"], name="off-only")
+    for _ in range(2):
+        r = await exec_client.post("/api/v1/schedules/disable-all")
+        assert r.status_code == 200, r.text
+        assert r.json() == {"disabled": 0}
+
+
+async def test_disable_all_reloads_runner_exactly_once(exec_client, seeder):
+    # TC-07: the success path must resync APScheduler exactly once (the fake
+    # runner is injected on app.state, same slot _reload_runner reads).
+    template = await _create_template(exec_client, seeder)
+    await _create_schedule(exec_client, template["id"], name="on-a", enabled=True)
+    await _create_schedule(exec_client, template["id"], name="on-b", enabled=True)
+
+    runner = _CountingRunner()
+    exec_client._transport.app.state.schedule_runner = runner
+
+    r = await exec_client.post("/api/v1/schedules/disable-all")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"disabled": 2}
+    assert runner.reloads == 1
+
+
+async def test_enabled_total_not_bounded_by_list_truncation(
+    exec_client, db_session, seeder
+):
+    # TC-09: 201 rows, ONLY the oldest one enabled. The list truncates to the
+    # newest 200 (all disabled) but enabled_total still reports 1.
+    from datetime import UTC, datetime, timedelta
+
+    from dopilot_server.models.scheduling import Schedule
+
+    template = await _template_row(db_session, seeder)
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    db_session.add_all(
+        Schedule(
+            name=f"bulk-{i:03d}",
+            execution_template_id=template.id,
+            trigger_type="interval",
+            interval_seconds=30,
+            enabled=(i == 0),  # only the OLDEST row is enabled
+            created_at=base + timedelta(seconds=i),
+        )
+        for i in range(201)
+    )
+    await db_session.commit()
+
+    body = (await exec_client.get("/api/v1/schedules")).json()
+    assert len(body["schedules"]) == 200
+    assert all(s["enabled"] is False for s in body["schedules"])
+    assert body["enabled_total"] == 1

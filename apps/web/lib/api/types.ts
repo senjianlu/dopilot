@@ -311,6 +311,13 @@ export interface Schedule {
 
 export interface SchedulesResponse {
   schedules: Schedule[];
+  // Global enabled count (NOT bounded by the 200-row list truncation): drives
+  // the "disable all" button state + confirm copy.
+  enabled_total: number;
+}
+
+export interface ScheduleDisableAllResponse {
+  disabled: number;
 }
 
 export interface NextRunPreviewRequest {
