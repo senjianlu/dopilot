@@ -87,7 +87,12 @@ require_aof = true
 # Agent health = now - nodes.last_seen_at <= heartbeat_timeout_seconds.
 heartbeat_timeout_seconds = 30
 stalled_attempt_seconds = 300
-lost_after_stalled_seconds = 900
+# Reclaim an attempt this many seconds after its last event. Agents re-emit an
+# attempt.heartbeat (default every 60s) while they can confirm the process is
+# alive, so this bounds "agent online but liveness unconfirmable" -- it is NOT
+# a task runtime cap. Keep it well above the agent's
+# attempt_heartbeat_interval_seconds.
+lost_after_stalled_seconds = 3600
 # The single server<->agent machine token (phase 2.2.3). It MUST match the
 # agent's [agent].agent_token. The agent presents it on its outbound calls
 # (agent -> server heartbeat + artifact/wheel fetch) and the server validates

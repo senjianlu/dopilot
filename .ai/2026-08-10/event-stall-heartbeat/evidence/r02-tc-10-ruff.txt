@@ -1,0 +1,3 @@
+$ .venv/bin/ruff check apps packages
+[1;32mAll checks passed![0m
+exit_code=0

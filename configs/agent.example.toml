@@ -32,6 +32,13 @@ workdir = "/agent-data"
 # server<->agent machine token (see the header). Empty => machine auth OFF.
 server_url = "http://server:5000"
 heartbeat_interval_seconds = 10
+# Per-ATTEMPT liveness heartbeat (distinct from the node heartbeat above): while
+# the agent can confirm a started attempt's process is alive (scrapyd lists the
+# job / the wheel child is running) it re-emits attempt.heartbeat at most once
+# per this many seconds, so long-running jobs are never reclaimed as
+# "event stall". Must stay well below the server's stalled_attempt_seconds
+# (default 300). 0 disables.
+attempt_heartbeat_interval_seconds = 60
 agent_token = ""
 # Resource caps (C1/C2): local-disk janitor + per-job log size cap.
 # How often the janitor sweeps local disk (seconds); also runs once at startup.

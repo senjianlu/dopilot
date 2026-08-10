@@ -32,6 +32,22 @@
 镜像默认经 `DOPILOT_IMAGE` 覆盖。默认 TOML 已烤进镜像，compose 不需要
 `DOPILOT_CONFIG`;定制时把自有 TOML 只读挂到 `/app/configs/*.toml`。
 
+### 升级顺序:server 先于 agent（attempt.heartbeat 引入后）
+
+新 agent 会周期发送 `attempt.heartbeat` 事件;**不带毒丸容错的旧 server**
+（≤ 引入版本之前）的事件消费者对未知事件类型解析失败且不 XACK,会被这条
+消息反复重投卡死整条事件流。统一镜像**不能**天然保证顺序:一体栈里 agent
+只依赖 Redis、不依赖 server 健康,远端 agent 更是完全独立。因此:
+
+- **一体栈**:`docker compose pull` 后先 `docker compose up -d server`,
+  确认 server 已切到新版且健康,再整组 `up -d`;若整组直接 `up -d`,须
+  确认 server 容器成功切新——server 启动失败而 agent 已是新版时,须回滚
+  agent 或修复 server;
+- **远端 agent**(compose / K8s):一律在中心 server 确认升级完成后再拉
+  新镜像重建;
+- **顺序颠倒的自愈**:完成 server 升级即恢复——新 server 可解析心跳,
+  且对无法解析的条目 XACK 跳过（毒丸容错）,无需清理 Redis。
+
 端口与网络:server 发布 `5000`（API/SSE + Web UI 同源）;agent **不发布
 任何端口**（纯出站;scrapyd 内部端口 6801 永不发布）;server 容器
 `init: true`、单实例。

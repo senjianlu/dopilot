@@ -96,6 +96,9 @@ def test_redis_agents_defaults_when_absent(tmp_path):
     settings = load_settings(str(path))
     assert settings.redis.url == "redis://localhost:6379/0"
     assert settings.agents.heartbeat_timeout_seconds == 30
+    # TC-05: with attempt heartbeats, this bounds "liveness unconfirmable", not
+    # task runtime — default raised from 900 (which acted as a 15min kill cap).
+    assert settings.agents.lost_after_stalled_seconds == 3600
     assert settings.agents.machine_auth_enabled is False  # no token => off
     assert settings.logs.log_drain_timeout_seconds == 30
 

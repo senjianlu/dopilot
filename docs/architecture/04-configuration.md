@@ -45,7 +45,7 @@ runtime context 键**同名**:二者表达同一事实("本 agent 的 id"),且�
 | server | `[database]` | PostgreSQL URL（env `DOPILOT_DATABASE_URL`） |
 | server | `[auth]` | `admin_username`/`admin_password`/`token_secret`（仅 TOML）/`admin_api_token`/`access_token_ttl_minutes`/`stream_token_ttl_seconds` |
 | server | `[redis]` | `url`、三条 stream 的 maxlen（`stream_maxlen_logs` 默认 100000）、`log_retention_seconds`（由保留清扫实装为定时 `XTRIM MINID`）、`consumer_name`、`require_aof` |
-| server | `[agents]` | `heartbeat_timeout_seconds`/`stalled_attempt_seconds`/`lost_after_stalled_seconds`/`agent_token` |
+| server | `[agents]` | `heartbeat_timeout_seconds`/`stalled_attempt_seconds`/`lost_after_stalled_seconds`（默认 3600;有运行期心跳后仅约束「agent 在线但存活不可确认」,不是任务时长上限）/`agent_token` |
 | server | `[scheduler]` | `enabled`（in-process runner 开关）、`timezone` |
 | server | `[logs]` | `root_dir=/server-data/logs`、drain/保留窗口参数、`retention_days`（默认 30,自动保留清扫的 cutoff;**0 = 关闭终态清理**,而非 cutoff=now 立删全部）、`max_file_bytes`（单执行日志硬上限，默认 100MiB，超限置 `log_integrity=truncated`） |
 | server | `[maintenance]` | 自动保留清扫:`enabled`（默认 true）、`sweep_interval_seconds`（默认 3600）、`event_audit_retention_days`（默认 30）、`event_audit_delete_batch`;资源仪表盘采样:`stats_interval_seconds`（默认 60,env `DOPILOT_MAINTENANCE_STATS_INTERVAL_SECONDS`,0 关闭采样 loop） |
@@ -53,7 +53,7 @@ runtime context 键**同名**:二者表达同一事实("本 agent 的 id"),且�
 | server | `[nodes]` | `agents` 仅作未 heartbeat 节点的占位提示（不再是 poll 目标） |
 | server | `[i18n]` | `locale`（默认 `zh`）、`timezone` |
 | agent | `[redis]` | `url`/`command_block_ms`/`pending_idle_ms`/`event_outbox_dir`、`maxlen_logs`/`maxlen_events`（XADD 近似上限，默认 100000，env `DOPILOT_REDIS_STREAM_MAXLEN_LOGS/EVENTS`）、`event_outbox_max_files`（outbox 文件数上限，默认 100000） |
-| agent | `[agent]` | `agent_id`（env `DOPILOT_AGENT_ID`）/`workdir`（env `DOPILOT_AGENT_WORKDIR`）/`server_url`/`heartbeat_interval_seconds`/`agent_token`、`janitor_interval_seconds`（本地 janitor 周期）、`completed_log_ttl_days`（终态 3 天）/`orphan_log_ttl_days`（孤儿 7 天）、`max_job_log_bytes`（job.log 硬上限，默认 100MiB）、`artifact_cache_max_bytes`（缓存 LRU 上限，默认 2GiB） |
+| agent | `[agent]` | `agent_id`（env `DOPILOT_AGENT_ID`）/`workdir`（env `DOPILOT_AGENT_WORKDIR`）/`server_url`/`heartbeat_interval_seconds`/`attempt_heartbeat_interval_seconds`（attempt 级存活心跳限频，默认 60，须远小于 server `stalled_attempt_seconds`，0 关闭）/`agent_token`、`janitor_interval_seconds`（本地 janitor 周期）、`completed_log_ttl_days`（终态 3 天）/`orphan_log_ttl_days`（孤儿 7 天）、`max_job_log_bytes`（job.log 硬上限，默认 100MiB）、`artifact_cache_max_bytes`（缓存 LRU 上限，默认 2GiB） |
 | agent | `[scrapyd]` | `start`/`host`/`port`、`jobs_to_keep`（默认 5）/`finished_to_keep`（默认 100，写入生成的 scrapyd.conf） |
 
 ### 资源硬上限（防磁盘/内存膨胀）

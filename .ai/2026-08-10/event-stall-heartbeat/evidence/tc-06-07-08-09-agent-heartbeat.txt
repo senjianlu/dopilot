@@ -1,0 +1,32 @@
+$ .venv/bin/python -m pytest apps/agent/tests/test_command_consumer.py -v
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot/apps/agent
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 19 items
+
+apps/agent/tests/test_command_consumer.py::test_run_command_starts_and_emits [32mPASSED[0m[32m [  5%][0m
+apps/agent/tests/test_command_consumer.py::test_run_with_artifact_ensures_cache_before_schedule [32mPASSED[0m[32m [ 10%][0m
+apps/agent/tests/test_command_consumer.py::test_run_with_artifact_cache_failure_emits_failed [32mPASSED[0m[32m [ 15%][0m
+apps/agent/tests/test_command_consumer.py::test_run_parses_command_args_and_settings [32mPASSED[0m[32m [ 21%][0m
+apps/agent/tests/test_command_consumer.py::test_run_injects_runtime_context_as_scrapy_settings [32mPASSED[0m[32m [ 26%][0m
+apps/agent/tests/test_command_consumer.py::test_run_invalid_command_emits_failed [32mPASSED[0m[32m [ 31%][0m
+apps/agent/tests/test_command_consumer.py::test_duplicate_execution_id_does_not_restart [32mPASSED[0m[32m [ 36%][0m
+apps/agent/tests/test_command_consumer.py::test_reconcile_started_attempts_emits_finished [32mPASSED[0m[32m [ 42%][0m
+apps/agent/tests/test_command_consumer.py::test_reconcile_running_attempt_heartbeat_rate_limited [32mPASSED[0m[32m [ 47%][0m
+apps/agent/tests/test_command_consumer.py::test_reconcile_no_heartbeat_when_scrapyd_unreachable [32mPASSED[0m[32m [ 52%][0m
+apps/agent/tests/test_command_consumer.py::test_reconcile_wheel_heartbeat_only_when_child_alive [32mPASSED[0m[32m [ 57%][0m
+apps/agent/tests/test_command_consumer.py::test_heartbeat_xadd_failure_swallowed_and_not_outboxed [32mPASSED[0m[32m [ 63%][0m
+apps/agent/tests/test_command_consumer.py::test_concurrent_same_attempt_one_start [32mPASSED[0m[32m [ 68%][0m
+apps/agent/tests/test_command_consumer.py::test_pending_command_recovered_after_crash [32mPASSED[0m[32m [ 73%][0m
+apps/agent/tests/test_command_consumer.py::test_reserved_orphan_recovered_as_spawn_aborted [32mPASSED[0m[32m [ 78%][0m
+apps/agent/tests/test_command_consumer.py::test_stop_cancel_emits_canceled_even_if_gone [32mPASSED[0m[32m [ 84%][0m
+apps/agent/tests/test_command_consumer.py::test_stop_cancel_after_running_emits_canceled [32mPASSED[0m[32m [ 89%][0m
+apps/agent/tests/test_command_consumer.py::test_stop_reclaim_running_kills_stays_lost [32mPASSED[0m[32m [ 94%][0m
+apps/agent/tests/test_command_consumer.py::test_cleanup_logs_removes_state_and_log [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m19 passed[0m[32m in 0.29s[0m[32m ==============================[0m
+exit_code=0

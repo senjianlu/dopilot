@@ -12,7 +12,7 @@ from dopilot_agent.redis.commands import CommandConsumer
 from dopilot_agent.redis.events import EventPublisher
 from dopilot_agent.runners.scrapyd import ScrapyRunner
 from dopilot_agent.scrapyd.client import ScrapydClient
-from dopilot_agent.state.store import StateStore
+from dopilot_agent.state.store import AttemptState, StateStore
 from dopilot_protocol import (
     COMMAND_GROUP,
     EVENT_STREAM,
@@ -51,6 +51,9 @@ def _build(
     *,
     pending_idle_ms=0,
     artifact_cache=None,
+    outbox_dir=None,
+    wheel_runner=None,
+    attempt_heartbeat_interval_seconds=60,
 ):
     client = ScrapydClient(
         base_url="http://scrapyd.test", transport=fake_scrapyd.transport()
@@ -60,7 +63,8 @@ def _build(
         client=client, store=store, logs_dir=scrapyd_logs_dir(workdir)
     )
     publisher = EventPublisher(
-        redis=redis, agent_id=AGENT_ID, runner=runner, store=store
+        redis=redis, agent_id=AGENT_ID, runner=runner, store=store,
+        outbox_dir=outbox_dir,
     )
     consumer = CommandConsumer(
         redis=redis,
@@ -70,6 +74,8 @@ def _build(
         events=publisher,
         pending_idle_ms=pending_idle_ms,
         artifact_cache=artifact_cache,
+        wheel_runner=wheel_runner,
+        attempt_heartbeat_interval_seconds=attempt_heartbeat_interval_seconds,
     )
     return store, runner, consumer
 
@@ -293,6 +299,187 @@ async def test_reconcile_started_attempts_emits_finished(workdir, fake_redis):
         AgentEventType.running,
         AgentEventType.finished,
     ]
+
+
+class FakeWheelOutcome:
+    def __init__(self, *, canceled=False, exit_code=0) -> None:
+        self.canceled = canceled
+        self.exit_code = exit_code
+
+
+class FakeWheelRunner:
+    """Duck-typed stand-in: only what the heartbeat/wait paths touch."""
+
+    def __init__(self) -> None:
+        self.alive: set[str] = set()
+        self.outcome = FakeWheelOutcome()
+
+    def active_execution_ids(self) -> set[str]:
+        return set(self.alive)
+
+    async def wait(self, execution_id: str) -> FakeWheelOutcome:
+        self.alive.discard(execution_id)
+        return self.outcome
+
+    def forget(self, execution_id: str) -> None:  # pragma: no cover - unused
+        self.alive.discard(execution_id)
+
+
+async def test_reconcile_running_attempt_heartbeat_rate_limited(workdir, fake_redis):
+    # TC-06: scrapyd lists the job as running -> heartbeat; within the interval
+    # -> no re-emit; past the interval -> re-emit; finished -> terminal only.
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    store, _runner, consumer = _build(workdir, scrapyd, fake)
+    await consumer.setup()
+    await fake.xadd(STREAM, to_stream_entry(_run_cmd()))
+    await consumer.drain_once()
+
+    await consumer.reconcile_started_attempts()
+    assert await _event_types(fake) == [
+        AgentEventType.accepted,
+        AgentEventType.running,
+        AgentEventType.heartbeat,
+    ]
+    # second pass right away: rate-limited, no second heartbeat
+    await consumer.reconcile_started_attempts()
+    assert (await _event_types(fake)).count(AgentEventType.heartbeat) == 1
+    # simulate the interval elapsing -> re-emits
+    consumer._last_attempt_heartbeat["a1"] -= 61
+    await consumer.reconcile_started_attempts()
+    assert (await _event_types(fake)).count(AgentEventType.heartbeat) == 2
+
+    # job finishes -> terminal emitted, no further heartbeat, stamp cleared
+    scrapyd.move_to_finished(store.read("a1").scrapyd_job_id)
+    await consumer.reconcile_started_attempts()
+    types = await _event_types(fake)
+    assert types[-1] == AgentEventType.finished
+    assert types.count(AgentEventType.heartbeat) == 2
+    assert consumer._last_attempt_heartbeat == {}
+
+
+async def test_reconcile_no_heartbeat_when_scrapyd_unreachable(workdir, fake_redis):
+    # TC-07: unknown status (scrapyd unreachable) is NOT proof of liveness ->
+    # never heartbeat an attempt we cannot confirm alive.
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    _store, _runner, consumer = _build(workdir, scrapyd, fake)
+    await consumer.setup()
+    await fake.xadd(STREAM, to_stream_entry(_run_cmd()))
+    await consumer.drain_once()
+
+    scrapyd.fail_listjobs = True
+    reconciled = await consumer.reconcile_started_attempts()
+    assert reconciled == 0
+    assert await _event_types(fake) == [
+        AgentEventType.accepted,
+        AgentEventType.running,
+    ]
+    assert consumer._last_attempt_heartbeat == {}
+
+
+async def test_reconcile_wheel_heartbeat_only_when_child_alive(workdir, fake_redis):
+    # TC-08: in-process wheel with a live child -> heartbeat; child exited ->
+    # no heartbeat (its terminal comes from the background wait task).
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    wheel = FakeWheelRunner()
+    store, _runner, consumer = _build(workdir, scrapyd, fake, wheel_runner=wheel)
+    await consumer.setup()
+
+    store.write(
+        AttemptState(
+            task_id="e1", execution_id="w1",
+            phase="started", runner_type="python_wheel",
+        )
+    )
+    consumer._inproc_wheel.add("w1")
+    wheel.alive.add("w1")
+
+    await consumer.reconcile_started_attempts()
+    events = await _events(fake)
+    assert [e.type for e in events] == [AgentEventType.heartbeat]
+    assert events[0].execution_id == "w1"
+
+    # child exited (reaped): no further heartbeats even past the interval
+    wheel.alive.clear()
+    consumer._last_attempt_heartbeat["w1"] -= 61
+    await consumer.reconcile_started_attempts()
+    assert (await _event_types(fake)).count(AgentEventType.heartbeat) == 1
+
+
+async def test_wheel_natural_terminal_clears_heartbeat_stamp(workdir, fake_redis):
+    # R-01 fix: the wheel wait task's natural terminal must drop the heartbeat
+    # pacing stamp (previously it lived on until cleanup, leaking per run).
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    wheel = FakeWheelRunner()
+    store, _runner, consumer = _build(workdir, scrapyd, fake, wheel_runner=wheel)
+    await consumer.setup()
+
+    store.write(
+        AttemptState(
+            task_id="e1", execution_id="w1",
+            phase="started", runner_type="python_wheel",
+        )
+    )
+    consumer._inproc_wheel.add("w1")
+    wheel.alive.add("w1")
+    await consumer.reconcile_started_attempts()
+    assert "w1" in consumer._last_attempt_heartbeat  # stamped while alive
+
+    await consumer._await_wheel("e1", "w1")
+    assert consumer._last_attempt_heartbeat == {}
+    assert store.read("w1").result == "finished"
+    assert (await _event_types(fake))[-1] == AgentEventType.finished
+
+
+async def test_stop_cancel_clears_heartbeat_stamp(workdir, fake_redis):
+    # R-01 fix: a stop(cancel) on a heartbeating scrapy attempt drops the stamp.
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    _store, _runner, consumer = _build(workdir, scrapyd, fake)
+    await consumer.setup()
+    await fake.xadd(STREAM, to_stream_entry(_run_cmd()))
+    await consumer.drain_once()
+    await consumer.reconcile_started_attempts()
+    assert "a1" in consumer._last_attempt_heartbeat  # stamped while running
+
+    await fake.xadd(STREAM, to_stream_entry(_stop_cmd(StopIntent.cancel)))
+    await consumer.drain_once()
+    assert consumer._last_attempt_heartbeat == {}
+    assert (await _event_types(fake))[-1] == AgentEventType.canceled
+
+
+async def test_heartbeat_xadd_failure_swallowed_and_not_outboxed(
+    workdir, fake_redis, tmp_path
+):
+    # TC-09: a failed heartbeat XADD neither raises nor lands in the durable
+    # event outbox; the very next reconcile pass retries (no interval wait).
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    outbox = tmp_path / "outbox"
+    _store, _runner, consumer = _build(workdir, scrapyd, fake, outbox_dir=outbox)
+    await consumer.setup()
+    await fake.xadd(STREAM, to_stream_entry(_run_cmd()))
+    await consumer.drain_once()
+
+    orig_xadd = fake.xadd
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("redis down")
+
+    fake.xadd = _boom
+    await consumer.reconcile_started_attempts()  # must not raise
+    fake.xadd = orig_xadd
+
+    assert list(outbox.glob("*.json")) == []  # heartbeat never persisted
+    assert consumer._last_attempt_heartbeat == {}  # failure not stamped
+    assert (await _event_types(fake)).count(AgentEventType.heartbeat) == 0
+
+    # retry on the next pass now that Redis is back
+    await consumer.reconcile_started_attempts()
+    assert (await _event_types(fake)).count(AgentEventType.heartbeat) == 1
 
 
 async def test_concurrent_same_attempt_one_start(workdir, fake_redis):

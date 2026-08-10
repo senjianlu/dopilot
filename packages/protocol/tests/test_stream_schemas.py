@@ -119,6 +119,26 @@ def test_event_type_values_and_helpers() -> None:
     assert not AgentEventType.accepted.is_terminal
 
 
+def test_heartbeat_event_type_is_non_terminal_liveness() -> None:
+    assert AgentEventType.heartbeat == "attempt.heartbeat"
+    assert AgentEventType.heartbeat.short == "heartbeat"
+    assert not AgentEventType.heartbeat.is_terminal
+    assert not AgentEventType.heartbeat.is_authoritative_terminal
+
+
+def test_heartbeat_event_wire_roundtrip() -> None:
+    ev = AgentEvent(
+        event_id="ev1",
+        agent_id="agent-01",
+        task_id="e1",
+        execution_id="a1",
+        type=AgentEventType.heartbeat,
+        created_at="t",
+    )
+    assert ev.model_dump()["status"] == "heartbeat"
+    assert from_stream_entry(AgentEvent, to_stream_entry(ev)) == ev
+
+
 def test_lost_reason_source_split() -> None:
     assert LostReason.heartbeat_timeout.source == "server"
     assert LostReason.event_stall.source == "server"

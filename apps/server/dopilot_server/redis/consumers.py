@@ -63,7 +63,18 @@ class EventConsumer:
         await self._redis.ensure_group(self._stream, self._group)
 
     async def _apply_one(self, msg_id: object, fields: object) -> None:
-        event = from_stream_entry(AgentEvent, fields)
+        try:
+            event = from_stream_entry(AgentEvent, fields)
+        except Exception:  # noqa: BLE001 - poison-pill guard (e.g. version skew)
+            # An unparseable entry must not wedge the whole stream: unacked it
+            # would be re-claimed and fail forever, blocking every later event.
+            logger.warning(
+                "unparseable agent event %s; acking + skipping",
+                msg_id_to_str(msg_id),
+                exc_info=True,
+            )
+            await self._redis.xack(self._stream, self._group, msg_id)
+            return
         redis_msg_id = msg_id_to_str(msg_id)
         async with self._sessionmaker() as session:
             await apply_event(session, event, redis_msg_id)

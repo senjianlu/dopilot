@@ -13,6 +13,7 @@ agent_id = "from-toml"
 workdir = "/agent-data"
 server_url = "http://server:5000"
 heartbeat_interval_seconds = 7
+attempt_heartbeat_interval_seconds = 45
 agent_token = "agent-machine-token"
 
 [capabilities]
@@ -60,6 +61,7 @@ def test_loads_from_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     # phase 1.5 agent->server contact + redis transport
     assert settings.agent.server_url == "http://server:5000"
     assert settings.agent.heartbeat_interval_seconds == 7
+    assert settings.agent.attempt_heartbeat_interval_seconds == 45  # TOML override
     assert settings.redis.url == "redis://:pw@redis:6379/3"
     assert settings.redis.command_block_ms == 2000
     assert settings.redis.event_outbox_dir == "/agent-data/ob"
@@ -81,6 +83,8 @@ def test_redis_defaults_when_section_absent(
     assert settings.redis.url == "redis://redis:6379/0"
     assert settings.redis.event_outbox_dir == "/agent-data/outbox"
     assert settings.agent.heartbeat_interval_seconds == 10
+    # TC-05: attempt-liveness heartbeat pacing default (<< server stall 300s).
+    assert settings.agent.attempt_heartbeat_interval_seconds == 60
     # No token configured => machine auth OFF.
     assert settings.agent.agent_token == ""
     assert settings.agent.machine_auth_enabled is False
