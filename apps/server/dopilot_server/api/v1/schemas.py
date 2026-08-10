@@ -324,6 +324,15 @@ class ScheduleUpdateRequest(BaseModel):
 
 class SchedulesResponse(BaseModel):
     schedules: list[ScheduleView]
+    # Global enabled count (NOT bounded by the 200-row list truncation): drives
+    # the Web "disable all" button state + confirm copy.
+    enabled_total: int = 0
+
+
+class ScheduleDisableAllResponse(BaseModel):
+    """``POST /schedules/disable-all`` result: how many rows were disabled."""
+
+    disabled: int
 
 
 # ---------------------------------------------------------------------------

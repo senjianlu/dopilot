@@ -16,6 +16,7 @@ const triggerSchedule = vi.fn();
 const previewNextRun = vi.fn();
 const createSchedule = vi.fn();
 const updateSchedule = vi.fn();
+const disableAllSchedules = vi.fn();
 vi.mock("@/lib/api/schedules", () => ({
   listSchedules: () => listSchedules(),
   deleteSchedule: (id: string) => deleteSchedule(id),
@@ -23,6 +24,7 @@ vi.mock("@/lib/api/schedules", () => ({
   previewNextRun: (p: unknown) => previewNextRun(p),
   createSchedule: (p: unknown) => createSchedule(p),
   updateSchedule: (id: string, p: unknown) => updateSchedule(id, p),
+  disableAllSchedules: () => disableAllSchedules(),
 }));
 const listTemplates = vi.fn();
 vi.mock("@/lib/api/templates", () => ({ listTemplates: () => listTemplates() }));
@@ -63,9 +65,19 @@ const schedule: Schedule = {
   updated_at: null,
 };
 
+// listSchedules now returns the full response; enabled_total defaults to the
+// enabled rows in the page unless a test overrides it (truncation scenarios).
+function schedulesResponse(rows: Schedule[], enabledTotal?: number) {
+  return {
+    schedules: rows,
+    enabled_total: enabledTotal ?? rows.filter((r) => r.enabled).length,
+  };
+}
+
 beforeEach(() => {
   push.mockReset();
-  listSchedules.mockReset().mockResolvedValue([schedule]);
+  listSchedules.mockReset().mockResolvedValue(schedulesResponse([schedule]));
+  disableAllSchedules.mockReset().mockResolvedValue({ disabled: 1 });
   deleteSchedule.mockReset().mockResolvedValue(undefined);
   triggerSchedule.mockReset().mockResolvedValue({ task_id: "task-7", status: "queued" });
   previewNextRun.mockReset().mockResolvedValue({ next_run_at: null });
@@ -157,7 +169,9 @@ describe("SchedulesPage", () => {
 
   it("pre-fills the edit dialog switch from an enabled schedule", async () => {
     const user = userEvent.setup();
-    listSchedules.mockResolvedValue([{ ...schedule, enabled: true }]);
+    listSchedules.mockResolvedValue(
+      schedulesResponse([{ ...schedule, enabled: true }]),
+    );
     renderWithProviders(<SchedulesPage />);
     await waitFor(() =>
       expect(
@@ -223,10 +237,12 @@ describe("SchedulesPage", () => {
 
   it("filters schedules by name prefix (trim, case-insensitive, startsWith)", async () => {
     const user = userEvent.setup();
-    listSchedules.mockResolvedValue([
-      schedule,
-      { ...schedule, id: "sch-2", name: "other-schedule" },
-    ]);
+    listSchedules.mockResolvedValue(
+      schedulesResponse([
+        schedule,
+        { ...schedule, id: "sch-2", name: "other-schedule" },
+      ]),
+    );
     renderWithProviders(<SchedulesPage />);
     await waitFor(() =>
       expect(
@@ -274,5 +290,97 @@ describe("SchedulesPage", () => {
     await user.click(screen.getByText("Delete"));
     await user.click(screen.getByTestId("confirm-accept"));
     await waitFor(() => expect(deleteSchedule).toHaveBeenCalledWith("sch-1"));
+  });
+
+  it("disables all schedules after confirmation and reloads", async () => {
+    // TC-03: click -> confirm -> exactly one bulk call -> list reload.
+    const user = userEvent.setup();
+    listSchedules.mockResolvedValue(
+      schedulesResponse([{ ...schedule, enabled: true }]),
+    );
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("schedule-disable-all")).toBeEnabled(),
+    );
+    listSchedules.mockClear();
+    await user.click(screen.getByTestId("schedule-disable-all"));
+    await user.click(screen.getByTestId("confirm-accept"));
+    await waitFor(() => expect(disableAllSchedules).toHaveBeenCalledTimes(1));
+    // Reload-on-success: the table re-fetches after the bulk call resolves.
+    await waitFor(() => expect(listSchedules).toHaveBeenCalled());
+  });
+
+  it("does not disable anything when the confirm dialog is cancelled", async () => {
+    // TC-04: the cancel path never reaches the API.
+    const user = userEvent.setup();
+    listSchedules.mockResolvedValue(
+      schedulesResponse([{ ...schedule, enabled: true }]),
+    );
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("schedule-disable-all")).toBeEnabled(),
+    );
+    await user.click(screen.getByTestId("schedule-disable-all"));
+    await user.click(screen.getByTestId("confirm-cancel"));
+    expect(disableAllSchedules).not.toHaveBeenCalled();
+  });
+
+  it("disables the disable-all button when nothing is enabled globally", async () => {
+    // TC-05 (boundary): enabled_total 0 -> button disabled, no dialog on click.
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("schedule-name-demo-schedule"),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("schedule-disable-all")).toBeDisabled();
+    expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
+  });
+
+  it("blocks a second click while the bulk disable is in flight", async () => {
+    // TC-08: pending request keeps the button disabled; no double submit.
+    const user = userEvent.setup();
+    listSchedules.mockResolvedValue(
+      schedulesResponse([{ ...schedule, enabled: true }]),
+    );
+    let resolveBulk: (v: { disabled: number }) => void = () => {};
+    disableAllSchedules.mockImplementation(
+      () =>
+        new Promise<{ disabled: number }>((resolve) => {
+          resolveBulk = resolve;
+        }),
+    );
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("schedule-disable-all")).toBeEnabled(),
+    );
+    listSchedules.mockClear();
+    await user.click(screen.getByTestId("schedule-disable-all"));
+    await user.click(screen.getByTestId("confirm-accept"));
+    await waitFor(() => expect(disableAllSchedules).toHaveBeenCalledTimes(1));
+
+    // In flight: the button is disabled and a second click cannot re-submit.
+    const button = screen.getByTestId("schedule-disable-all");
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(disableAllSchedules).toHaveBeenCalledTimes(1);
+
+    resolveBulk({ disabled: 1 });
+    await waitFor(() => expect(listSchedules).toHaveBeenCalled());
+    await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  it("keeps disable-all clickable when only unloaded rows are enabled", async () => {
+    // TC-10 (truncation): the loaded page is all-disabled but enabled_total
+    // says an older, unloaded row is still enabled -> button stays usable.
+    const user = userEvent.setup();
+    listSchedules.mockResolvedValue(schedulesResponse([schedule], 1));
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("schedule-disable-all")).toBeEnabled(),
+    );
+    await user.click(screen.getByTestId("schedule-disable-all"));
+    await user.click(screen.getByTestId("confirm-accept"));
+    await waitFor(() => expect(disableAllSchedules).toHaveBeenCalledTimes(1));
   });
 });

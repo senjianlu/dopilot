@@ -159,6 +159,9 @@ const zh = {
     triggerNow: "立即触发",
     delete: "删除",
     confirmDelete: "删除调度 “{{name}}”？后续将不再触发，且此操作不可撤销。",
+    disableAll: "一键停用",
+    confirmDisableAll:
+      "停用全部 {{count}} 个已启用的调度？常用于升级前止血；恢复时需逐条重新启用。",
     refresh: "刷新",
     empty: "暂无调度",
     createTitle: "创建调度",

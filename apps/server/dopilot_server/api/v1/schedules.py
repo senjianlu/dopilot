@@ -24,6 +24,7 @@ from .schemas import (
     NextRunPreviewRequest,
     NextRunPreviewResponse,
     ScheduleCreateRequest,
+    ScheduleDisableAllResponse,
     SchedulesResponse,
     ScheduleUpdateRequest,
     ScheduleView,
@@ -83,8 +84,27 @@ async def list_schedules(
     return SchedulesResponse(
         schedules=[
             ScheduleView(**svc.schedule_view(s, timezone=tz)) for s in schedules
-        ]
+        ],
+        enabled_total=await svc.count_enabled_schedules(session),
     )
+
+
+@router.post("/schedules/disable-all", response_model=ScheduleDisableAllResponse)
+async def disable_all_schedules(
+    request: Request,
+    _admin: AdminContext = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> ScheduleDisableAllResponse:
+    """One-shot pre-upgrade brake: disable every enabled schedule atomically.
+
+    A single bulk UPDATE + exactly one runner reload (a per-row PUT loop would
+    be non-atomic and reload APScheduler N times). Idempotent: with nothing
+    enabled it returns ``{"disabled": 0}``.
+    """
+    disabled = await svc.disable_all_schedules(session)
+    await session.commit()
+    await _reload_runner(request)
+    return ScheduleDisableAllResponse(disabled=disabled)
 
 
 @router.get("/schedules/{schedule_id}", response_model=ScheduleView)

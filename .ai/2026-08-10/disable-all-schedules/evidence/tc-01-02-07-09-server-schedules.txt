@@ -1,0 +1,41 @@
+$ .venv/bin/python -m pytest apps/server/tests/test_schedules.py -v
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 28 items
+
+apps/server/tests/test_schedules.py::test_create_and_list_schedule [32mPASSED[0m[32m [  3%][0m
+apps/server/tests/test_schedules.py::test_create_schedule_unknown_template_404 [32mPASSED[0m[32m [  7%][0m
+apps/server/tests/test_schedules.py::test_create_schedule_invalid_interval_400 [32mPASSED[0m[32m [ 10%][0m
+apps/server/tests/test_schedules.py::test_create_cron_schedule [32mPASSED[0m[32m    [ 14%][0m
+apps/server/tests/test_schedules.py::test_create_cron_schedule_invalid_400 [32mPASSED[0m[32m [ 17%][0m
+apps/server/tests/test_schedules.py::test_create_cron_schedule_invalid_range_400 [32mPASSED[0m[32m [ 21%][0m
+apps/server/tests/test_schedules.py::test_schedule_cannot_override_build_artifact_400 [32mPASSED[0m[32m [ 25%][0m
+apps/server/tests/test_schedules.py::test_trigger_now_creates_task_from_snapshot [32mPASSED[0m[32m [ 28%][0m
+apps/server/tests/test_schedules.py::test_trigger_now_applies_command_override [32mPASSED[0m[32m [ 32%][0m
+apps/server/tests/test_schedules.py::test_schedule_rejects_legacy_override_keys_422 [32mPASSED[0m[32m [ 35%][0m
+apps/server/tests/test_schedules.py::test_schedule_rejects_invalid_command_override_400 [32mPASSED[0m[32m [ 39%][0m
+apps/server/tests/test_schedules.py::test_trigger_now_rejects_unknown_spider_override [32mPASSED[0m[32m [ 42%][0m
+apps/server/tests/test_schedules.py::test_blank_command_override_inherits_template [32mPASSED[0m[32m [ 46%][0m
+apps/server/tests/test_schedules.py::test_repeated_trigger_now_not_coalesced [32mPASSED[0m[32m [ 50%][0m
+apps/server/tests/test_schedules.py::test_fire_timer_dispatches_when_no_backlog [32mPASSED[0m[32m [ 53%][0m
+apps/server/tests/test_schedules.py::test_fire_timer_coalesced_when_undispatched_backlog [32mPASSED[0m[32m [ 57%][0m
+apps/server/tests/test_schedules.py::test_delete_schedule [32mPASSED[0m[32m         [ 60%][0m
+apps/server/tests/test_schedules.py::test_schedule_defaults_enabled_false [32mPASSED[0m[32m [ 64%][0m
+apps/server/tests/test_schedules.py::test_create_schedule_enabled_true [32mPASSED[0m[32m [ 67%][0m
+apps/server/tests/test_schedules.py::test_update_schedule_enabled_toggle [32mPASSED[0m[32m [ 71%][0m
+apps/server/tests/test_schedules.py::test_disabled_schedule_trigger_now_still_runs [32mPASSED[0m[32m [ 75%][0m
+apps/server/tests/test_schedules.py::test_fire_timer_noop_when_disabled [32mPASSED[0m[32m [ 78%][0m
+apps/server/tests/test_schedules.py::test_create_schedule_duplicate_name_409 [32mPASSED[0m[32m [ 82%][0m
+apps/server/tests/test_schedules.py::test_rename_schedule_to_existing_name_409 [32mPASSED[0m[32m [ 85%][0m
+apps/server/tests/test_schedules.py::test_disable_all_disables_every_enabled_schedule [32mPASSED[0m[32m [ 89%][0m
+apps/server/tests/test_schedules.py::test_disable_all_idempotent_when_nothing_enabled [32mPASSED[0m[32m [ 92%][0m
+apps/server/tests/test_schedules.py::test_disable_all_reloads_runner_exactly_once [32mPASSED[0m[32m [ 96%][0m
+apps/server/tests/test_schedules.py::test_enabled_total_not_bounded_by_list_truncation [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m28 passed[0m[32m in 3.26s[0m[32m ==============================[0m
+exit_code=0

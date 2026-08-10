@@ -4,13 +4,16 @@ import type {
   NextRunPreviewRequest,
   NextRunPreviewResponse,
   Schedule,
+  ScheduleDisableAllResponse,
   SchedulesResponse,
   TaskRunResponse,
 } from "./types";
 
-export async function listSchedules(): Promise<Schedule[]> {
+// Returns the full response: `enabled_total` is the GLOBAL enabled count (the
+// `schedules` list itself truncates at 200 rows server-side).
+export async function listSchedules(): Promise<SchedulesResponse> {
   const { data } = await client.get<SchedulesResponse>("/schedules");
-  return data.schedules;
+  return data;
 }
 
 export async function getSchedule(id: string): Promise<Schedule> {
@@ -35,6 +38,14 @@ export async function updateSchedule(
 
 export async function deleteSchedule(id: string): Promise<void> {
   await client.delete(`/schedules/${id}`);
+}
+
+// One-shot pre-upgrade brake: atomically disable every enabled schedule.
+export async function disableAllSchedules(): Promise<ScheduleDisableAllResponse> {
+  const { data } = await client.post<ScheduleDisableAllResponse>(
+    "/schedules/disable-all",
+  );
+  return data;
 }
 
 // Immediately create + dispatch a task from the referenced template snapshot.

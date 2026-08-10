@@ -162,6 +162,9 @@ const en = {
     delete: "Delete",
     confirmDelete:
       "Delete schedule \"{{name}}\"? Future runs will stop. This cannot be undone.",
+    disableAll: "Disable all",
+    confirmDisableAll:
+      "Disable all {{count}} enabled schedules? Typically done before an upgrade; re-enable them one by one afterwards.",
     refresh: "Refresh",
     empty: "No schedules yet",
     createTitle: "Create schedule",

@@ -1,0 +1,3 @@
+$ corepack pnpm --filter web run lint
+[2m$ eslint .[22m
+exit_code=0
