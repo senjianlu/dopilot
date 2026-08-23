@@ -88,6 +88,21 @@ class RedisSettings(BaseModel):
     # is the primary bound; the time-based XTRIM MINID sweep (see
     # ``log_retention_seconds``) is the secondary bound.
     stream_maxlen_logs: int = 100000
+    # Log-flood guard: BYTE budget for the log stream (the count-based MAXLEN
+    # above is meaningless at 256KB entries). ``StreamGuardLoop`` measures
+    # ``MEMORY USAGE`` every ``stream_guard_interval_seconds`` and trims the
+    # stream (exact XTRIM, iterative) back under this budget; a stream that
+    # will not converge is cleared. Default 256MB. 0 disables the guard.
+    stream_max_bytes_logs: int = 268435456
+    stream_guard_interval_seconds: int = 30
+    # Log-flood guard: ``sent`` outbox rows whose command message is no longer
+    # in the agent's command stream (stream cleared / trimmed / volume wiped)
+    # are reset to ``pending`` for re-dispatch (at-least-once, decision 0008).
+    # Checked at dispatcher start and every ``sent_reconcile_interval_seconds``;
+    # only rows whose ``updated_at`` is older than ``sent_reconcile_min_age_seconds``
+    # (so an in-flight XADD is never mistaken for a lost one). 0 interval = off.
+    sent_reconcile_interval_seconds: int = 300
+    sent_reconcile_min_age_seconds: int = 60
     # Time bound for the log stream, enforced by the retention sweep as a periodic
     # ``XTRIM <stream> MINID ~ <now - log_retention_seconds>``. Entries older than
     # this window are trimmed regardless of MAXLEN. 0 disables the time-based
@@ -143,6 +158,17 @@ class NodesSettings(BaseModel):
 class SchedulerSettings(BaseModel):
     enabled: bool = False
     timezone: str = "UTC"
+    # Log-flood guard / auto-disable: a schedule whose last N recorded task
+    # outcomes (current generation, ordered by finished_at) are ALL erroneous is
+    # switched off (``enabled=false``) and a notification is raised. 0 disables
+    # the feature. "Erroneous" = failed/lost, or finished with scrapy
+    # ``log_count/ERROR > 0`` / abnormal ``finish_reason``, or a log-flood /
+    # size-cap truncation (see ``states.execution_is_erroneous``).
+    auto_disable_after_errors: int = 5
+    # A ``lost`` task is a soft terminal the agent may still override; it is
+    # only recorded as an outcome once its executions were reclaimed and the
+    # drain window passed, or after this many seconds as a bounded fallback.
+    lost_outcome_grace_seconds: int = 86400
 
 
 class LogsSettings(BaseModel):
@@ -168,9 +194,16 @@ class LogsSettings(BaseModel):
     # Per-execution log-file size hard cap (resource caps). Once a single
     # execution's on-disk log reaches this size the consumer stops appending body
     # bytes but keeps consuming + ACKing the stream (never stalls), writes one
-    # visible truncation marker, and sets ``log_integrity='truncated'``. Default
-    # 100MiB. 0 disables the cap.
-    max_file_bytes: int = 104857600
+    # visible truncation marker, sets ``log_integrity='truncated'`` and sends the
+    # agent a ``stop_logs`` backpressure command. Default 32MiB (log-flood guard;
+    # matches the agent's ``max_job_log_bytes``). 0 disables the cap.
+    max_file_bytes: int = 33554432
+    # Aggregate logs-directory budget (log-flood guard, disk hard limit). The
+    # log consumer admits an increment only if ``LogsDirGauge`` + the planned
+    # bytes stay under this; otherwise nothing is written (DB state only). The
+    # retention sweep evicts the oldest SEALED terminal tasks' logs to make room.
+    # Default 20GB. 0 disables the budget.
+    max_total_bytes: int = 21474836480
     # First-screen tail when a web log window opens: last N lines or M bytes,
     # whichever boundary is reached first.
     first_screen_max_lines: int = 2000
@@ -198,6 +231,19 @@ class MaintenanceSettings(BaseModel):
     event_audit_retention_days: int = 30
     # Batch size for the ``event_audit`` delete, to avoid long table locks.
     event_audit_delete_batch: int = 5000
+    # Log-flood guard: per-agent command streams left behind by retired agent
+    # ids (no node row, soft-deleted node, or heartbeat older than this) are
+    # deleted once this many days old AND nothing non-terminal / undelivered
+    # references that agent. 0 disables.
+    stale_command_stream_days: int = 7
+    # Notification center bounds (resource hard limits, 0019): read rows older
+    # than ``notification_retention_days`` are pruned; UNREAD rows older than
+    # ``notification_unread_max_days`` are pruned too; and the table never
+    # exceeds ``notification_max_rows`` (oldest evicted first, read before
+    # unread). 0 disables the respective bound.
+    notification_retention_days: int = 30
+    notification_unread_max_days: int = 90
+    notification_max_rows: int = 2000
     # How often the resource-stats sampler (``ResourceStatsLoop``) snapshots
     # server disk / PostgreSQL / Redis usage for the /maintenance dashboard, in
     # seconds. The snapshot is served from memory (the endpoint never samples on

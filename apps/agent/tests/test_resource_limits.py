@@ -522,7 +522,7 @@ def test_tc13_agent_defaults_and_env_overrides(monkeypatch, tmp_path):
     assert s.agent.janitor_interval_seconds == 600
     assert s.agent.completed_log_ttl_days == 3
     assert s.agent.orphan_log_ttl_days == 7
-    assert s.agent.max_job_log_bytes == 104857600
+    assert s.agent.max_job_log_bytes == 33554432  # 32MiB (log-flood guard)
     assert s.agent.artifact_cache_max_bytes == 2147483648
     assert s.redis.maxlen_logs == 100000
     assert s.redis.maxlen_events == 100000

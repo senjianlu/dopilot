@@ -205,6 +205,9 @@ class EventPublisher:
         error_code: str | None = None,
         error_detail: dict[str, Any] | None = None,
         lost_reason: LostReason | None = None,
+        error_count: int | None = None,
+        finish_reason: str | None = None,
+        log_bytes: int | None = None,
     ) -> AgentEvent:
         return AgentEvent(
             event_id=uuid.uuid4().hex,
@@ -217,6 +220,9 @@ class EventPublisher:
             error_code=error_code,
             error_detail=error_detail or {},
             lost_reason=lost_reason,
+            error_count=error_count,
+            finish_reason=finish_reason,
+            log_bytes=log_bytes,
             created_at=_now(),
         )
 
@@ -282,6 +288,9 @@ class EventPublisher:
         error_code: str | None = None,
         error_detail: dict[str, Any] | None = None,
         lost_reason: LostReason | None = None,
+        error_count: int | None = None,
+        finish_reason: str | None = None,
+        log_bytes: int | None = None,
     ) -> None:
         await self.emit(
             self._event(
@@ -292,6 +301,9 @@ class EventPublisher:
                 error_code=error_code,
                 error_detail=error_detail,
                 lost_reason=lost_reason,
+                error_count=error_count,
+                finish_reason=finish_reason,
+                log_bytes=log_bytes,
             )
         )
 
@@ -325,6 +337,9 @@ class EventPublisher:
                 exit_code=state.exit_code,
                 error_code=state.error_code,
                 lost_reason=lost_reason,
+                error_count=state.error_count,
+                finish_reason=state.finish_reason,
+                log_bytes=state.log_bytes,
             )
             return
         # started Python-wheel attempt: never poll Scrapy status — the terminal

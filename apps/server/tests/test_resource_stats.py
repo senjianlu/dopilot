@@ -898,6 +898,9 @@ async def test_tc07_lifespan_gates_stats_loop(monkeypatch):
         async def stop(self):
             pass
 
+        async def enforce_once(self):  # StreamGuardLoop startup pass
+            return {}
+
     class _FakeStats(_FakeWorker):
         snapshot = None
 
@@ -918,6 +921,7 @@ async def test_tc07_lifespan_gates_stats_loop(monkeypatch):
     monkeypatch.setattr(appmod, "EventConsumer", lambda *a, **k: _FakeWorker())
     monkeypatch.setattr(appmod, "LogConsumer", lambda *a, **k: _FakeWorker())
     monkeypatch.setattr(appmod, "RedisReconcileLoop", lambda *a, **k: _FakeWorker())
+    monkeypatch.setattr(appmod, "StreamGuardLoop", lambda *a, **k: _FakeWorker())
     monkeypatch.setattr(appmod, "RetentionSweepLoop", lambda *a, **k: _FakeWorker())
     monkeypatch.setattr(appmod, "ResourceStatsLoop", _FakeStats)
     monkeypatch.setattr(appmod, "build_schedule_runner", lambda *a, **k: None)

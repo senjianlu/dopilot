@@ -21,6 +21,11 @@ class CommandProducer:
         self._redis = redis
         self._maxlen = settings.stream_maxlen_commands
 
+    @property
+    def redis(self) -> object:
+        """The underlying stream client (the dispatcher's sent-reconcile reads it)."""
+        return self._redis
+
     async def send(self, cmd: AgentCommand) -> str:
         """XADD ``cmd`` to its agent's command stream; return the message id."""
         stream = command_stream(cmd.agent_id)

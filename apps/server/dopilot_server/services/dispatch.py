@@ -35,6 +35,7 @@ async def dispatch_resolved(
     source: str,
     execution_template_id: str | None = None,
     schedule_id: str | None = None,
+    schedule_generation: int | None = None,
 ) -> ExecutionRunResponse:
     """Create + dispatch a task from a resolved run request + snapshot.
 
@@ -46,6 +47,7 @@ async def dispatch_resolved(
         source=source,
         execution_template_id=execution_template_id,
         schedule_id=schedule_id,
+        schedule_generation=schedule_generation,
         template_snapshot=snapshot,
     )
     executor = get_executor(request.artifact_type)
@@ -64,6 +66,7 @@ async def run_execution_template(
     source: str,
     schedule_id: str | None = None,
     overrides: dict[str, Any] | None = None,
+    schedule_generation: int | None = None,
 ) -> ExecutionRunResponse:
     """Run from an execution template (+ optional schedule overrides)."""
     request, snapshot = await tmpl.build_run_request(
@@ -78,4 +81,5 @@ async def run_execution_template(
         source=source,
         execution_template_id=template.id,
         schedule_id=schedule_id,
+        schedule_generation=schedule_generation,
     )

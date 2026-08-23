@@ -1,0 +1,24 @@
+$ .venv/bin/python -m pytest apps/agent/tests/test_scrapyd_stats.py -v
+(cwd: /home/rabbir/Projects/dopilot; DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot)
+
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot/apps/agent
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 8 items
+
+apps/agent/tests/test_scrapyd_stats.py::test_parses_error_count_and_finish_reason [32mPASSED[0m[32m [ 12%][0m
+apps/agent/tests/test_scrapyd_stats.py::test_truncated_log_without_stats_block_is_unknown [32mPASSED[0m[32m [ 25%][0m
+apps/agent/tests/test_scrapyd_stats.py::test_stats_block_without_error_key_means_zero_errors [32mPASSED[0m[32m [ 37%][0m
+apps/agent/tests/test_scrapyd_stats.py::test_last_stats_block_wins_when_log_has_several [32mPASSED[0m[32m [ 50%][0m
+apps/agent/tests/test_scrapyd_stats.py::test_read_log_tail_reads_only_last_bytes [32mPASSED[0m[32m [ 62%][0m
+apps/agent/tests/test_scrapyd_stats.py::test_business_log_lines_without_stats_block_never_fabricate_stats [32mPASSED[0m[32m [ 75%][0m
+apps/agent/tests/test_scrapyd_stats.py::test_lines_after_the_stats_block_are_ignored [32mPASSED[0m[32m [ 87%][0m
+apps/agent/tests/test_scrapyd_stats.py::test_stats_block_cut_off_before_error_key_is_unknown_not_zero [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m8 passed[0m[32m in 0.02s[0m[32m ===============================[0m
+
+exit code: 0

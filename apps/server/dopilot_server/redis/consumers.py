@@ -27,6 +27,7 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config.settings import Settings
+from ..logs.dir_gauge import LogsDirGauge
 from ..logs.sse import SubscriptionManager
 from ..services.events import apply_event
 from ..services.logs import apply_log_event
@@ -162,11 +163,14 @@ class LogConsumer:
         pending_idle_ms: int = 60000,
         block_ms: int = 5000,
         batch: int = 128,
+        gauge: LogsDirGauge | None = None,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._redis = redis
         self._settings = settings
         self._manager = manager
+        # Log-flood guard: process-wide logs-dir gauge (admission hard limit).
+        self._gauge = gauge
         self._consumer = consumer_name
         self._pending_idle_ms = pending_idle_ms
         self._block_ms = block_ms
@@ -182,7 +186,9 @@ class LogConsumer:
     async def _apply_one(self, msg_id: object, fields: object) -> None:
         event = from_stream_entry(AgentLogEvent, fields)
         async with self._sessionmaker() as session:
-            await apply_log_event(session, self._settings, event, self._manager)
+            await apply_log_event(
+                session, self._settings, event, self._manager, gauge=self._gauge
+            )
             await session.commit()
         await self._redis.xack(self._stream, self._group, msg_id)
 

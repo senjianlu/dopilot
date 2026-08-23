@@ -50,6 +50,12 @@ class FakeScrapyd:
         # Captured schedule.json submissions (project/spider/args/settings) so
         # command-first tests can assert what the agent sent to scrapyd.
         self.schedules: list[dict] = []
+        # Log-flood guard test knobs: captured cancel.json submissions (job +
+        # signal), a one-shot cancel failure, and "sticky" jobs that ignore
+        # cancel (stay running) so the watchdog escalation can be exercised.
+        self.cancels: list[dict] = []
+        self.fail_cancel_times = 0
+        self.sticky_running = False
 
     # --- test-side helpers ------------------------------------------------
     def add_running(self, job_id: str, project: str, spider: str) -> None:
@@ -121,7 +127,14 @@ class FakeScrapyd:
     def _cancel(self, request: httpx.Request) -> httpx.Response:
         form = self._form(request)
         job = self._first(form, "job")
+        self.cancels.append({"job": job, "signal": self._first(form, "signal")})
+        if self.fail_cancel_times > 0:
+            self.fail_cancel_times -= 1
+            raise httpx.ConnectError("scrapyd cancel unreachable", request=request)
         was_running = any(j["id"] == job for j in self.running)
+        if self.sticky_running:
+            prevstate = "running" if was_running else None
+            return httpx.Response(200, json={"status": "ok", "prevstate": prevstate})
         self.running = [j for j in self.running if j["id"] != job]
         if job is not None:
             self.finished.append({"id": job})

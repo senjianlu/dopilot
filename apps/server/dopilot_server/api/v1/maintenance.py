@@ -17,6 +17,7 @@ from ...config.loader import get_settings
 from ...config.settings import Settings
 from ...db.engine import get_session
 from ...errors import ApiError
+from ...logs.dir_gauge import LogsDirGauge
 from ...services import maintenance as svc
 from .schemas import (
     ResourceStatsResponse,
@@ -61,11 +62,17 @@ def _resolve_cutoff(body: TerminalCleanupRequest) -> datetime:
     )
 
 
+def _logs_gauge(request: Request) -> LogsDirGauge | None:
+    """The runtime's shared logs-dir gauge (None under ASGITransport tests)."""
+    return getattr(request.app.state, "logs_gauge", None)
+
+
 @router.post(
     "/maintenance/terminal-cleanup", response_model=TerminalCleanupResponse
 )
 async def terminal_cleanup(
     body: TerminalCleanupRequest,
+    request: Request,
     _admin: AdminContext = Depends(get_current_admin),
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
@@ -77,9 +84,12 @@ async def terminal_cleanup(
     """
     cutoff = _resolve_cutoff(body)
     # cleanup_terminal_data owns its commits (two-phase, failure-safe) when not a
-    # dry run; the handler no longer commits.
+    # dry run; the handler no longer commits. The shared logs-dir gauge is
+    # passed so the unlinks settle the same exact counter the consumer admits
+    # against (log-flood guard).
     summary = await svc.cleanup_terminal_data(
-        session, settings, cutoff=cutoff, dry_run=body.dry_run
+        session, settings, cutoff=cutoff, dry_run=body.dry_run,
+        gauge=_logs_gauge(request),
     )
     return TerminalCleanupResponse(**summary.as_dict())
 
@@ -136,7 +146,7 @@ async def sweep_now(
         cutoff = now - timedelta(days=settings.logs.retention_days)
         try:
             summary = await svc.cleanup_terminal_data(
-                session, settings, cutoff=cutoff
+                session, settings, cutoff=cutoff, gauge=_logs_gauge(request)
             )
             steps["cleanup"] = SweepStepResult(
                 status="ok",

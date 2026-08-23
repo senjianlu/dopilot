@@ -40,6 +40,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .config.settings import Settings
+from .logs.dir_gauge import LogsDirGauge
 from .models.command_outbox import CommandOutbox
 from .models.event_audit import EventAudit
 from .models.execution import Execution, ExecutionLogFile, Task
@@ -231,6 +232,7 @@ async def _collect_server(
     sessionmaker: async_sessionmaker[AsyncSession],
     settings: Settings,
     now: datetime,
+    gauge: LogsDirGauge | None = None,
 ) -> dict[str, Any]:
     logs_root = settings.logs.root_dir
     artifacts_root = settings.artifacts.root_dir
@@ -239,6 +241,17 @@ async def _collect_server(
     logs_bytes = await asyncio.to_thread(_du, logs_root)
     artifacts_bytes = await asyncio.to_thread(_du, artifacts_root)
     entries.append(_entry("server.logs_bytes", "bytes", logs_bytes, None))
+    # Log-flood guard: the logs-dir budget as the consumer's admission gauge
+    # sees it (exact, process-wide) vs ``logs.max_total_bytes``. Falls back to
+    # the walk when no gauge is wired (tests / stats without the runtime).
+    entries.append(
+        _entry(
+            "logs.dir_bytes",
+            "bytes",
+            gauge.value if gauge is not None else logs_bytes,
+            _limit(settings.logs.max_total_bytes),
+        )
+    )
     entries.append(
         _entry(
             "server.artifacts_bytes",
@@ -414,6 +427,21 @@ async def _collect_redis(
         ),
     ]
 
+    # Log-flood guard: the log stream's real byte footprint vs its budget (the
+    # entry-count MAXLEN below bounds nothing at 256KB entries).
+    try:
+        stream_bytes = await redis_client.memory_usage(LOG_STREAM, samples=0)
+    except Exception:  # noqa: BLE001 - degrade this entry only
+        stream_bytes = None
+    entries.append(
+        _entry(
+            "redis.stream_bytes:logs",
+            "bytes",
+            _num(stream_bytes),
+            _limit(settings.redis.stream_max_bytes_logs),
+        )
+    )
+
     for stream, label, maxlen_attr in (
         (LOG_STREAM, "logs", "stream_maxlen_logs"),
         (EVENT_STREAM, "events", "stream_maxlen_events"),
@@ -572,6 +600,7 @@ async def collect_snapshot(
     redis_client: RedisStreamClient | None,
     *,
     now: datetime | None = None,
+    gauge: LogsDirGauge | None = None,
 ) -> dict[str, Any]:
     """Assemble one resource snapshot (the two-layer scopes/entries contract).
 
@@ -585,7 +614,7 @@ async def collect_snapshot(
 
     scopes = [
         await _safe(
-            lambda: _collect_server(sessionmaker, settings, now), "server", now
+            lambda: _collect_server(sessionmaker, settings, now, gauge), "server", now
         ),
         await _safe(
             lambda: _collect_postgres(sessionmaker, settings, now), "postgres", now
@@ -620,10 +649,12 @@ class ResourceStatsLoop:
         redis_client: RedisStreamClient | None = None,
         *,
         interval_seconds: float | None = None,
+        gauge: LogsDirGauge | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._settings = settings
         self._redis = redis_client
+        self._gauge = gauge
         self._interval = (
             interval_seconds
             if interval_seconds is not None
@@ -636,7 +667,7 @@ class ResourceStatsLoop:
     async def sample_once(self, *, now: datetime | None = None) -> None:
         """Take one snapshot and cache it. Public so tests can drive one tick."""
         self.snapshot = await collect_snapshot(
-            self._sm, self._settings, self._redis, now=now
+            self._sm, self._settings, self._redis, now=now, gauge=self._gauge
         )
 
     async def _run(self) -> None:

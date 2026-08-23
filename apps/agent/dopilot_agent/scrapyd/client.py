@@ -134,11 +134,18 @@ class ScrapydClient:
             )
         return str(jobid)
 
-    async def cancel(self, project: str, job: str) -> dict[str, Any]:
-        """Cancel a job; returns scrapyd's cancel response (``prevstate``)."""
-        return await self._post(
-            "/cancel.json", data={"project": project, "job": job}
-        )
+    async def cancel(
+        self, project: str, job: str, *, signal: str | None = None
+    ) -> dict[str, Any]:
+        """Cancel a job; returns scrapyd's cancel response (``prevstate``).
+
+        ``signal`` maps to scrapyd's optional ``signal`` form field (``TERM`` by
+        default on scrapyd's side; the log-flood watchdog escalates to ``KILL``).
+        """
+        data: dict[str, Any] = {"project": project, "job": job}
+        if signal:
+            data["signal"] = signal
+        return await self._post("/cancel.json", data=data)
 
     async def listjobs(self, project: str) -> dict[str, Any]:
         """Return scrapyd's pending/running/finished job lists for a project."""

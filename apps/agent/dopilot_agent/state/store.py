@@ -71,6 +71,23 @@ class AttemptState(BaseModel):
     install_path: str = ""
     shell_command: str = ""
 
+    # --- log-flood guard: additive fields (defaults keep old state files
+    # loading unchanged). ``log_flood`` = the watchdog saw the local job.log at
+    # or past the cap and is stopping the job; its terminal is reported as
+    # ``failed`` / ``log_flood`` regardless of what scrapyd says. ``log_capped``
+    # = the publisher stopped tailing this execution (cap reached or a
+    # ``stop_logs`` backpressure command arrived). ``error_count`` /
+    # ``finish_reason`` are the scrapy stats parsed from the log tail at
+    # terminal; ``log_bytes`` the final local log size.
+    log_flood: bool = False
+    log_flood_bytes: int = 0
+    log_flood_requested_at: str | None = None
+    log_flood_escalation: str | None = None
+    log_capped: bool = False
+    error_count: int | None = None
+    finish_reason: str | None = None
+    log_bytes: int | None = None
+
 
 class StateStore:
     """File-backed store of :class:`AttemptState` under a state directory."""
@@ -203,6 +220,63 @@ class StateStore:
         state.exit_code = exit_code
         if result == "canceled":
             state.canceled = True
+        return self.write(state)
+
+    def mark_canceled(self, execution_id: str) -> AttemptState | None:
+        """Record a successful stop by RE-READING the state (merge, never a
+        stale whole-object write-back: the log publisher may have set
+        ``log_capped`` while the cancel request was in flight)."""
+        state = self.read(execution_id)
+        if state is None:
+            return None
+        if state.canceled:
+            return state
+        state.canceled = True
+        return self.write(state)
+
+    def mark_log_flood(
+        self,
+        execution_id: str,
+        *,
+        log_bytes: int,
+        requested_at: str,
+        escalation: str | None = None,
+    ) -> AttemptState | None:
+        """Record that the flood watchdog is stopping this execution."""
+        state = self.read(execution_id)
+        if state is None:
+            return None
+        state.log_flood = True
+        state.log_flood_bytes = max(state.log_flood_bytes, log_bytes)
+        if state.log_flood_requested_at is None:
+            state.log_flood_requested_at = requested_at
+        if escalation is not None:
+            state.log_flood_escalation = escalation
+        return self.write(state)
+
+    def mark_log_capped(self, execution_id: str) -> AttemptState | None:
+        """Record that the log publisher stopped tailing this execution."""
+        state = self.read(execution_id)
+        if state is None or state.log_capped:
+            return state
+        state.log_capped = True
+        return self.write(state)
+
+    def mark_stats(
+        self,
+        execution_id: str,
+        *,
+        error_count: int | None,
+        finish_reason: str | None,
+        log_bytes: int | None,
+    ) -> AttemptState | None:
+        """Persist the scrapy stats parsed at terminal (None = unknown)."""
+        state = self.read(execution_id)
+        if state is None:
+            return None
+        state.error_count = error_count
+        state.finish_reason = finish_reason
+        state.log_bytes = log_bytes
         return self.write(state)
 
     def read(self, execution_id: str) -> AttemptState | None:

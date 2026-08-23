@@ -22,24 +22,31 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from dopilot_protocol import AgentCommand, AgentCommandType, StopIntent
+from dopilot_protocol import AgentCommand, AgentCommandType, StopIntent, command_stream
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ..config.settings import Settings
 from ..models.command_outbox import (
     OUTBOX_CANCELED,
     OUTBOX_DISPATCHABLE,
     OUTBOX_DISPATCHING,
     OUTBOX_FAILED,
     OUTBOX_FAILED_RETRYABLE,
+    OUTBOX_PENDING,
     OUTBOX_SENT,
     CommandOutbox,
 )
+from ..models.notification import SEVERITY_INFO, TYPE_SENT_COMMANDS_REQUEUED
 from ..services import executions as svc
+from ..services import notifications as notif
 from ..services import states
+from ..services.outbox import SCHEDULED_GIVE_UP_SECONDS
 from .commands import CommandProducer
 
 logger = logging.getLogger(__name__)
@@ -73,12 +80,20 @@ class CommandDispatcher:
         producer: CommandProducer,
         *,
         interval_seconds: float = 2.0,
+        settings: Settings | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._producer = producer
         self._interval = interval_seconds
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
+        # Log-flood guard: ``sent`` reconcile (at-least-once after a stream /
+        # volume wipe). Off when no settings are given (tests) or interval 0.
+        self._settings = settings
+        self._clock = clock
+        self._last_sent_reconcile: float | None = None
+        self.sent_reconcile_calls = 0
 
     # --- single-row dispatch ----------------------------------------------
     def _build_command(self, row: CommandOutbox) -> AgentCommand:
@@ -139,17 +154,113 @@ class CommandDispatcher:
     async def _fail_execution_dispatch_timeout(
         self, session: AsyncSession, row: CommandOutbox
     ) -> None:
-        """Mark a ``run`` row's execution/task failed with dispatch_timeout."""
+        """Mark a ``run`` row's execution/task failed with dispatch_timeout.
+
+        Terminal writer protocol (log-flood guard): lock task -> execution with
+        ``FOR UPDATE`` and re-check the status under the lock, so a concurrently
+        committed agent terminal (e.g. ``finished``) is never overwritten.
+        """
         now = datetime.now(UTC)
-        execution = await svc.get_execution(session, row.execution_id)
+        task = await svc.get_task(session, row.task_id, for_update=True)
+        execution = await svc.get_execution(session, row.execution_id, for_update=True)
         if execution is not None and execution.status in states.EXEC_ACTIVE:
             execution.status = states.EXEC_FAILED
             execution.error_code = DISPATCH_TIMEOUT
             execution.finished_at = now
-        task = await svc.get_task(session, row.task_id)
         if task is not None and task.status in states.TASK_ACTIVE:
             task.status = states.TASK_FAILED
             task.finished_at = now
+
+    # --- sent reconcile (at-least-once after a stream wipe) ------------------
+    async def reconcile_sent_once(
+        self, session: AsyncSession, *, now: datetime | None = None
+    ) -> list[str]:
+        """Reset ``sent`` rows whose message vanished from the command stream.
+
+        A ``sent`` row normally stays ``sent`` forever (the agent XACKs on the
+        stream side). When the stream was cleared, trimmed past the message or
+        the Redis volume wiped, an undelivered command would be lost — so rows
+        older than ``sent_reconcile_min_age_seconds`` (never an in-flight XADD)
+        whose task is still active are checked with ``XRANGE id id``; a missing
+        message puts the row back to ``pending`` for re-dispatch (the agent is
+        idempotent per execution) with a FRESH give-up window: the original
+        ``give_up_at`` was set at creation and is long past after a real outage
+        (Redis volume wiped, server down > 15 min) — without a new deadline the
+        very next ``_process_row`` would fail the row as ``dispatch_timeout``
+        instead of re-XADDing it. Returns the requeued command ids. Caller
+        commits.
+        """
+        if self._settings is None:
+            return []
+        self.sent_reconcile_calls += 1
+        now = now or datetime.now(UTC)
+        min_age = self._settings.redis.sent_reconcile_min_age_seconds
+        cutoff = now - timedelta(seconds=max(0, min_age))
+        rows = (
+            (
+                await session.execute(
+                    select(CommandOutbox).where(
+                        CommandOutbox.status == OUTBOX_SENT,
+                        CommandOutbox.updated_at < cutoff,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        redis = getattr(self._producer, "redis", None)
+        requeued: list[str] = []
+        for row in rows:
+            task = await svc.get_task(session, row.task_id)
+            if task is None or task.status in states.TASK_TERMINAL:
+                continue
+            if not row.redis_msg_id or redis is None:
+                continue
+            try:
+                found = await redis.xrange(
+                    command_stream(row.agent_id), row.redis_msg_id, row.redis_msg_id, count=1
+                )
+            except Exception:  # noqa: BLE001 - Redis down: try again next time
+                logger.warning("sent reconcile: XRANGE failed for %s", row.command_id)
+                continue
+            if found:
+                continue
+            row.status = OUTBOX_PENDING
+            row.redis_msg_id = None
+            row.last_error = "sent_message_missing"
+            # new delivery attempt = new deadline + retry budget (the row was
+            # delivered once already; its old window says nothing about now)
+            deadline = now + timedelta(seconds=SCHEDULED_GIVE_UP_SECONDS)
+            row.give_up_at = deadline
+            row.expire_at = deadline
+            row.retry_count = 0
+            requeued.append(row.command_id)
+        if requeued:
+            logger.warning(
+                "sent reconcile: %d sent command(s) vanished from their streams; requeued",
+                len(requeued),
+            )
+            try:
+                await notif.notify(
+                    session,
+                    type=TYPE_SENT_COMMANDS_REQUEUED,
+                    severity=SEVERITY_INFO,
+                    payload={"count": len(requeued), "command_ids": requeued[:50]},
+                    dedupe_key=now.strftime("%Y-%m-%d"),
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("sent reconcile notification failed", exc_info=True)
+        return requeued
+
+    def _sent_reconcile_due(self) -> bool:
+        if self._settings is None:
+            return False
+        interval = self._settings.redis.sent_reconcile_interval_seconds
+        if interval <= 0:
+            return False
+        if self._last_sent_reconcile is None:
+            return True
+        return (self._clock() - self._last_sent_reconcile) >= interval
 
     async def _process_row(self, session: AsyncSession, row: CommandOutbox) -> None:
         now = datetime.now(UTC)
@@ -173,6 +284,12 @@ class CommandDispatcher:
     # --- periodic loop -----------------------------------------------------
     async def _tick(self) -> None:
         async with self._sessionmaker() as session:
+            if self._sent_reconcile_due():
+                self._last_sent_reconcile = self._clock()
+                try:
+                    await self.reconcile_sent_once(session)
+                except Exception:  # noqa: BLE001 - never block dispatch
+                    logger.warning("sent reconcile failed", exc_info=True)
             rows = (
                 (
                     await session.execute(

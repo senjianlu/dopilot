@@ -22,6 +22,7 @@ from dopilot_protocol import (
     AttemptStatus,
 )
 
+from ..logcap import SETTING_NAME as LOG_CAP_SETTING
 from ..scrapyd.client import ScrapydClient, ScrapydError
 from ..state.store import AttemptState, StateStore
 
@@ -44,10 +45,15 @@ class ScrapyRunner:
         client: ScrapydClient,
         store: StateStore,
         logs_dir: str | Path,
+        max_job_log_bytes: int = 0,
     ) -> None:
         self._client = client
         self._store = store
         self._logs_dir = Path(logs_dir)
+        # Log-flood guard: > 0 injects ``-s DOPILOT_JOB_LOG_CAP_BYTES`` into
+        # every scheduled crawler (the in-process logcap hook enforces it);
+        # 0 = disabled (nothing injected, matching the agent-wide "0 = off").
+        self._max_job_log_bytes = max_job_log_bytes
 
     def log_path(self, project: str, spider: str, job_id: str) -> Path:
         """scrapyd writes job logs to logs_dir/{project}/{spider}/{job}.log."""
@@ -60,12 +66,15 @@ class ScrapyRunner:
         two-phase ``reserved`` -> ``started`` state file around this call. Raises
         :class:`RunnerError` on a scrapyd failure.
         """
+        settings = dict(req.settings or {})
+        if self._max_job_log_bytes > 0:
+            settings[LOG_CAP_SETTING] = str(self._max_job_log_bytes)
         try:
             return await self._client.schedule(
                 req.project,
                 req.spider,
                 version=req.version,
-                settings=req.settings,
+                settings=settings or None,
                 args=req.args,
             )
         except ScrapydError as exc:
@@ -96,8 +105,14 @@ class ScrapyRunner:
             status=AttemptStatus.running,
         )
 
-    async def stop(self, execution_id: str, task_id: str) -> AgentStopResponse:
-        """Cancel an execution. Idempotent: stopping a gone job is not an error."""
+    async def stop(
+        self, execution_id: str, task_id: str, *, signal: str | None = None
+    ) -> AgentStopResponse:
+        """Cancel an execution. Idempotent: stopping a gone job is not an error.
+
+        ``signal`` is forwarded to scrapyd's ``cancel.json`` (the log-flood
+        watchdog escalates from the default TERM to ``KILL``).
+        """
         state = self._store.read(execution_id)
         if state is None:
             # No mapping: nothing we can cancel. Report unknown, not an error.
@@ -110,7 +125,9 @@ class ScrapyRunner:
             )
 
         try:
-            body = await self._client.cancel(state.project, state.scrapyd_job_id)
+            body = await self._client.cancel(
+                state.project, state.scrapyd_job_id, signal=signal
+            )
         except ScrapydError as exc:
             # Job already gone/finished on scrapyd's side: resolve, don't error.
             status = await self._resolve_status(state)
@@ -126,8 +143,9 @@ class ScrapyRunner:
         # prevstate == "running"/"pending" means we actually stopped it; a null
         # prevstate means the job was already not running (idempotent no-op).
         if prevstate in ("running", "pending"):
-            state.canceled = True
-            self._store.write(state)
+            # Merge via re-read: ``state`` is stale after the await (the log
+            # publisher may have flipped ``log_capped`` meanwhile).
+            self._store.mark_canceled(execution_id)
             return AgentStopResponse(
                 task_id=task_id,
                 execution_id=execution_id,

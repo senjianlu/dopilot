@@ -49,9 +49,20 @@ completed_log_ttl_days = 3
 # Remove an ORPHAN workspace (no readable state, no live process, quiet on disk)
 # after this many days.
 orphan_log_ttl_days = 7
-# Per-job job.log size hard cap in bytes (Python wheel jobs); past this the drain
-# writes one truncation marker and drops further output. 0 disables. (100MiB)
-max_job_log_bytes = 104857600
+# Per-execution job-log size hard cap in bytes for EVERY runner (log-flood
+# guard). Wheel jobs: the drain writes one truncation marker and drops further
+# output. Scrapyd jobs: the cap is injected into the crawler (-s
+# DOPILOT_JOB_LOG_CAP_BYTES -> in-process logcap hook stops writing + SIGTERMs
+# the crawler), the watchdog cancels + truncates a job that still reaches it,
+# and the log publisher stops tailing past it. 0 disables. (32MiB)
+max_job_log_bytes = 33554432
+# Log-flood watchdog escalation: seconds after the first scrapyd cancel before
+# re-cancelling with signal=KILL; after twice this, SIGKILL the single crawler
+# PID provably owned by the managed scrapyd (never in external-scrapyd mode).
+log_flood_kill_after_seconds = 30
+# Janitor: an oversized job.log with NO readable state is only truncated when
+# scrapyd does not list the job AND the file has been quiet for this long.
+janitor_quiet_seconds = 3600
 # Aggregate artifact/wheel cache size cap in bytes under {workdir}/artifacts; the
 # janitor evicts least-recently-used sha entries above it (never one a running
 # execution uses). 0 disables. (2GiB)
@@ -79,6 +90,11 @@ maxlen_events = 100000
 # Resource caps (C5): hard cap on the durable event-outbox file count. During a
 # long Redis outage the oldest files above this are dropped (logged). 0 disables.
 event_outbox_max_files = 100000
+# Log-flood guard: agent-wide token-bucket cap on log bytes published to the
+# shared log stream (bucket = 2s of quota); bounds how fast one agent can fill
+# Redis however many executions are talkative. 0 = unlimited; any other value
+# must be >= 128 (the bucket has to hold one truncation marker). (2MiB/s)
+log_publish_rate_bytes_per_second = 2097152
 
 # Local scrapyd subprocess the agent owns.
 # host/port are container-internal (NEVER exposed to the host); only the agent

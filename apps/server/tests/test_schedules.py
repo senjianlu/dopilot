@@ -551,3 +551,48 @@ async def test_enabled_total_not_bounded_by_list_truncation(
     assert len(body["schedules"]) == 200
     assert all(s["enabled"] is False for s in body["schedules"])
     assert body["enabled_total"] == 1
+
+
+# --- TC-23 (API side): PUT enabled=true starts a fresh outcome generation ---------
+
+
+async def test_put_enable_resets_auto_disable_state(exec_client, seeder, db_session):
+    from datetime import UTC, datetime
+
+    from dopilot_server.models.scheduling import Schedule
+
+    template = await _create_template(exec_client, seeder)
+    created = await _create_schedule(exec_client, template["id"])
+    # simulate the recorder having auto-disabled it after 5 erroneous runs
+    row = await db_session.get(Schedule, created["id"])
+    row.enabled = False
+    row.consecutive_error_count = 5
+    row.auto_disabled_at = datetime.now(UTC)
+    row.auto_disabled_reason = {"consecutive_errors": 5, "threshold": 5, "task_ids": []}
+    await db_session.commit()
+
+    body = (await exec_client.get(f"/api/v1/schedules/{created['id']}")).json()
+    assert body["consecutive_error_count"] == 5 and body["auto_disabled_at"]
+    assert body["auto_disabled_reason"]["consecutive_errors"] == 5
+    assert body["outcome_generation"] == 0
+
+    r = await exec_client.put(f"/api/v1/schedules/{created['id']}", json={"enabled": True})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["enabled"] is True
+    assert body["consecutive_error_count"] == 0
+    assert body["auto_disabled_at"] is None and body["auto_disabled_reason"] is None
+    assert body["outcome_generation"] == 1
+    # a task fired now is stamped with the new generation
+    await seeder.healthy_node()
+    r = await exec_client.post(f"/api/v1/schedules/{created['id']}/trigger-now")
+    assert r.status_code == 200, r.text
+    from dopilot_server.models.execution import Task
+
+    task = await db_session.get(Task, r.json()["task_id"])
+    assert task.schedule_generation == 1
+    # disabling (or re-PUTting enabled=true when already enabled) does not bump again
+    r = await exec_client.put(f"/api/v1/schedules/{created['id']}", json={"enabled": True})
+    assert r.json()["outcome_generation"] == 1
+    r = await exec_client.put(f"/api/v1/schedules/{created['id']}", json={"enabled": False})
+    assert r.json()["outcome_generation"] == 1

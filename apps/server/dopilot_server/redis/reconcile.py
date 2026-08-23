@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -33,6 +34,7 @@ from ..models.node import Node
 from ..services import executions as svc
 from ..services import outbox as outbox_svc
 from ..services import states
+from ..services.outcomes import record_task_outcomes
 
 # Agent-authoritative terminals — safe to clean up (the process is known done).
 # A pure server-lost (status==lost, reconciled_from None) is NOT cleaned up here:
@@ -63,7 +65,7 @@ class ReconcileReport:
 
 
 async def _rollup(session: AsyncSession, task_id: str, now: datetime) -> None:
-    task = await svc.get_task(session, task_id)
+    task = await svc.get_task(session, task_id, for_update=True)
     if task is None or task.status in states.TASK_TERMINAL:
         return
     executions = await svc.list_executions(session, task_id)
@@ -85,8 +87,21 @@ async def mark_lost(
 
     Short-circuits (returns False) if the execution is already terminal — a
     server-lost must never overwrite an existing terminal.
+
+    Terminal-writer protocol (log-flood guard): the caller may hold a STALE
+    object selected without a lock, so the task row and then the execution row
+    are locked ``FOR UPDATE`` and the status is re-read under the lock — an
+    agent ``finished`` committed meanwhile wins and this returns False.
     """
     if execution.status in states.EXEC_TERMINAL:
+        return False
+    await svc.get_task(session, execution.task_id, for_update=True)
+    fresh = await svc.get_execution(session, execution.id, for_update=True)
+    if fresh is None:
+        return False
+    if fresh is not execution:
+        await session.refresh(execution)
+    if execution.status in states.EXEC_TERMINAL:  # re-read under the lock
         return False
     execution.status = states.EXEC_LOST
     execution.lost_reason = reason
@@ -256,18 +271,32 @@ class RedisReconcileLoop:
         settings: Settings,
         *,
         interval_seconds: float = 5.0,
+        on_schedules_disabled: Callable[[list[str]], Awaitable[None]] | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._settings = settings
         self._interval = interval_seconds
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
+        # Log-flood guard / auto-disable: invoked with the schedule ids the
+        # outcome recorder just disabled — strictly AFTER the tick's commit, so
+        # a ``ScheduleRunner.reload()`` reading a fresh session sees
+        # ``enabled=false`` (never re-registers the job). Commit failure -> no
+        # callback.
+        self._on_schedules_disabled = on_schedules_disabled
 
     async def _tick(self) -> None:
+        disabled: list[str] = []
         async with self._sm() as session:
             await reconcile_once(session, self._settings)
             await finalize_drained_logs(session, self._settings)
+            disabled = await record_task_outcomes(session, self._settings)
             await session.commit()
+        if disabled and self._on_schedules_disabled is not None:
+            try:
+                await self._on_schedules_disabled(disabled)
+            except Exception:  # noqa: BLE001 - reload failure must not kill the loop
+                logger.warning("on_schedules_disabled callback failed", exc_info=True)
 
     async def _run(self) -> None:
         while not self._stop.is_set():

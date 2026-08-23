@@ -294,6 +294,11 @@ class ScheduleView(BaseModel):
     # Phase 1.7.1: estimated next fire time. For interval triggers this is an
     # estimate (now + interval); for cron it is computed from the expression.
     next_run_at: str | None = None
+    # Log-flood guard / auto-disable (derived from the outcome ledger).
+    consecutive_error_count: int = 0
+    auto_disabled_at: str | None = None
+    auto_disabled_reason: dict[str, Any] | None = None
+    outcome_generation: int = 0
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -485,3 +490,34 @@ class RewriteAofResponse(BaseModel):
     """Result of triggering a Redis background AOF rewrite."""
 
     started: bool = True
+
+
+class NotificationView(BaseModel):
+    """One notification-center row (log-flood guard / auto-disable)."""
+
+    id: str
+    type: str
+    severity: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    count: int = 1
+    read: bool = False
+    read_at: str | None = None
+    created_at: str | None = None
+    last_seen_at: str | None = None
+
+
+class NotificationsResponse(BaseModel):
+    notifications: list[NotificationView]
+    unread_count: int = 0
+
+
+class NotificationUnreadCountResponse(BaseModel):
+    unread_count: int
+
+
+class NotificationsReadRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
+class NotificationsReadResponse(BaseModel):
+    marked: int

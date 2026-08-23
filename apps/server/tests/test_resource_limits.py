@@ -217,6 +217,11 @@ async def _seed_terminal_task(session, settings, *, finished_delta_days: int):
     )
     session.add(execution)
     lf = svc.create_log_file(session, settings, task, execution)
+    # A terminal task past its drain window has SEALED logs (finalize_drained_logs
+    # / the outcome recorder); retention only ever touches sealed files
+    # (log-flood guard single-writer invariant).
+    lf.status = states.LOG_COMPLETE
+    lf.final_offset = 0
     await session.commit()
     Path(lf.storage_path).parent.mkdir(parents=True, exist_ok=True)
     Path(lf.storage_path).write_bytes(b"log body\n")
@@ -1032,7 +1037,7 @@ def test_tc13_server_defaults_and_env_overrides(monkeypatch, tmp_path):
     s = load_settings(str(toml))
     # Defaults from the models.
     assert s.logs.retention_days == 30
-    assert s.logs.max_file_bytes == 104857600
+    assert s.logs.max_file_bytes == 33554432  # 32MiB (log-flood guard)
     assert s.redis.stream_maxlen_logs == 100000
     assert s.maintenance.enabled is True
     assert s.maintenance.event_audit_retention_days == 30

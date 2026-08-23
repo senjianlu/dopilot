@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.command_outbox import (
     OUTBOX_CANCELED,
     OUTBOX_PENDING,
+    OUTBOX_SENT,
     OUTBOX_UNRESOLVED,
     CommandOutbox,
 )
@@ -115,6 +116,44 @@ def create_cleanup_outbox(
         task_id=task_id,
         execution_id=execution_id,
         type="cleanup_logs",
+        payload={},
+        status=OUTBOX_PENDING,
+        expire_at=expire_at,
+        give_up_at=give_up_at,
+    )
+    session.add(row)
+    return row
+
+
+async def create_stop_logs_outbox(
+    session: AsyncSession,
+    *,
+    task_id: str,
+    execution_id: str,
+    agent_id: str,
+) -> CommandOutbox | None:
+    """Queue a ``stop_logs`` backpressure command (log-flood guard).
+
+    Idempotent per execution: when an un-terminated ``stop_logs`` row already
+    exists for this execution nothing is added and ``None`` is returned. No
+    business-state change is involved; the agent simply stops tailing.
+    """
+    existing = await session.execute(
+        select(CommandOutbox.command_id).where(
+            CommandOutbox.execution_id == execution_id,
+            CommandOutbox.type == "stop_logs",
+            CommandOutbox.status.in_(sorted(OUTBOX_UNRESOLVED | {OUTBOX_SENT})),
+        )
+    )
+    if existing.first() is not None:
+        return None
+    expire_at, give_up_at = _windows(manual=False)
+    row = CommandOutbox(
+        command_id=_new_id(),
+        agent_id=agent_id,
+        task_id=task_id,
+        execution_id=execution_id,
+        type="stop_logs",
         payload={},
         status=OUTBOX_PENDING,
         expire_at=expire_at,

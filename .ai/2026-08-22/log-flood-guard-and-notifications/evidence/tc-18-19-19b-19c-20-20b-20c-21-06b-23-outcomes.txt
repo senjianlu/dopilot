@@ -1,0 +1,27 @@
+$ .venv/bin/python -m pytest apps/server/tests/test_outcomes.py -v
+(cwd: /home/rabbir/Projects/dopilot; DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot)
+
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 11 items
+
+apps/server/tests/test_outcomes.py::test_execution_is_erroneous_matrix [32mPASSED[0m[32m [  9%][0m
+apps/server/tests/test_outcomes.py::test_three_consecutive_failures_disable_schedule [32mPASSED[0m[32m [ 18%][0m
+apps/server/tests/test_outcomes.py::test_trigger_now_tasks_count [32mPASSED[0m[32m  [ 27%][0m
+apps/server/tests/test_outcomes.py::test_stats_drive_auto_disable_end_to_end [32mPASSED[0m[32m [ 36%][0m
+apps/server/tests/test_outcomes.py::test_reset_ignore_and_threshold_zero [32mPASSED[0m[32m [ 45%][0m
+apps/server/tests/test_outcomes.py::test_ledger_is_order_independent [32mPASSED[0m[32m [ 54%][0m
+apps/server/tests/test_outcomes.py::test_soft_lost_policy [32mPASSED[0m[32m         [ 63%][0m
+apps/server/tests/test_outcomes.py::test_ledger_independent_of_task_retention [32mPASSED[0m[32m [ 72%][0m
+apps/server/tests/test_outcomes.py::test_terminal_paths_and_sealing [32mPASSED[0m[32m [ 81%][0m
+apps/server/tests/test_outcomes.py::test_log_flood_terminal_notifies_once [32mPASSED[0m[32m [ 90%][0m
+apps/server/tests/test_outcomes.py::test_manual_reenable_starts_new_generation [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m11 passed[0m[32m in 2.49s[0m[32m ==============================[0m
+
+exit code: 0

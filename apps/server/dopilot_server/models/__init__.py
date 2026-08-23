@@ -15,7 +15,8 @@ from .execution import (
     Task,
 )
 from .node import Node
-from .scheduling import ExecutionTemplate, Schedule
+from .notification import Notification
+from .scheduling import ExecutionTemplate, Schedule, ScheduleOutcomeLedger
 
 __all__ = [
     "AuthToken",
@@ -29,4 +30,6 @@ __all__ = [
     "EventAudit",
     "ExecutionTemplate",
     "Schedule",
+    "ScheduleOutcomeLedger",
+    "Notification",
 ]

@@ -7,7 +7,11 @@ its single server<->agent token, and which capabilities it advertises.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# Smallest non-zero log publish rate: the 2-second bucket (2 * rate) must hold
+# one truncation marker (<= 160 bytes for any cap value).
+LOG_PUBLISH_RATE_MIN = 128
 
 
 class AgentSettings(BaseModel):
@@ -48,10 +52,22 @@ class AgentSettings(BaseModel):
     # removed once older than this many days — longer than completed, since we are
     # less certain about it.
     orphan_log_ttl_days: int = 7
-    # Per-job ``job.log`` size hard cap in bytes (Python wheel jobs). Past this the
-    # drain writes one truncation marker and drops further output; the subprocess
-    # keeps running and its exit status is unaffected. Default 100MiB. 0 disables.
-    max_job_log_bytes: int = 104857600
+    # Per-execution job-log size hard cap in bytes, for EVERY runner (log-flood
+    # guard). Python wheel jobs: the drain writes one truncation marker and drops
+    # further output; the subprocess keeps running. Scrapyd jobs: the cap is
+    # injected into the crawler as ``-s DOPILOT_JOB_LOG_CAP_BYTES`` (the in-process
+    # ``logcap`` hook stops writing + SIGTERMs the crawler at the cap), the agent
+    # watchdog cancels + truncates a job whose log still reaches the cap, and the
+    # log publisher stops tailing past it. Default 32MiB. 0 disables all of it.
+    max_job_log_bytes: int = 33554432
+    # Log-flood watchdog escalation: seconds after the first scrapyd cancel before
+    # the watchdog re-cancels with ``signal=KILL``; after twice this the agent
+    # kills the single crawler PID it can prove belongs to the managed scrapyd.
+    log_flood_kill_after_seconds: int = 30
+    # Janitor: an oversized job.log with NO readable state is only truncated when
+    # scrapyd does not list the job AND the file has been quiet (mtime) for at
+    # least this many seconds — never a possibly-running job's log.
+    janitor_quiet_seconds: int = 3600
     # Aggregate artifact/wheel cache size cap in bytes under
     # ``{workdir}/artifacts``. The janitor evicts least-recently-used sha entries
     # above this, never evicting one referenced by a running execution. Default
@@ -82,11 +98,28 @@ class RedisSettings(BaseModel):
     # volume incident).
     maxlen_logs: int = 100000
     maxlen_events: int = 100000
+    # Log-flood guard: agent-wide token-bucket cap on log bytes published to the
+    # shared log stream (bucket = 2s of quota). Bounds how fast one agent can fill
+    # Redis regardless of how many executions are talkative. 0 = unlimited;
+    # otherwise at least LOG_PUBLISH_RATE_MIN so the 2s bucket can always hold
+    # one truncation marker (the marker is bucket-accounted like content and is
+    # never allowed to overshoot the bucket).
+    log_publish_rate_bytes_per_second: int = 2097152
     # Resource caps (C5): hard cap on the durable event-outbox file count. During
     # a long Redis outage the outbox would otherwise grow without bound; above the
     # cap the OLDEST files are dropped (logged) so the agent never fills its disk.
     # 0 disables the cap.
     event_outbox_max_files: int = 100000
+
+    @field_validator("log_publish_rate_bytes_per_second")
+    @classmethod
+    def _rate_can_carry_a_marker(cls, value: int) -> int:
+        if value < 0 or (0 < value < LOG_PUBLISH_RATE_MIN):
+            raise ValueError(
+                "log_publish_rate_bytes_per_second must be 0 (unlimited) or "
+                f">= {LOG_PUBLISH_RATE_MIN}"
+            )
+        return value
 
     @property
     def enabled(self) -> bool:

@@ -152,7 +152,17 @@ async def update_schedule(
     if "description" in data:
         schedule.description = data["description"]
     if "enabled" in data:
+        enabling = bool(data["enabled"]) and not schedule.enabled
         schedule.enabled = bool(data["enabled"])
+        if enabling:
+            # Log-flood guard / auto-disable: a manual re-enable starts a new
+            # outcome generation — the derived counter restarts at 0 and tasks
+            # created before this instant (even when their terminal arrives
+            # later) never count toward the new run.
+            schedule.outcome_generation = int(schedule.outcome_generation or 0) + 1
+            schedule.consecutive_error_count = 0
+            schedule.auto_disabled_at = None
+            schedule.auto_disabled_reason = None
     if "overrides" in data:
         template = await templates.get_template_or_404(
             session, schedule.execution_template_id
@@ -285,6 +295,7 @@ async def trigger_now(
         source=states.TASK_SOURCE_TRIGGER_NOW,
         schedule_id=schedule.id,
         overrides=schedule.overrides,
+        schedule_generation=int(schedule.outcome_generation or 0),
     )
 
 
@@ -316,6 +327,7 @@ async def fire_timer(
         source=states.TASK_SOURCE_TIMER,
         schedule_id=schedule.id,
         overrides=schedule.overrides,
+        schedule_generation=int(schedule.outcome_generation or 0),
     )
 
 
@@ -385,6 +397,14 @@ def schedule_view(
         "cron": schedule.cron,
         "overrides": dict(schedule.overrides or {}),
         "next_run_at": _iso(next_run),
+        "consecutive_error_count": int(schedule.consecutive_error_count or 0),
+        "auto_disabled_at": _iso(schedule.auto_disabled_at),
+        "auto_disabled_reason": (
+            dict(schedule.auto_disabled_reason)
+            if schedule.auto_disabled_reason
+            else None
+        ),
+        "outcome_generation": int(schedule.outcome_generation or 0),
         "created_at": _iso(schedule.created_at),
         "updated_at": _iso(schedule.updated_at),
     }

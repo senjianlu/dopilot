@@ -49,6 +49,13 @@ import {
   ToneBadge,
 } from "@/components/features/status-badge";
 import { ArchivedIndicator } from "@/components/features/archived-indicator";
+import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { matchesPrefix } from "@/lib/search";
 import {
   createSchedule,
@@ -78,6 +85,14 @@ import { useConfirm } from "@/hooks/use-confirm";
 // shadcn/Radix Select cannot bind an empty-string value, so "none" is the
 // sentinel for "no node-strategy override".
 type OverrideStrategy = "none" | NodeStrategy;
+
+// Log-flood guard / auto-disable: consecutive erroneous runs recorded in the
+// auto-disable reason (falls back to the live derived counter).
+function autoDisabledCount(schedule: Schedule): number {
+  const reason = schedule.auto_disabled_reason ?? {};
+  const n = reason.consecutive_errors;
+  return typeof n === "number" ? n : schedule.consecutive_error_count;
+}
 
 export default function SchedulesPage() {
   const { t } = useTranslation();
@@ -414,7 +429,33 @@ export default function SchedulesPage() {
               visibleSchedules.map((schedule) => (
                 <TableRow key={schedule.id}>
                   <TableCell data-testid={`schedule-name-${schedule.name}`}>
-                    {schedule.name}
+                    <span className="inline-flex items-center gap-2">
+                      {schedule.name}
+                      {schedule.auto_disabled_at ? (
+                        <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            {/* a focusable trigger: keyboard users reach the
+                                reason via Tab + focus, not just hover */}
+                            <Badge asChild variant="destructive">
+                              <button
+                                type="button"
+                                data-testid={`schedule-auto-disabled-${schedule.name}`}
+                              >
+                                {t("schedules.autoDisabled")}
+                              </button>
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t("schedules.autoDisabledHint", {
+                              count: autoDisabledCount(schedule),
+                              at: formatDateTime(schedule.auto_disabled_at),
+                            })}
+                          </TooltipContent>
+                        </Tooltip>
+                        </TooltipProvider>
+                      ) : null}
+                    </span>
                   </TableCell>
                   <TableCell>
                     <Switch

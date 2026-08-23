@@ -35,6 +35,9 @@ install、`next dev` 热更新）;完整 Docker 闭环仅用于集成验收/镜�
 ## 测试与验证命令
 
 ```bash
+# 日志洪泛防护的并发用例(行锁 / 部分唯一索引)只在 PostgreSQL 上有意义:
+# 先 scripts/dev-db.sh up,再导出下面的变量;缺失时这些用例 FAIL 而非 skip。
+export DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot
 pytest                              # server / agent / protocol(根 pyproject 聚合 testpaths)
 ruff check apps packages            # Python lint
 corepack pnpm --filter web test     # web vitest

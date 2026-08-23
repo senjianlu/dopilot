@@ -67,6 +67,12 @@ services:
     command: ["dopilot-agent"]
     init: true
     logging: *default-logging
+    # Log-flood guard note: the agent's own caps (per-job log 32MiB via the
+    # in-process logcap hook + watchdog, publish rate limit, janitor) bound its
+    # disk and Redis footprint; the container memory cap is a last-resort
+    # backstop for the agent + its managed scrapyd + crawlers.
+    mem_limit: ${DOPILOT_AGENT_MEM_LIMIT:-4g}
+    memswap_limit: ${DOPILOT_AGENT_MEM_LIMIT:-4g}
     environment:
       DOPILOT_AGENT_ID: ${DOPILOT_AGENT_ID:-scrapy-agent-remote-1}
       DOPILOT_AGENT_WORKDIR: /agent-data

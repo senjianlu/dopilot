@@ -1,0 +1,28 @@
+$ .venv/bin/python -m pytest apps/agent/tests/test_main.py apps/agent/tests/test_heartbeat_worker.py -v
+(cwd: /home/rabbir/Projects/dopilot; DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot)
+
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot/apps/agent
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 12 items
+
+apps/agent/tests/test_main.py::test_run_agent_starts_and_stops_cleanly [32mPASSED[0m[32m [  8%][0m
+apps/agent/tests/test_main.py::test_run_agent_starts_and_stops_redis_workers [32mPASSED[0m[32m [ 16%][0m
+apps/agent/tests/test_main.py::test_startup_janitor_sweep_runs_before_workers_start [32mPASSED[0m[32m [ 25%][0m
+apps/agent/tests/test_heartbeat_worker.py::test_build_request_reflects_settings_and_load [32mPASSED[0m[32m [ 33%][0m
+apps/agent/tests/test_heartbeat_worker.py::test_build_request_includes_redis_status [32mPASSED[0m[32m [ 41%][0m
+apps/agent/tests/test_heartbeat_worker.py::test_send_once_posts_with_token [32mPASSED[0m[32m [ 50%][0m
+apps/agent/tests/test_heartbeat_worker.py::test_send_once_returns_false_on_5xx [32mPASSED[0m[32m [ 58%][0m
+apps/agent/tests/test_heartbeat_worker.py::test_send_once_no_token_omits_auth_header [32mPASSED[0m[32m [ 66%][0m
+apps/agent/tests/test_heartbeat_worker.py::test_build_request_includes_disk_sample [32mPASSED[0m[32m [ 75%][0m
+apps/agent/tests/test_heartbeat_worker.py::test_build_request_omits_disk_when_no_sample [32mPASSED[0m[32m [ 83%][0m
+apps/agent/tests/test_heartbeat_worker.py::test_build_request_reads_cache_never_walks_fs [32mPASSED[0m[32m [ 91%][0m
+apps/agent/tests/test_heartbeat_worker.py::test_build_request_reports_log_cap_mode [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m12 passed[0m[32m in 0.24s[0m[32m ==============================[0m
+
+exit code: 0

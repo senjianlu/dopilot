@@ -1,0 +1,25 @@
+$ .venv/bin/python -m pytest apps/server/tests/test_maintenance_guard.py -v
+(cwd: /home/rabbir/Projects/dopilot; DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot)
+
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 9 items
+
+apps/server/tests/test_maintenance_guard.py::test_truncate_oversized_only_sealed [32mPASSED[0m[32m [ 11%][0m
+apps/server/tests/test_maintenance_guard.py::test_truncate_boundary_cap_plus_one_and_idempotent_marker_state [32mPASSED[0m[32m [ 22%][0m
+apps/server/tests/test_maintenance_guard.py::test_evict_logs_dir_to_budget [32mPASSED[0m[32m [ 33%][0m
+apps/server/tests/test_maintenance_guard.py::test_evict_cannot_recover_when_only_active_logs [32mPASSED[0m[32m [ 44%][0m
+apps/server/tests/test_maintenance_guard.py::test_delete_stale_command_streams [32mPASSED[0m[32m [ 55%][0m
+apps/server/tests/test_maintenance_guard.py::test_resource_stats_new_entries [32mPASSED[0m[32m [ 66%][0m
+apps/server/tests/test_maintenance_guard.py::test_lifespan_runs_guard_and_gauge_before_consumers [32mPASSED[0m[32m [ 77%][0m
+apps/server/tests/test_maintenance_guard.py::test_cleanup_keeps_unrecorded_schedule_tasks_until_recorded [32mPASSED[0m[32m [ 88%][0m
+apps/server/tests/test_maintenance_guard.py::test_evict_skips_failing_victim_and_continues [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m9 passed[0m[32m in 2.95s[0m[32m ===============================[0m
+
+exit code: 0

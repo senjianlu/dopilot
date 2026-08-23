@@ -138,6 +138,21 @@ class Schedule(Base):
     cron: Mapped[str | None] = mapped_column(String, nullable=True)
     # Phase 1.8: bounded override payload (never build_artifact_id).
     overrides: Mapped[dict] = mapped_column(_JSON, nullable=False, default=dict)
+    # Log-flood guard / auto-disable. ``consecutive_error_count`` is DERIVED:
+    # recomputed from ``schedule_outcome_ledger`` (current generation, newest
+    # first) every time an outcome is recorded or corrected — never incremented
+    # in place. ``outcome_generation`` is bumped on manual re-enable; tasks carry
+    # the generation they were created under, so pre-reset outcomes (and their
+    # late corrections) never cross the reset boundary. ``auto_disabled_*`` are
+    # set when the threshold trips and cleared on manual re-enable.
+    consecutive_error_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    auto_disabled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    auto_disabled_reason: Mapped[dict | None] = mapped_column(_JSON, nullable=True)
+    outcome_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -146,4 +161,35 @@ class Schedule(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+
+class ScheduleOutcomeLedger(Base):
+    """One recorded task outcome per schedule (log-flood guard / auto-disable).
+
+    The ledger is INDEPENDENT of ``tasks`` retention: ``cleanup_terminal_data``
+    deletes tasks/executions/log files but never touches this table, so a
+    long-interval schedule's early failures survive until a success resets the
+    run. It self-trims to the newest ``max(100, 2 * auto_disable_after_errors)``
+    rows per schedule. A row is upserted by ``task_id`` so a corrected soft
+    ``lost`` updates in place. ``generation`` is the task's
+    ``schedule_generation``; only rows of the schedule's current generation are
+    counted.
+    """
+
+    __tablename__ = "schedule_outcome_ledger"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    schedule_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("schedules.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    erroneous: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

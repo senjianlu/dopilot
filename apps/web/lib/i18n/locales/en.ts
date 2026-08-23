@@ -189,6 +189,46 @@ const en = {
     overrideStrategy: "Override node strategy",
     overrideStrategyNone: "No override (use template)",
     overrideNodes: "Override nodes",
+    autoDisabled: "Auto-disabled",
+    autoDisabledHint:
+      "Disabled automatically after {{count}} consecutive erroneous runs at {{at}}; re-enable to start a fresh run.",
+    consecutiveErrors: "{{count}} consecutive errors",
+  },
+  notifications: {
+    title: "Notifications",
+    markAllRead: "Mark all read",
+    loading: "Loading…",
+    empty: "No notifications",
+    types: {
+      schedule_auto_disabled: {
+        title: "Schedule \"{{schedule_name}}\" was disabled automatically",
+        body: "{{consecutive_errors}} consecutive erroneous runs reached the threshold ({{threshold}}). Fix the spider, then re-enable the schedule.",
+      },
+      log_flood: {
+        title: "Log flood: execution stopped",
+        body: "Execution {{execution_id}} on {{agent_id}} wrote {{log_bytes}} bytes (cap {{cap}}) and was cancelled.",
+      },
+      log_truncated: {
+        title: "Log truncated ({{reason}})",
+        body: "Execution {{execution_id}} hit the {{reason}} limit; the agent was told to stop tailing.",
+      },
+      redis_stream_over_budget: {
+        title: "Redis log stream over budget",
+        body: "{{initial_bytes}} bytes > budget {{budget}}: trimmed {{trimmed}} entries (cleared: {{cleared}}).",
+      },
+      logs_dir_over_budget: {
+        title: "Server logs directory over budget",
+        body: "{{bytes}} bytes > budget {{budget}} and nothing sealed is left to evict; new log increments are being dropped.",
+      },
+      stale_command_streams_deleted: {
+        title: "Stale agent command streams deleted",
+        body: "Removed command streams of retired agents: {{agent_ids}}.",
+      },
+      sent_commands_requeued: {
+        title: "Sent commands re-queued",
+        body: "{{count}} dispatched command(s) vanished from their streams and were re-queued.",
+      },
+    },
   },
   task: {
     title: "Task detail",
