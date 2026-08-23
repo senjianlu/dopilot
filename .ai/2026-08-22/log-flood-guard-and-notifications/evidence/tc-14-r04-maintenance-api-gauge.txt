@@ -1,0 +1,31 @@
+$ .venv/bin/python -m pytest apps/server/tests/test_maintenance.py -v
+(cwd: /home/rabbir/Projects/dopilot; DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot)
+
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 15 items
+
+apps/server/tests/test_maintenance.py::test_cleanup_deletes_only_old_terminal_tasks [32mPASSED[0m[32m [  6%][0m
+apps/server/tests/test_maintenance.py::test_cleanup_never_deletes_active_tasks[queued] [32mPASSED[0m[32m [ 13%][0m
+apps/server/tests/test_maintenance.py::test_cleanup_never_deletes_active_tasks[running] [32mPASSED[0m[32m [ 20%][0m
+apps/server/tests/test_maintenance.py::test_cleanup_never_deletes_active_tasks[finalizing] [32mPASSED[0m[32m [ 26%][0m
+apps/server/tests/test_maintenance.py::test_cleanup_unlinks_log_files_and_rows [32mPASSED[0m[32m [ 33%][0m
+apps/server/tests/test_maintenance.py::test_cleanup_deletes_only_safe_outbox_rows [32mPASSED[0m[32m [ 40%][0m
+apps/server/tests/test_maintenance.py::test_cleanup_dry_run_changes_nothing [32mPASSED[0m[32m [ 46%][0m
+apps/server/tests/test_maintenance.py::test_cleanup_uses_created_at_when_no_finished_at [32mPASSED[0m[32m [ 53%][0m
+apps/server/tests/test_maintenance.py::test_mark_lost_marks_active_executions_and_task [32mPASSED[0m[32m [ 60%][0m
+apps/server/tests/test_maintenance.py::test_mark_lost_rejects_terminal_task [32mPASSED[0m[32m [ 66%][0m
+apps/server/tests/test_maintenance.py::test_mark_lost_does_not_touch_already_terminal_executions [32mPASSED[0m[32m [ 73%][0m
+apps/server/tests/test_maintenance.py::test_terminal_cleanup_api [32mPASSED[0m[32m  [ 80%][0m
+apps/server/tests/test_maintenance.py::test_terminal_cleanup_api_requires_cutoff [32mPASSED[0m[32m [ 86%][0m
+apps/server/tests/test_maintenance.py::test_mark_lost_api [32mPASSED[0m[32m         [ 93%][0m
+apps/server/tests/test_maintenance.py::test_terminal_cleanup_api_settles_shared_logs_gauge [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m15 passed[0m[32m in 0.91s[0m[32m ==============================[0m
+
+exit code: 0

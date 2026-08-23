@@ -1,0 +1,108 @@
+$ bash .ai/2026-08-22/log-flood-guard-and-notifications/assets/tc-25-alembic-roundtrip.sh  (cwd repo root; dev PostgreSQL from scripts/dev-db.sh; the script echoes every command via set -x)
++ ../../.venv/bin/python -c 'import psycopg; c=psycopg.connect('\''postgresql://dopilot:dopilot@localhost:5432/dopilot'\'', autocommit=True); c.execute('\''DROP SCHEMA public CASCADE; CREATE SCHEMA public;'\''); print('\''schema reset'\'')'
+schema reset
++ echo 'exit code: 0'
+exit code: 0
++ ../../.venv/bin/python -m alembic upgrade 0012
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001, initial schema: nodes, auth_tokens
+INFO  [alembic.runtime.migration] Running upgrade 0001 -> 0002, phase 1: executions, attempts, log-file index, scrapy artifacts; nodes.health
+INFO  [alembic.runtime.migration] Running upgrade 0002 -> 0003, phase 1.5: command_outbox, event_audit, log integrity/gap, lost reconcile
+INFO  [alembic.runtime.migration] Running upgrade 0003 -> 0004, phase 1.7: rename execution-domain to task/execution; add no_target reason
+INFO  [alembic.runtime.migration] Running upgrade 0004 -> 0005, phase 1.7 packet 2: task templates, schedules, task origin + snapshot
+INFO  [alembic.runtime.migration] Running upgrade 0005 -> 0006, phase 1.7.1: node scheduling-state + soft delete, task spider column
+INFO  [alembic.runtime.migration] Running upgrade 0006 -> 0007, phase 1.8: build artifacts + execution-template/task/schedule clean-cut
+INFO  [alembic.runtime.migration] Running upgrade 0007 -> 0008, phase 1.8.1: command-first execution templates + schedule overrides
+INFO  [alembic.runtime.migration] Running upgrade 0008 -> 0009, phase 2a: id naming clean-cut (execution_id/attempt_id -> task_id/execution_id)
+INFO  [alembic.runtime.migration] Running upgrade 0009 -> 0010, phase 2.2: unique execution-template + schedule names
+INFO  [alembic.runtime.migration] Running upgrade 0010 -> 0011, phase 2.2: schedules.enabled timer gate
+INFO  [alembic.runtime.migration] Running upgrade 0011 -> 0012, phase task-artifact-archive: build_artifacts.archived_at
++ echo 'exit code: 0'
+exit code: 0
++ ../../.venv/bin/python -c '
+import psycopg
+c = psycopg.connect('\''postgresql://dopilot:dopilot@localhost:5432/dopilot'\'', autocommit=True)
+c.execute("INSERT INTO execution_templates (id, name, node_strategy, node_ids, created_at, updated_at) VALUES ('\''t'\''||repeat('\''0'\'',31), '\''tpl'\'', '\''any'\'', '\''[]'\'', now(), now())")
+c.execute("INSERT INTO schedules (id, name, enabled, execution_template_id, trigger_type, interval_seconds, overrides, created_at, updated_at) VALUES ('\''s'\''||repeat('\''0'\'',31), '\''sch'\'', false, '\''t'\''||repeat('\''0'\'',31), '\''interval'\'', 60, '\''{}'\'', now(), now())")
+c.execute("INSERT INTO tasks (id, artifact_type, target, node_strategy, status, params, created_at, updated_at, status_detail, source, schedule_id, template_snapshot) VALUES ('\''a'\''||repeat('\''0'\'',31), '\''scrapy'\'', '\''x'\'', '\''any'\'', '\''queued'\'', '\''{}'\'', now(), now(), '\''{}'\'', '\''schedule_timer'\'', '\''s'\''||repeat('\''0'\'',31), '\''{}'\'')")
+print('\''pre-upgrade schedule task inserted (schedule_timer, not terminal)'\'')
+'
+pre-upgrade schedule task inserted (schedule_timer, not terminal)
++ echo 'exit code: 0'
+exit code: 0
++ ../../.venv/bin/python -m alembic upgrade head
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade 0012 -> 0013, log-flood guard: execution stats, task outcomes, schedule ledger, notifications
++ echo 'exit code: 0'
+exit code: 0
++ ../../.venv/bin/python -c '
+import psycopg
+c = psycopg.connect('\''postgresql://dopilot:dopilot@localhost:5432/dopilot'\'')
+q = lambda sql: c.execute(sql).fetchall()
+print('\''backfilled tasks.schedule_generation:'\'', q("SELECT schedule_generation FROM tasks WHERE schedule_id IS NOT NULL"))
+print('\''new tables:'\'', [r[0] for r in q("SELECT table_name FROM information_schema.tables WHERE table_name IN ('\''notifications'\'','\''schedule_outcome_ledger'\'') ORDER BY 1")])
+print('\''schedules new cols:'\'', [r[0] for r in q("SELECT column_name FROM information_schema.columns WHERE table_name='\''schedules'\'' AND column_name IN ('\''outcome_generation'\'','\''consecutive_error_count'\'','\''auto_disabled_at'\'','\''auto_disabled_reason'\'') ORDER BY 1")])
+print('\''tasks new cols:'\'', [r[0] for r in q("SELECT column_name FROM information_schema.columns WHERE table_name='\''tasks'\'' AND column_name IN ('\''schedule_generation'\'','\''outcome_recorded_at'\'','\''outcome_erroneous'\'') ORDER BY 1")])
+print('\''executions new cols:'\'', [r[0] for r in q("SELECT column_name FROM information_schema.columns WHERE table_name='\''executions'\'' AND column_name IN ('\''error_count'\'','\''finish_reason'\'','\''log_bytes'\'') ORDER BY 1")])
+print('\''execution_log_files new cols:'\'', [r[0] for r in q("SELECT column_name FROM information_schema.columns WHERE table_name='\''execution_log_files'\'' AND column_name='\''truncation_reason'\''")])
+print('\''notifications indexes:'\'', [r[0] for r in q("SELECT indexname FROM pg_indexes WHERE tablename='\''notifications'\'' ORDER BY 1")])
+print('\''partial index def:'\'', q("SELECT indexdef FROM pg_indexes WHERE indexname='\''uq_notifications_active_dedupe'\''")[0][0])
+'
+backfilled tasks.schedule_generation: [(0,)]
+new tables: ['notifications', 'schedule_outcome_ledger']
+schedules new cols: ['auto_disabled_at', 'auto_disabled_reason', 'consecutive_error_count', 'outcome_generation']
+tasks new cols: ['outcome_erroneous', 'outcome_recorded_at', 'schedule_generation']
+executions new cols: ['error_count', 'finish_reason', 'log_bytes']
+execution_log_files new cols: ['truncation_reason']
+notifications indexes: ['ix_notifications_read_created', 'notifications_pkey', 'uq_notifications_active_dedupe']
+partial index def: CREATE UNIQUE INDEX uq_notifications_active_dedupe ON public.notifications USING btree (type, dedupe_key) WHERE (read_at IS NULL)
++ echo 'exit code: 0'
+exit code: 0
++ ../../.venv/bin/python -m alembic downgrade -1
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running downgrade 0013 -> 0012, log-flood guard: execution stats, task outcomes, schedule ledger, notifications
++ echo 'exit code: 0'
+exit code: 0
++ ../../.venv/bin/python -c '
+import psycopg
+c = psycopg.connect('\''postgresql://dopilot:dopilot@localhost:5432/dopilot'\'')
+print('\''after downgrade, tables present:'\'', [r[0] for r in c.execute("SELECT table_name FROM information_schema.tables WHERE table_name IN ('\''notifications'\'','\''schedule_outcome_ledger'\'')").fetchall()])
+print('\''after downgrade, tasks.schedule_generation column present:'\'', bool(c.execute("SELECT 1 FROM information_schema.columns WHERE table_name='\''tasks'\'' AND column_name='\''schedule_generation'\''").fetchall()))
+'
+after downgrade, tables present: []
+after downgrade, tasks.schedule_generation column present: False
++ echo 'exit code: 0'
+exit code: 0
++ ../../.venv/bin/python -m alembic upgrade head
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade 0012 -> 0013, log-flood guard: execution stats, task outcomes, schedule ledger, notifications
++ echo 'exit code: 0'
+exit code: 0
++ ../../.venv/bin/python -c '
+import asyncio, datetime as dt, psycopg
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
+from dopilot_server.config.settings import Settings
+from dopilot_server.services.outcomes import record_task_outcomes
+c = psycopg.connect('\''postgresql://dopilot:dopilot@localhost:5432/dopilot'\'', autocommit=True)
+c.execute("UPDATE tasks SET status='\''failed'\'', finished_at=now() - interval '\''1 hour'\'' WHERE id='\''a'\''||repeat('\''0'\'',31)")
+async def main():
+    engine = create_async_engine('\''postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot'\'')
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
+    settings = Settings.model_validate({'\''database'\'': {'\''url'\'': '\''x'\''}})
+    async with maker() as s:
+        await record_task_outcomes(s, settings, now=dt.datetime.now(dt.UTC))
+        await s.commit()
+    await engine.dispose()
+asyncio.run(main())
+print('\''ledger rows (generation, erroneous):'\'', c.execute('\''SELECT generation, erroneous FROM schedule_outcome_ledger'\'').fetchall())
+print('\''schedule consecutive_error_count:'\'', c.execute('\''SELECT consecutive_error_count FROM schedules'\'').fetchone()[0])
+'
+ledger rows (generation, erroneous): [(0, True)]
+schedule consecutive_error_count: 1
++ echo 'exit code: 0'
+exit code: 0
+script exit code: 0

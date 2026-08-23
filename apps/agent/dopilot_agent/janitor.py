@@ -32,6 +32,7 @@ import contextlib
 import fnmatch
 import logging
 import os
+import re
 import shutil
 import time
 from collections.abc import Callable
@@ -41,7 +42,32 @@ from pathlib import Path
 from .config.settings import Settings
 from .disk_status import DiskStatus
 from .runners.python_wheel import PGID_SIDECAR, PythonWheelRunner
-from .state.store import StateStore
+from .state.store import AttemptState, StateStore
+
+# Log-flood guard (C8): a job.log above the cap is cut back to this + the cap.
+_LOG_CAP_MARKER = "\n[dopilot:job-log-truncated max_bytes={cap} reason=size-cap]\n"
+# Any dopilot truncation marker (janitor / watchdog / server maintenance) that may
+# legitimately sit right after ``cap`` in an already-processed file.
+_ANY_CAP_MARKER = re.compile(rb"\A\n\[dopilot:(?:job-)?log-truncated [^\n\]]*\]\n\Z")
+_MAX_MARKER_LEN = 160
+
+
+def already_capped(path: Path, cap: int, size: int | None = None) -> bool:
+    """True when ``path`` is exactly ``cap`` bytes + one dopilot truncation
+    marker — the idempotent state of a file this sweep (or the watchdog /
+    server maintenance) already cut. Anything else above ``cap`` — including a
+    raw ``cap + 1`` file with no marker — is still a candidate."""
+    try:
+        if size is None:
+            size = path.stat().st_size
+        if size <= cap or size - cap > _MAX_MARKER_LEN:
+            return False
+        with path.open("rb") as fh:
+            fh.seek(cap)
+            tail = fh.read(_MAX_MARKER_LEN + 1)
+    except OSError:
+        return False
+    return _ANY_CAP_MARKER.match(tail) is not None
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +134,13 @@ class AgentJanitor:
         lock_for: Callable[[str], object] | None = None,
         disk_status: DiskStatus | None = None,
         interval_seconds: float | None = None,
+        scrapyd_client: object | None = None,
     ) -> None:
         self._settings = settings
+        # Log-flood guard (C8): ``listjobs`` is the proof that a state-less
+        # oversized scrapyd job.log is NOT a running job. None -> state-less
+        # scrapyd logs are never truncated (cannot prove they are dead).
+        self._scrapyd = scrapyd_client
         self._store = store
         self._runner = wheel_runner
         self._cursor_dir = Path(cursor_dir)
@@ -133,6 +164,7 @@ class AgentJanitor:
         self._wheel_workspace_root = (
             Path(settings.agent.workdir) / "python_wheel" / "workspaces"
         )
+        self._scrapyd_logs_root = Path(settings.agent.workdir) / "scrapyd" / "logs"
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
 
@@ -147,6 +179,10 @@ class AgentJanitor:
             await asyncio.to_thread(self._sweep_cache)
         except Exception:  # noqa: BLE001
             logger.error("janitor: cache sweep failed", exc_info=True)
+        try:
+            await self._sweep_oversized_logs(now)
+        except Exception:  # noqa: BLE001
+            logger.error("janitor: oversized-log sweep failed", exc_info=True)
         # Resource dashboard (D1): publish a fresh disk sample for the heartbeat.
         # All FS work runs in a thread; a per-item failure only nulls that item.
         if self._disk_status is not None:
@@ -246,6 +282,174 @@ class AgentJanitor:
             cursor.unlink(missing_ok=True)
         except OSError:
             pass
+
+    # --- C8: oversized job.log truncation (log-flood guard) ----------------
+    async def _sweep_oversized_logs(self, now: float) -> None:
+        """Cut non-running jobs' oversized logs back to cap + marker.
+
+        Truncation happens ONLY when the job is provably stopped — every
+        condition must hold: (1) the execution is not in the active set; (2)
+        either its state is ``done``, or there is NO readable state AND
+        (scrapyd: ``listjobs`` lists the job neither running nor pending /
+        wheel: no live pgid) AND the file has been quiet for
+        ``janitor_quiet_seconds``; (3) re-verified under the execution lock right
+        before ``truncate``. ``phase == started`` logs are never touched — the
+        consumer's flood watchdog owns those.
+        """
+        cap = self._settings.agent.max_job_log_bytes
+        if cap <= 0:
+            return
+        candidates = await asyncio.to_thread(self._scan_oversized_logs, cap)
+        if not candidates:
+            return
+        listed: dict[str, set[str] | None] = {}
+        for cand in candidates:
+            await self._commit_truncation(cand, cap, now, listed)
+
+    def _scan_oversized_logs(self, cap: int) -> list[dict]:
+        # Candidate = anything above the cap that is not already in the
+        # "cap + one marker" state (so a raw cap+1 file is NOT skipped).
+        by_log_path: dict[str, AttemptState] = {}
+        by_job: dict[str, AttemptState] = {}
+        for execution_id in self._store.list_execution_ids():
+            state = self._store.read(execution_id)
+            if state is None:
+                continue
+            if state.log_path:
+                by_log_path[os.path.abspath(state.log_path)] = state
+            if state.scrapyd_job_id:
+                by_job[state.scrapyd_job_id] = state
+        out: list[dict] = []
+        root = self._scrapyd_logs_root
+        if root.is_dir():
+            for dirpath, _dirs, files in os.walk(root):
+                for name in files:
+                    if not name.endswith(".log"):
+                        continue
+                    path = Path(dirpath) / name
+                    try:
+                        size = path.stat().st_size
+                    except OSError:
+                        continue
+                    if size <= cap or already_capped(path, cap, size):
+                        continue
+                    rel = path.relative_to(root).parts
+                    project = rel[0] if len(rel) >= 3 else ""
+                    job_id = name[: -len(".log")]
+                    state = by_log_path.get(os.path.abspath(str(path))) or by_job.get(job_id)
+                    out.append(
+                        {
+                            "kind": "scrapyd",
+                            "path": path,
+                            "project": project,
+                            "job_id": job_id,
+                            "execution_id": state.execution_id if state else None,
+                            "size": size,
+                        }
+                    )
+        wroot = self._wheel_workspace_root
+        if wroot.is_dir():
+            for entry in wroot.iterdir():
+                log = entry / "job.log"
+                try:
+                    size = log.stat().st_size
+                except OSError:
+                    continue
+                if size <= cap or already_capped(log, cap, size):
+                    continue
+                out.append(
+                    {
+                        "kind": "wheel",
+                        "path": log,
+                        "workspace": entry,
+                        "execution_id": entry.name,
+                        "size": size,
+                    }
+                )
+        return out
+
+    async def _scrapyd_lists_job(
+        self, project: str, job_id: str, cache: dict[str, set[str] | None]
+    ) -> bool | None:
+        """True/False = scrapyd lists / does not list the job; None = unknown."""
+        if self._scrapyd is None or not project:
+            return None
+        if project not in cache:
+            try:
+                jobs = await self._scrapyd.listjobs(project)
+            except Exception:  # noqa: BLE001 - unreachable -> unknown -> never cut
+                cache[project] = None
+            else:
+                live: set[str] = set()
+                for key in ("running", "pending"):
+                    for j in jobs.get(key) or []:
+                        if isinstance(j, dict) and j.get("id"):
+                            live.add(str(j["id"]))
+                cache[project] = live
+        live_jobs = cache[project]
+        if live_jobs is None:
+            return None
+        return job_id in live_jobs
+
+    async def _truncation_allowed(
+        self, cand: dict, now: float, listed: dict[str, set[str] | None]
+    ) -> bool:
+        execution_id = cand.get("execution_id")
+        if execution_id is not None and execution_id in self._active_ids():
+            return False
+        state = self._store.read(execution_id) if execution_id else None
+        if state is not None:
+            return state.phase == "done"
+        # No readable state: prove the job is dead AND quiet.
+        quiet = self._settings.agent.janitor_quiet_seconds
+        try:
+            mtime = os.stat(cand["path"]).st_mtime
+        except OSError:
+            return False
+        if (now - mtime) < quiet:
+            return False
+        if cand["kind"] == "scrapyd":
+            lists = await self._scrapyd_lists_job(cand["project"], cand["job_id"], listed)
+            return lists is False
+        pgid = self._read_pgid(cand["workspace"])
+        return not (pgid is not None and _pgid_alive(pgid))
+
+    async def _commit_truncation(
+        self, cand: dict, cap: int, now: float, listed: dict[str, set[str] | None]
+    ) -> None:
+        if not await self._truncation_allowed(cand, now, listed):
+            return
+        lock_key = cand.get("execution_id") or f"log:{cand['path']}"
+        lock_cm = (
+            self._lock_for(lock_key) if self._lock_for is not None else contextlib.nullcontext()
+        )
+        async with lock_cm:
+            # Re-verify under the lock: state/active set may have changed, and the
+            # file may have been written to since the scan.
+            if not await self._truncation_allowed(cand, now, listed):
+                return
+            cut = await asyncio.to_thread(self._truncate_log, cand["path"], cap)
+        if cut:
+            logger.warning(
+                "janitor: truncated oversized job.log %s (%d -> %d bytes)",
+                cand["path"], cand["size"], cut,
+            )
+
+    @staticmethod
+    def _truncate_log(path: Path, cap: int) -> int:
+        marker = _LOG_CAP_MARKER.format(cap=cap).encode()
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return 0
+        if size <= cap or already_capped(path, cap, size):
+            return 0
+        with path.open("r+b") as fh:
+            fh.truncate(cap)
+            fh.seek(cap)
+            fh.write(marker)
+            fh.flush()
+        return cap + len(marker)
 
     # --- C4: artifact/wheel cache LRU eviction -----------------------------
     def _sweep_cache(self) -> None:

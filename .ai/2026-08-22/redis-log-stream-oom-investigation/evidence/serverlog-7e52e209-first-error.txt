@@ -1,0 +1,76 @@
+2026-08-21 11:30:27 [scrapy.core.scraper] ERROR: Error processing {'app_id': '730',
+ 'buy_chain_id': None,
+ 'cny_buy_amount': Decimal('0.02000000'),
+ 'cny_payout_amount': Decimal('0.01942360'),
+ 'cny_sale_amount': Decimal('0.01960000'),
+ 'crawled_at': datetime.datetime(2026, 8, 21, 11, 30, 26, 561208, tzinfo=datetime.timezone.utc),
+ 'is_all_items_same_price': False,
+ 'is_quantity_minimum': False,
+ 'market_code': 'C5GAME',
+ 'market_currency_code': 'CNY',
+ 'market_price_amount': Decimal('0.02000000'),
+ 'payout_chain_id': 30,
+ 'provider_code': 'C5GAME',
+ 'quantity': 724,
+ 'sale_chain_id': 28,
+ 'steam_market_hash_name': 'Dual Berettas | BorDeux (Well-Worn)'}
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1969, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/usr/local/lib/python3.12/site-packages/psycopg/cursor.py", line 117, in execute
+    raise ex.with_traceback(None)
+psycopg.errors.InvalidColumnReference: there is no unique or exclusion constraint matching the ON CONFLICT specification
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/scrapy/core/scraper.py", line 495, in start_itemproc_async
+    output = await self.itemproc.process_item_async(item)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/scrapy/pipelines/__init__.py", line 61, in process_item_async
+    return await self._process_chain(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/scrapy/middleware.py", line 152, in _process_chain
+    obj = await ensure_awaitable(method(obj, *args), _warn=warn)
+                                 ^^^^^^^^^^^^^^^^^^
+  File "/agent-data/scrapyd/eggs/steammarket-spider/sha256-455ec362a654.egg/app/pipelines/commonPriceBatch.py", line 121, in process_item
+    self._flush()
+  File "/agent-data/scrapyd/eggs/steammarket-spider/sha256-455ec362a654.egg/app/pipelines/commonPriceBatch.py", line 146, in _flush
+    conn.execute(stmt)
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1421, in execute
+    return meth(
+           ^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 526, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1643, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1848, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1988, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2365, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1969, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+  File "/usr/local/lib/python3.12/site-packages/psycopg/cursor.py", line 117, in execute
+    raise ex.with_traceback(None)
+sqlalchemy.exc.ProgrammingError: (psycopg.errors.InvalidColumnReference) there is no unique or exclusion constraint matching the ON CONFLICT specification
+[SQL: INSERT INTO prices (market_code, provider_code, app_id, steam_market_hash_name, market_currency_code, market_price_amount, quantity, is_quantity_minimum, is_all_items_same_price, cny_buy_amount, cny_sale_amount, cny_payout_amount, buy_chain_id, sale_chai
+[parameters: {'market_code_m0': 'C5GAME', 'provider_code_m0': 'C5GAME', 'app_id_m0': '730', 'steam_market_hash_name_m0': 'AK-47 | Baroque Purple (Minimal Wear)', 'market_currency_code_m0': 'CNY', 'market_price_amount_m0': Decimal('53.97000000'), 'quantity_m0':
+(Background on this error at: https://sqlalche.me/e/20/f405)
+
+=== InvalidColumnReference message ===
+psycopg.errors.InvalidColumnReference: there is no unique or exclusion constraint matching the ON CONFLICT specification
+psycopg.errors.InvalidColumnReference) there is no unique or exclusion constraint matching the ON CONFLICT specification
+=== ON CONFLICT clause ===
+     90 ON CONFLICT (market_code, app_id, steam_market_hash_name, provider_code, market_currency_code) DO UPDATE SET market_price_amount = excluded.market_price_amount, quantity = excluded.quantity, is_quantity_minimum = excluded.is_quantity_minimum, is_all_items_same_price = excluded.is_all_items_same_price, cny_buy_
+    182 ON CONFLICT specification
+=== INSERT INTO target ===
+     91 INSERT INTO prices

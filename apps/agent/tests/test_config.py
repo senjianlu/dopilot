@@ -339,3 +339,59 @@ def test_env_config_wins_over_default_path(
     monkeypatch.setenv("DOPILOT_CONFIG", str(env_cfg))
     settings = load_settings(default_path=str(default_cfg))
     assert settings.agent.agent_id == "from-toml"
+
+
+# --- TC-26 (agent): log-flood guard settings --------------------------------
+
+
+def test_log_flood_guard_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in (
+        "DOPILOT_AGENT_ID",
+        "DOPILOT_AGENT_WORKDIR",
+        "DOPILOT_AGENT_MAX_JOB_LOG_BYTES",
+        "DOPILOT_AGENT_LOG_FLOOD_KILL_AFTER_SECONDS",
+        "DOPILOT_AGENT_JANITOR_QUIET_SECONDS",
+        "DOPILOT_REDIS_LOG_PUBLISH_RATE_BYTES_PER_SECOND",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    settings = load_settings(_write_config(tmp_path))
+    assert settings.agent.max_job_log_bytes == 33554432  # 32MiB (was 100MiB)
+    assert settings.agent.log_flood_kill_after_seconds == 30
+    assert settings.agent.janitor_quiet_seconds == 3600
+    assert settings.redis.log_publish_rate_bytes_per_second == 2097152  # 2MiB/s
+
+
+def test_log_flood_guard_env_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DOPILOT_AGENT_ID", raising=False)
+    monkeypatch.delenv("DOPILOT_AGENT_WORKDIR", raising=False)
+    monkeypatch.setenv("DOPILOT_AGENT_MAX_JOB_LOG_BYTES", "4096")
+    monkeypatch.setenv("DOPILOT_AGENT_LOG_FLOOD_KILL_AFTER_SECONDS", "7")
+    monkeypatch.setenv("DOPILOT_AGENT_JANITOR_QUIET_SECONDS", "12")
+    monkeypatch.setenv("DOPILOT_REDIS_LOG_PUBLISH_RATE_BYTES_PER_SECOND", "999")
+    settings = load_settings(_write_config(tmp_path))
+    assert settings.agent.max_job_log_bytes == 4096
+    assert settings.agent.log_flood_kill_after_seconds == 7
+    assert settings.agent.janitor_quiet_seconds == 12
+    assert settings.redis.log_publish_rate_bytes_per_second == 999
+
+
+def test_log_publish_rate_below_marker_capacity_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-01 (round 4): a non-zero rate whose 2s bucket cannot hold one
+    truncation marker is rejected at load time (0 = unlimited stays valid)."""
+    from pydantic import ValidationError
+
+    monkeypatch.delenv("DOPILOT_AGENT_ID", raising=False)
+    monkeypatch.delenv("DOPILOT_AGENT_WORKDIR", raising=False)
+    cfg = _write_config(tmp_path)
+    for bad in ("1", "127", "-5"):
+        monkeypatch.setenv("DOPILOT_REDIS_LOG_PUBLISH_RATE_BYTES_PER_SECOND", bad)
+        with pytest.raises(ValidationError) as exc:
+            load_settings(cfg)
+        assert "log_publish_rate_bytes_per_second" in str(exc.value), bad
+    for ok, expected in (("128", 128), ("0", 0)):
+        monkeypatch.setenv("DOPILOT_REDIS_LOG_PUBLISH_RATE_BYTES_PER_SECOND", ok)
+        assert load_settings(cfg).redis.log_publish_rate_bytes_per_second == expected

@@ -63,6 +63,17 @@ stream_maxlen_events = 100000
 # Resource caps: bounded log-stream working set; retention sweep XTRIMs by time.
 stream_maxlen_logs = 100000
 log_retention_seconds = 86400
+# Log-flood guard: BYTE budget for the log stream (MAXLEN counts entries; at
+# 256KB/entry it bounds nothing). StreamGuardLoop measures MEMORY USAGE every
+# stream_guard_interval_seconds and XTRIMs back under the budget (clears the
+# stream if it will not converge). 0 disables. (256MB)
+stream_max_bytes_logs = 268435456
+stream_guard_interval_seconds = 30
+# Log-flood guard: re-dispatch "sent" commands whose message vanished from the
+# agent command stream (stream cleared / Redis volume wiped), checked at start
+# and every interval, only for rows older than min_age. 0 interval disables.
+sent_reconcile_interval_seconds = 300
+sent_reconcile_min_age_seconds = 60
 consumer_name = "server-1"
 require_aof = true
 
@@ -92,6 +103,13 @@ agents = []
 [scheduler]
 enabled = true
 timezone = "Asia/Shanghai"
+# Auto-disable (log-flood guard): a schedule whose last N recorded outcomes are
+# all erroneous (failed/lost, finished with scrapy ERRORs, truncated/flooded
+# log) is switched off and a notification is raised. 0 disables.
+auto_disable_after_errors = 5
+# A soft "lost" task is only recorded as an outcome after reclaim + drain, or
+# after this many seconds as a bounded fallback.
+lost_outcome_grace_seconds = 86400
 
 [logs]
 root_dir = "/server-data/logs"
@@ -102,8 +120,14 @@ eof_stable_seconds = 3
 final_drain_hard_timeout_seconds = 30
 log_drain_timeout_seconds = 30
 retention_days = 30
-# Resource caps: per-execution log-file size hard cap (100MiB). 0 disables.
-max_file_bytes = 104857600
+# Log-flood guard: per-execution log-file size hard cap (32MiB, matches the
+# agent's max_job_log_bytes; the agent is told to stop tailing past it).
+# 0 disables.
+max_file_bytes = 33554432
+# Log-flood guard: aggregate logs-directory budget (20GB). Increments that would
+# exceed it are not written (DB state only); the sweep evicts the oldest sealed
+# terminal logs to make room. 0 disables.
+max_total_bytes = 21474836480
 
 # Resource caps: automatic retention sweep (enforces retention_days, prunes
 # event_audit, XTRIMs Redis streams by time).
@@ -112,6 +136,14 @@ enabled = true
 sweep_interval_seconds = 3600
 event_audit_retention_days = 30
 event_audit_delete_batch = 5000
+# Log-flood guard: delete command streams of retired agent ids (no node /
+# soft-deleted / heartbeat older than this) once this many days old. 0 disables.
+stale_command_stream_days = 7
+# Notification center bounds: read rows past retention, unread rows past
+# unread_max_days, and a hard row cap (oldest evicted first). 0 disables each.
+notification_retention_days = 30
+notification_unread_max_days = 90
+notification_max_rows = 2000
 # Resource dashboard usage-snapshot sampling interval (seconds); 0 disables.
 stats_interval_seconds = 60
 

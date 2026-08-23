@@ -47,13 +47,13 @@ runtime context 键**同名**:二者表达同一事实("本 agent 的 id"),且�
 | server | `[redis]` | `url`、三条 stream 的 maxlen（`stream_maxlen_logs` 默认 100000）、`log_retention_seconds`（由保留清扫实装为定时 `XTRIM MINID`）、`consumer_name`、`require_aof` |
 | server | `[agents]` | `heartbeat_timeout_seconds`/`stalled_attempt_seconds`/`lost_after_stalled_seconds`（默认 3600;有运行期心跳后仅约束「agent 在线但存活不可确认」,不是任务时长上限）/`agent_token` |
 | server | `[scheduler]` | `enabled`（in-process runner 开关）、`timezone` |
-| server | `[logs]` | `root_dir=/server-data/logs`、drain/保留窗口参数、`retention_days`（默认 30,自动保留清扫的 cutoff;**0 = 关闭终态清理**,而非 cutoff=now 立删全部）、`max_file_bytes`（单执行日志硬上限，默认 100MiB，超限置 `log_integrity=truncated`） |
+| server | `[logs]` | `root_dir=/server-data/logs`、drain/保留窗口参数、`retention_days`（默认 30,自动保留清扫的 cutoff;**0 = 关闭终态清理**,而非 cutoff=now 立删全部）、`max_file_bytes`（单执行日志硬上限，默认 32MiB，超限置 `log_integrity=truncated` 并反压 agent）、`max_total_bytes`（logs 目录总预算，默认 20GB） |
 | server | `[maintenance]` | 自动保留清扫:`enabled`（默认 true）、`sweep_interval_seconds`（默认 3600）、`event_audit_retention_days`（默认 30）、`event_audit_delete_batch`;资源仪表盘采样:`stats_interval_seconds`（默认 60,env `DOPILOT_MAINTENANCE_STATS_INTERVAL_SECONDS`,0 关闭采样 loop） |
 | server | `[artifacts]` | `root_dir`、`max_upload_bytes`（单次上传上限 413，默认 200MiB）、`max_total_bytes`（聚合配额 507，默认 20GiB） |
 | server | `[nodes]` | `agents` 仅作未 heartbeat 节点的占位提示（不再是 poll 目标） |
 | server | `[i18n]` | `locale`（默认 `zh`）、`timezone` |
 | agent | `[redis]` | `url`/`command_block_ms`/`pending_idle_ms`/`event_outbox_dir`、`maxlen_logs`/`maxlen_events`（XADD 近似上限，默认 100000，env `DOPILOT_REDIS_STREAM_MAXLEN_LOGS/EVENTS`）、`event_outbox_max_files`（outbox 文件数上限，默认 100000） |
-| agent | `[agent]` | `agent_id`（env `DOPILOT_AGENT_ID`）/`workdir`（env `DOPILOT_AGENT_WORKDIR`）/`server_url`/`heartbeat_interval_seconds`/`attempt_heartbeat_interval_seconds`（attempt 级存活心跳限频，默认 60，须远小于 server `stalled_attempt_seconds`，0 关闭）/`agent_token`、`janitor_interval_seconds`（本地 janitor 周期）、`completed_log_ttl_days`（终态 3 天）/`orphan_log_ttl_days`（孤儿 7 天）、`max_job_log_bytes`（job.log 硬上限，默认 100MiB）、`artifact_cache_max_bytes`（缓存 LRU 上限，默认 2GiB） |
+| agent | `[agent]` | `agent_id`（env `DOPILOT_AGENT_ID`）/`workdir`（env `DOPILOT_AGENT_WORKDIR`）/`server_url`/`heartbeat_interval_seconds`/`attempt_heartbeat_interval_seconds`（attempt 级存活心跳限频，默认 60，须远小于 server `stalled_attempt_seconds`，0 关闭）/`agent_token`、`janitor_interval_seconds`（本地 janitor 周期）、`completed_log_ttl_days`（终态 3 天）/`orphan_log_ttl_days`（孤儿 7 天）、`max_job_log_bytes`（job.log 硬上限，所有 runner，默认 32MiB）、`log_flood_kill_after_seconds`/`janitor_quiet_seconds`、`artifact_cache_max_bytes`（缓存 LRU 上限，默认 2GiB） |
 | agent | `[scrapyd]` | `start`/`host`/`port`、`jobs_to_keep`（默认 5）/`finished_to_keep`（默认 100，写入生成的 scrapyd.conf） |
 
 ### 资源硬上限（防磁盘/内存膨胀）
@@ -65,17 +65,44 @@ runtime context 键**同名**:二者表达同一事实("本 agent 的 id"),且�
   (`max-size=10m`,`max-file=3`);Redis 设 `--maxmemory`(默认 512mb,env
   `DOPILOT_REDIS_MAXMEMORY`)+ `noeviction`(XADD 满则响亮报错而非静默丢流)
   + AOF 自动重写阈值。详见 [05-deployment](05-deployment.md)。
-- **server**:单执行日志 100MiB 上限(超限继续消费/ACK,置
-  `log_integrity=truncated`);`RetentionSweepLoop` 每小时按 `retention_days`
+- **server**:单执行日志 32MiB 上限(`[logs].max_file_bytes`,超限继续消费/ACK,
+  置 `log_integrity=truncated` 并向 agent 发 `stop_logs` 反压);`RetentionSweepLoop` 每小时按 `retention_days`
   自动清理终态数据(失败安全两阶段:先标 `expired` 提交、再删正文、再删行)、
   按窗删 `event_audit`、对日志/事件流 `XTRIM MINID`;上传 413/聚合 507 配额;
   SSE 订阅队列有界(满则断开重连)。
 - **agent**:`AgentJanitor` 周期 GC 终态/孤儿 workspace + `.logpos` + state
-  (三重安全判定:内存活跃集、`job.pgid` 存活、树静默期);job.log 100MiB 上限
-  (PIPE+drain,永不背压阻塞子进程);artifact/wheel 缓存按 LRU 淘汰;event
+  (三重安全判定:内存活跃集、`job.pgid` 存活、树静默期);job.log 32MiB 上限
+  (`[agent].max_job_log_bytes`,对 wheel 是 PIPE+drain 截断,对 scrapyd 是
+  进程内 logcap 钩子 + watchdog 终止);artifact/wheel 缓存按 LRU 淘汰;event
   outbox 文件数上限(超限丢最旧)。janitor 每轮 sweep 顺带采集本机磁盘样本
   (workspaces/缓存/scrapyd/outbox/state/卷),经心跳 `detail["disk"]` 上报,
   供运维仪表盘展示。
+
+### 日志洪泛防护与自动禁用(决策 0021)
+
+机制见 [03-execution-and-logs](03-execution-and-logs.md#日志洪泛防护log-flood-guard决策-0021);
+这里只列配置项(TOML 键 / env,括号内为默认值,**0 = 关闭**该项):
+
+| 键 | env | 默认 | 含义 |
+|---|---|---|---|
+| `[agent].max_job_log_bytes` | `DOPILOT_AGENT_MAX_JOB_LOG_BYTES` | 33554432 | agent 每执行日志硬上限(所有 runner):scrapyd 经 `-s DOPILOT_JOB_LOG_CAP_BYTES` 注入 crawler 的进程内钩子 + watchdog;发布端推送上限同值 |
+| `[agent].log_flood_kill_after_seconds` | `DOPILOT_AGENT_LOG_FLOOD_KILL_AFTER_SECONDS` | 30 | watchdog 首次 cancel 后多久升级 `KILL`;再 2 倍后对受管 scrapyd 的唯一 crawler PID `SIGKILL` |
+| `[agent].janitor_quiet_seconds` | `DOPILOT_AGENT_JANITOR_QUIET_SECONDS` | 3600 | janitor 截断无 state 的超大 job.log 前要求的静默期(且 scrapyd 不列该 job) |
+| `[redis].log_publish_rate_bytes_per_second`(agent) | `DOPILOT_REDIS_LOG_PUBLISH_RATE_BYTES_PER_SECOND` | 2097152 | agent 级日志推送令牌桶(桶 = 2 秒配额;正文与截断标记一律记账);0 = 不限,否则须 ≥ 128(桶能装下一条标记),更低值启动时拒绝 |
+| `[logs].max_file_bytes`(server) | `DOPILOT_LOG_MAX_FILE_BYTES` | 33554432 | 单执行落盘上限;截断 → `stop_logs` 反压 + `log_truncated` 通知 |
+| `[logs].max_total_bytes` | `DOPILOT_LOG_MAX_TOTAL_BYTES` | 21474836480 | logs 目录总预算,**写入准入硬界**;sweep 淘汰最老已封口任务腾空间 |
+| `[redis].stream_max_bytes_logs` | `DOPILOT_REDIS_STREAM_MAX_BYTES_LOGS` | 268435456 | 日志流字节预算(`StreamGuardLoop` 精确裁剪,不收敛则清空) |
+| `[redis].stream_guard_interval_seconds` | `DOPILOT_REDIS_STREAM_GUARD_INTERVAL_SECONDS` | 30 | 守卫周期(启动时先跑一次,早于消费者) |
+| `[redis].sent_reconcile_interval_seconds` / `_min_age_seconds` | `DOPILOT_REDIS_SENT_RECONCILE_INTERVAL_SECONDS` / `..._MIN_AGE_SECONDS` | 300 / 60 | `sent` 命令对账:流中已不存在的命令回退 `pending` 重投 |
+| `[scheduler].auto_disable_after_errors` | `DOPILOT_SCHEDULER_AUTO_DISABLE_AFTER_ERRORS` | 5 | 同一调度连续出错 N 次自动禁用 |
+| `[scheduler].lost_outcome_grace_seconds` | `DOPILOT_SCHEDULER_LOST_OUTCOME_GRACE_SECONDS` | 86400 | 纯 server-lost 任务多久后兜底记为出错 |
+| `[maintenance].stale_command_stream_days` | `DOPILOT_MAINTENANCE_STALE_COMMAND_STREAM_DAYS` | 7 | 退役 agent 命令流清理窗口 |
+| `[maintenance].notification_retention_days` / `notification_unread_max_days` / `notification_max_rows` | `DOPILOT_MAINTENANCE_NOTIFICATION_*` | 30 / 90 / 2000 | 消息中心:已读保留、未读上限年龄、表行数硬上限 |
+
+注意:**生产镜像加载的是 `configs/server.docker.toml`**(非 example),升级时
+两份 TOML 都已同步到上述默认值。外部 scrapyd 模式(`[scrapyd].start=false`)
+下进程内钩子依赖该环境安装了 `dopilot-agent` 包(`.pth` 随包);agent 启动会记
+warning 并在心跳 `detail.scrapyd.log_cap="external"` 标示。
 
 ### 资源仪表盘(可观测面)
 

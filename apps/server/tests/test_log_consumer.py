@@ -267,29 +267,29 @@ async def test_apply_log_event_uses_async_file_boundary(
     db_session, exec_settings, monkeypatch
 ):
     """Regression: ``apply_log_event`` (an async path) must reach disk through
-    the named async boundary ``files.aappend_increment_capped`` (offloaded to a
-    thread), never via a direct synchronous ``files.append`` call on the event
-    loop. The capped variant is the boundary since the resource-caps size limit
-    (B1); it behaves like the uncapped append when the cap is not reached."""
-    from dopilot_server.logs import files as files_mod
+    the offloaded boundary ``_write_settled`` (run via ``asyncio.to_thread``),
+    never via a synchronous write on the event loop. Since the log-flood guard
+    the single write also settles the logs-dir gauge from before/after stat."""
+    import threading
+
     from dopilot_server.services import logs as logs_mod
 
-    calls: list[tuple[bytes, bytes]] = []
-    real = files_mod.aappend_increment_capped
+    calls: list[tuple[bytes, bool]] = []
+    real = logs_mod._write_settled
 
-    async def spy(path, marker, raw, max_bytes, trunc_marker):
-        calls.append((marker, raw))
-        return await real(path, marker, raw, max_bytes, trunc_marker)
+    def spy(path, data, gauge):
+        calls.append((data, threading.current_thread() is threading.main_thread()))
+        return real(path, data, gauge)
 
     # Patch the symbol the service module resolves at call time.
-    monkeypatch.setattr(logs_mod.files, "aappend_increment_capped", spy)
+    monkeypatch.setattr(logs_mod, "_write_settled", spy)
 
     _t, execution, lf = await _seed(db_session, exec_settings)
     out = await _apply(db_session, exec_settings, execution, 0, b"hi\n")
     await db_session.commit()
 
     assert out == OUTCOME_APPENDED
-    assert calls == [(b"", b"hi\n")]  # one offloaded write, no marker
+    assert calls == [(b"hi\n", False)]  # one offloaded write (worker thread), no marker
     lf = await _reload_lf(db_session, lf)
     assert lf.last_pulled_offset == 3
     assert Path(lf.storage_path).read_bytes() == b"hi\n"

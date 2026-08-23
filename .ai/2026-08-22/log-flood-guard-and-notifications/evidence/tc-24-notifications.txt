@@ -1,0 +1,22 @@
+$ .venv/bin/python -m pytest apps/server/tests/test_notifications.py -v
+(cwd: /home/rabbir/Projects/dopilot; DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot)
+
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 6 items
+
+apps/server/tests/test_notifications.py::test_dedupe_folds_into_one_unread_row [32mPASSED[0m[32m [ 16%][0m
+apps/server/tests/test_notifications.py::test_same_execution_different_types_are_independent [32mPASSED[0m[32m [ 33%][0m
+apps/server/tests/test_notifications.py::test_severity_only_rises_and_cleared_is_sticky [32mPASSED[0m[32m [ 50%][0m
+apps/server/tests/test_notifications.py::test_prune_bounds_table [32mPASSED[0m[32m  [ 66%][0m
+apps/server/tests/test_notifications.py::test_api_list_count_read_and_auth [32mPASSED[0m[32m [ 83%][0m
+apps/server/tests/test_notifications.py::test_concurrent_notify_same_key_is_atomic_on_postgres [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m6 passed[0m[32m in 0.91s[0m[32m ===============================[0m
+
+exit code: 0

@@ -1,0 +1,6 @@
+$ .venv/bin/ruff check apps packages
+(cwd: /home/rabbir/Projects/dopilot; DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot)
+
+[1;32mAll checks passed![0m
+
+exit code: 0

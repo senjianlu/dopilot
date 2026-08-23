@@ -305,6 +305,12 @@ export interface Schedule {
   overrides: Record<string, unknown>;
   // Phase 1.7.1: estimated next fire time (interval = estimate, cron = exact).
   next_run_at: string | null;
+  // Log-flood guard / auto-disable: derived consecutive erroneous-run count,
+  // the auto-disable stamp + reason, and the re-enable generation.
+  consecutive_error_count: number;
+  auto_disabled_at: string | null;
+  auto_disabled_reason: Record<string, unknown> | null;
+  outcome_generation: number;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -455,4 +461,42 @@ export interface ApiError {
   code: string;
   message_key: string;
   detail: Record<string, unknown>;
+}
+
+// --- Notification center (log-flood guard / auto-disable) -------------------
+
+export type NotificationType =
+  | "schedule_auto_disabled"
+  | "log_truncated"
+  | "log_flood"
+  | "redis_stream_over_budget"
+  | "logs_dir_over_budget"
+  | "stale_command_streams_deleted"
+  | "sent_commands_requeued";
+
+export type NotificationSeverity = "info" | "warning" | "error";
+
+export interface NotificationItem {
+  id: string;
+  type: NotificationType | string;
+  severity: NotificationSeverity;
+  payload: Record<string, unknown>;
+  count: number;
+  read: boolean;
+  read_at: string | null;
+  created_at: string | null;
+  last_seen_at: string | null;
+}
+
+export interface NotificationsResponse {
+  notifications: NotificationItem[];
+  unread_count: number;
+}
+
+export interface NotificationUnreadCountResponse {
+  unread_count: number;
+}
+
+export interface NotificationsReadResponse {
+  marked: number;
 }

@@ -168,3 +168,63 @@ async def test_run_restart_recovery_via_state_file(tmp_path: Path) -> None:
     status = await runner2.status("a1", "exec-1")
     assert status.remote_job_id == resp.remote_job_id
     assert status.status == AttemptStatus.running
+
+
+async def test_stop_merges_state_and_never_clears_log_capped(tmp_path: Path, fake_redis) -> None:
+    """R-02 (round 5): ``stop()`` must not write back the AttemptState it read
+    BEFORE awaiting scrapyd's cancel. With a barrier holding the cancel request,
+    the log publisher caps the execution meanwhile (marker + ``log_capped``);
+    after the stop completes the flag must survive, the marker stays exactly
+    one, and the execution's bytes in Redis never exceed the cap."""
+    import asyncio
+    import base64
+
+    from dopilot_agent.redis.logs import LogPublisher
+    from dopilot_protocol import LOG_STREAM, AgentLogEvent, from_stream_entry
+
+    fake = FakeScrapyd()
+    runner = make_runner(tmp_path, fake)
+    resp = await runner.run(_req())
+    cap = 4096
+    write_log(tmp_path, "demo", "phase1", resp.remote_job_id, "x" * (cap * 3))
+    redis = fake_redis()
+    pub = LogPublisher(
+        redis=redis, agent_id="agent-x", store=runner._store,
+        cursor_dir=str(tmp_path / "logpos"), max_bytes=1024,
+        max_job_log_bytes=cap, rate_bytes_per_second=0,
+    )
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    real_cancel = runner._client.cancel
+
+    async def paused_cancel(project, job, *, signal=None):
+        entered.set()            # stop() has read its (soon stale) state
+        await release.wait()
+        return await real_cancel(project, job, signal=signal)
+
+    runner._client.cancel = paused_cancel  # type: ignore[method-assign]
+    stop_task = asyncio.create_task(runner.stop("a1", "exec-1"))
+    await entered.wait()
+    try:
+        await pub.publish_once()  # caps the execution while the cancel is in flight
+        assert runner._store.read("a1").log_capped is True
+    finally:
+        release.set()
+    stop = await stop_task
+    assert stop.stopped is True
+
+    state = runner._store.read("a1")
+    assert state.canceled is True and state.log_capped is True  # merged, not clobbered
+
+    async def events() -> list[AgentLogEvent]:
+        return [from_stream_entry(AgentLogEvent, f) for _i, f in await redis.entries(LOG_STREAM)]
+
+    def is_marker(e: AgentLogEvent) -> bool:
+        return b"[dopilot:log-truncated" in base64.b64decode(e.content_b64)
+
+    before = await events()
+    await pub.publish_once()  # a stale write-back would re-publish the marker here
+    after = await events()
+    assert len(after) == len(before)
+    assert sum(1 for e in after if is_marker(e)) == 1
+    assert sum(e.size_bytes for e in after if not e.eof) <= cap

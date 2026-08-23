@@ -104,19 +104,79 @@
   server 派发重试),而非静默逐出流数据。首要边界仍是每条 stream 的
   XADD MAXLEN 与 server 保留清扫的 `XTRIM MINID`。
 
-### 生产收缩 runbook（已膨胀的部署升级到本版本）
+- **容器内存上限(日志洪泛防护)**:redis `mem_limit`/`memswap_limit`
+  `${DOPILOT_REDIS_MEM_LIMIT:-1g}`(必须高于 `--maxmemory`;Redis **加载**
+  RDB/AOF 不受 `maxmemory` 约束,没有它一份膨胀的 AOF 会在重启时把宿主机
+  拖死——有了它只会杀掉 redis 容器并重启,反复出现按下方事故恢复 runbook 清空
+  卷)、server `${DOPILOT_SERVER_MEM_LIMIT:-2g}`、agent
+  `${DOPILOT_AGENT_MEM_LIMIT:-4g}`。
 
-若 `dopilot-redis` 卷已远超新 `maxmemory`(如观测到的 2.11GB):
+### 事故恢复 runbook(Redis 被日志流撑爆 / 宿主机卡死后,2026-08-21 事故)
 
-1. 先升级并启动新版 **server**——`RetentionSweepLoop` 首个 tick(≤60s)即对
-   日志/事件流执行 `XTRIM MINID`,把数据集收缩到保留窗内;`stream_maxlen_logs`
-   默认也由 1_000_000 降到 100_000。
-2. 再对 redis 应用 `maxmemory`(或接受收缩生效前最初一分钟可能的 XADD 失败
-   ——agent 侧可容忍,日志随后补传)。
-3. AOF 文件靠 `auto-aof-rewrite-*` 收缩;需要立即回收可一次性
-   `redis-cli BGREWRITEAOF`。
-4. PostgreSQL:保留清扫删行后空间由 autovacuum 复用、文件不立即回缩;需要
-   立即回收磁盘可择机停机 `VACUUM FULL`。
+以 Compose project 名 `P`(= compose 所在目录名;生产 `/opt/dopilot` 即
+`dopilot`)参数化,卷名为 `${P}_dopilot-redis` / `${P}_dopilot-db` /
+`${P}_dopilot-server-data`。**事故现场 server 已停、容器已删时从第 ③ 步开始。**
+
+1. server 仍在运行时:先在 Web「一键停用全部调度」,然后分别查询
+   `GET /api/v1/tasks?status=queued`、`?status=running`、`?status=finalizing`
+   (admin Bearer;`status` 只接受单值)直到三者响应的 `total` 都为 0(长期悬挂
+   的任务用维护页「标记 lost」),使命令流不再有未接管命令。
+2. 每台 agent 主机 `docker compose -f docker-compose.agent.yml down`,
+   `docker compose ps` 确认无容器;然后 server 主机 `docker compose down`,
+   `docker compose ps` 确认 server/redis/db 均已停止,
+   `docker ps --filter volume=${P}_dopilot-redis` 为空。
+3. 在同一静止点**成对备份**(0007:索引与正文缺一不可):
+   `docker run --rm -v ${P}_dopilot-db:/src -v /opt/backup:/dst alpine tar czf /dst/dopilot-db-$(date +%F).tgz -C /src .`
+   与
+   `docker run --rm -v ${P}_dopilot-server-data:/src -v /opt/backup:/dst alpine tar czf /dst/dopilot-server-data-$(date +%F).tgz -C /src .`;
+   保留旧 compose 为 `docker-compose.yml.bak` 并记下旧镜像 digest。
+4. `docker volume rm ${P}_dopilot-redis`(流是瞬态总线,0008;未接管的 `sent`
+   命令由新版 dispatcher 的 sent 对账自动回退重投,queued task 不会悬挂)。
+5. 用仓库 `deploy/docker/docker-compose.server.yml` 覆盖
+   `/opt/dopilot/docker-compose.yml`(.env 不动),`docker compose pull`。
+6. `docker compose up -d`(migrate 先跑完 `alembic upgrade head`,server 依赖其
+   `service_completed_successfully`);`docker compose ps` 三服务 healthy,
+   `curl -f http://localhost:5000/api/v1/health`。server 启动即对日志流做一次
+   字节预算裁剪、校准日志目录 gauge,再启动消费者。
+7. agent 主机拉新镜像后 `up -d`;Web 节点页确认心跳(`detail.scrapyd.log_cap`
+   为 `managed`)。
+8. 维护页资源面板确认 `redis.stream_bytes:logs` / `logs.dir_bytes` 在限内,
+   任务页确认无悬挂 queued。
+9. 引发事故的爬虫调度(如 steammarket)在爬虫仓库修好前保持禁用。
+
+**回滚**(顺序敏感;agent 主机同样先 `down`):
+
+1. `docker compose down`。
+2. **仍用新 compose / 新镜像**执行
+   `docker compose run --rm migrate alembic downgrade 0012`(旧镜像不含 0013,
+   无法自行降级)。
+3. 恢复旧 compose 与旧镜像:`cp docker-compose.yml.bak docker-compose.yml`,
+   镜像钉回记下的旧 digest。
+4. **成对恢复**第 ③ 步的两份备份(新版本启动时已截断/淘汰过 server-data,
+   只恢复 DB 会得到索引与正文不一致):
+   ```bash
+   docker volume rm ${P}_dopilot-db ${P}_dopilot-server-data
+   docker compose create   # 按旧 compose 重建空卷(带 compose 标签)与容器,不启动
+   docker run --rm -v ${P}_dopilot-db:/dst -v /opt/backup:/src alpine tar xzf /src/dopilot-db-<日期>.tgz -C /dst
+   docker run --rm -v ${P}_dopilot-server-data:/dst -v /opt/backup:/src alpine tar xzf /src/dopilot-server-data-<日期>.tgz -C /dst
+   ```
+5. `docker compose up -d`,`curl -f http://localhost:5000/api/v1/health`。
+
+整个升级窗口内 agent 全停、与 server 同版本一起起,不存在老 agent 收到
+`stop_logs` 的毒消息问题。
+
+### 已膨胀的部署升级到本版本
+
+**不要**在线启动新版 server 再指望它裁剪:新 compose 给 redis 设了
+`mem_limit`(默认 1g),一份已经膨胀的 AOF/RDB 在加载阶段就会被 cgroup
+OOM-kill 并进入容器级重启循环,server 根本等不到 Redis。统一走上方
+「事故恢复 runbook」:停机 → 成对备份 → `docker volume rm ${P}_dopilot-redis`
+(流是瞬态总线)→ 新 compose/镜像 `up -d`。若 Redis 卷**未**膨胀(用量远低于
+`maxmemory`),可直接 `docker compose pull && up -d` 滚动升级,server 启动时
+会先把日志流裁到字节预算、校准日志目录 gauge,再启动消费者。
+
+PostgreSQL:保留清扫删行后空间由 autovacuum 复用、文件不立即回缩;需要立即
+回收磁盘可择机停机 `VACUUM FULL`。
 
 ## 反向代理（可选）
 

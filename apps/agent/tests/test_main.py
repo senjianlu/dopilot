@@ -95,3 +95,53 @@ async def test_run_agent_starts_and_stops_redis_workers(
     assert task.exception() is None
     # Teardown order: log publisher stops before the command consumer.
     assert events.index("stop:log_publisher") < events.index("stop:consumer")
+
+
+async def test_startup_janitor_sweep_runs_before_workers_start(
+    workdir: Path, fake_redis: Any, monkeypatch: Any, caplog: Any
+) -> None:
+    # TC-33 / TC-01h: one full janitor sweep (incl. the oversized-log step C8)
+    # completes BEFORE the command consumer / log publisher start; the periodic
+    # janitor task is then started; external-scrapyd mode logs the log-cap warning.
+    fake = fake_redis()
+    monkeypatch.setattr(main_mod, "build_redis", lambda _url: fake)
+    events: list[str] = []
+
+    async def _sweep(self: Any, *, now: Any = None) -> None:
+        events.append("janitor.sweep_once")
+        await asyncio.sleep(0)
+
+    def _janitor_start(self: Any) -> None:
+        events.append("janitor.start")
+
+    async def _janitor_stop(self: Any) -> None:
+        events.append("janitor.stop")
+
+    monkeypatch.setattr(main_mod.AgentJanitor, "sweep_once", _sweep)
+    monkeypatch.setattr(main_mod.AgentJanitor, "start", _janitor_start)
+    monkeypatch.setattr(main_mod.AgentJanitor, "stop", _janitor_stop)
+    monkeypatch.setattr(
+        main_mod.CommandConsumer, "start", lambda self: events.append("consumer.start")
+    )
+    monkeypatch.setattr(
+        main_mod.LogPublisher, "start", lambda self: events.append("log_publisher.start")
+    )
+
+    async def _noop_stop(self: Any) -> None:
+        return None
+
+    monkeypatch.setattr(main_mod.CommandConsumer, "stop", _noop_stop)
+    monkeypatch.setattr(main_mod.LogPublisher, "stop", _noop_stop)
+
+    stop = asyncio.Event()
+    settings = _settings(workdir, redis_url="redis://fake:6379/0")
+    with caplog.at_level("WARNING"):
+        task = asyncio.create_task(run_agent(settings, stop=stop))
+        await asyncio.sleep(0.05)
+        stop.set()
+        await asyncio.wait_for(task, timeout=5)
+    assert task.exception() is None
+    assert events.index("janitor.sweep_once") < events.index("consumer.start")
+    assert events.index("janitor.sweep_once") < events.index("log_publisher.start")
+    assert "janitor.start" in events
+    assert any("scrapyd.start=false" in r.getMessage() for r in caplog.records)

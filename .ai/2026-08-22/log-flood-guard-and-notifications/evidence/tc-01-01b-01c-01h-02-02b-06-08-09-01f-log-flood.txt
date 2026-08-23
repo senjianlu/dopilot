@@ -1,0 +1,28 @@
+$ .venv/bin/python -m pytest apps/agent/tests/test_log_flood.py -v
+(cwd: /home/rabbir/Projects/dopilot; DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot)
+
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot/apps/agent
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 12 items
+
+apps/agent/tests/test_log_flood.py::test_flood_cancels_then_reports_failed_log_flood [32mPASSED[0m[32m [  8%][0m
+apps/agent/tests/test_log_flood.py::test_below_cap_is_untouched_and_finishes_normally [32mPASSED[0m[32m [ 16%][0m
+apps/agent/tests/test_log_flood.py::test_cap_zero_disables_watchdog_publisher_and_injection [32mPASSED[0m[32m [ 25%][0m
+apps/agent/tests/test_log_flood.py::test_schedule_injects_cap_setting_next_to_runtime_context [32mPASSED[0m[32m [ 33%][0m
+apps/agent/tests/test_log_flood.py::test_managed_scrapyd_daemon_gets_no_cap_env [32mPASSED[0m[32m [ 41%][0m
+apps/agent/tests/test_log_flood.py::test_escalation_and_disk_bound_when_cancel_is_ignored [32mPASSED[0m[32m [ 50%][0m
+apps/agent/tests/test_log_flood.py::test_ambiguous_crawler_candidates_are_never_killed [32mPASSED[0m[32m [ 58%][0m
+apps/agent/tests/test_log_flood.py::test_external_mode_has_no_pid_kill [32mPASSED[0m[32m [ 66%][0m
+apps/agent/tests/test_log_flood.py::test_terminal_event_carries_scrapy_stats [32mPASSED[0m[32m [ 75%][0m
+apps/agent/tests/test_log_flood.py::test_stop_logs_caps_the_publisher [32mPASSED[0m[32m [ 83%][0m
+apps/agent/tests/test_log_flood.py::test_bogus_command_is_acked_and_logged [32mPASSED[0m[32m [ 91%][0m
+apps/agent/tests/test_log_flood.py::test_job_id_prefix_collision_never_kills_other_crawler [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m12 passed[0m[32m in 0.32s[0m[32m ==============================[0m
+
+exit code: 0

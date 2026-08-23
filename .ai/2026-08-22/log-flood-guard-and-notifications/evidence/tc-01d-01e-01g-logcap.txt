@@ -1,0 +1,20 @@
+$ .venv/bin/python -m pytest apps/agent/tests/test_logcap.py -v
+(cwd: /home/rabbir/Projects/dopilot; DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot)
+
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot/apps/agent
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 4 items
+
+apps/agent/tests/test_logcap.py::test_caps_only_the_log_file_handler_and_sigterms_once [32mPASSED[0m[32m [ 25%][0m
+apps/agent/tests/test_logcap.py::test_no_patch_for_daemon_argv_or_zero_cap [32mPASSED[0m[32m [ 50%][0m
+apps/agent/tests/test_logcap.py::test_activation_requires_full_crawler_identity [32mPASSED[0m[32m [ 75%][0m
+apps/agent/tests/test_logcap.py::test_subprocess_is_capped_and_terminated [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m4 passed[0m[32m in 1.01s[0m[32m ===============================[0m
+
+exit code: 0

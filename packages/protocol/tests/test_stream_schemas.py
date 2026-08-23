@@ -38,7 +38,7 @@ def test_stream_topology_constants() -> None:
 
 
 def test_command_type_and_stop_intent_values() -> None:
-    assert [t.value for t in AgentCommandType] == ["run", "stop", "cleanup_logs"]
+    assert [t.value for t in AgentCommandType] == ["run", "stop", "cleanup_logs", "stop_logs"]
     assert [i.value for i in StopIntent] == ["cancel", "reclaim"]
 
 
@@ -273,3 +273,56 @@ def test_wire_codec_accepts_str_keyed_fields() -> None:
     )
     str_fields = {"data": ev.model_dump_json()}
     assert from_stream_entry(AgentEvent, str_fields) == ev
+
+
+# --- TC-07: log-flood guard protocol additions ------------------------------
+
+
+def test_agent_event_parses_legacy_json_without_stats_fields() -> None:
+    """Events from older agents carry no stats fields -> they parse as None."""
+    legacy = (
+        '{"event_id":"ev1","agent_id":"agent-01","task_id":"t1","execution_id":"x1",'
+        '"type":"attempt.finished","remote_job_id":null,"exit_code":0,"error_code":null,'
+        '"error_detail":{},"lost_reason":null,"created_at":"t","status":"finished"}'
+    )
+    ev = AgentEvent.model_validate_json(legacy)
+    assert ev.type is AgentEventType.finished
+    assert ev.error_count is None
+    assert ev.finish_reason is None
+    assert ev.log_bytes is None
+
+
+def test_agent_event_stats_fields_roundtrip() -> None:
+    ev = AgentEvent(
+        event_id="ev2",
+        agent_id="agent-01",
+        task_id="t1",
+        execution_id="x1",
+        type=AgentEventType.finished,
+        error_count=91,
+        finish_reason="finished",
+        log_bytes=3_050_000_000,
+        created_at="t",
+    )
+    back = from_stream_entry(AgentEvent, to_stream_entry(ev))
+    assert back == ev
+    assert (back.error_count, back.finish_reason, back.log_bytes) == (
+        91,
+        "finished",
+        3_050_000_000,
+    )
+
+
+def test_stop_logs_command_roundtrip() -> None:
+    cmd = AgentCommand(
+        command_id="c1",
+        type=AgentCommandType.stop_logs,
+        agent_id="agent-01",
+        task_id="t1",
+        execution_id="x1",
+        created_at="t",
+    )
+    back = from_stream_entry(AgentCommand, to_stream_entry(cmd))
+    assert back == cmd
+    assert back.type is AgentCommandType.stop_logs
+    assert AgentCommandType("stop_logs") is AgentCommandType.stop_logs

@@ -11,6 +11,7 @@ from . import (
     heartbeat,
     maintenance,
     nodes,
+    notifications,
     schedules,
     stats,
     tasks,
@@ -28,3 +29,4 @@ router.include_router(templates.router)
 router.include_router(schedules.router)
 router.include_router(stats.router)
 router.include_router(maintenance.router)
+router.include_router(notifications.router)

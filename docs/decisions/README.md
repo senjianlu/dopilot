@@ -42,3 +42,4 @@
 | [0018](0018-adopt-ai-workflow-template.md) | 采用 ai-workflow-template 的 rawf 治理流程，退役旧 Codex/Claude 治理 |
 | [0019](0019-resource-hard-limits.md) | 资源硬上限：部署层/server/agent 各增长面配置化上限 + 自动过期，防日志/磁盘/内存膨胀 |
 | [0020](0020-ai-workflow-template-version-anchor.md) | 认领 ai-workflow-template v1.0.0 版本锚点；不采用其 Scrapy 标准栈 |
+| [0021](0021-log-flood-guard-and-auto-disable.md) | 日志洪泛防护:进程内日志上限 + 字节预算 + 目录准入硬界;连续出错自动禁用调度 + 消息中心 |

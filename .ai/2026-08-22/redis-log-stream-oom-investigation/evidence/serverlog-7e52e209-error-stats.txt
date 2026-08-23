@@ -1,0 +1,21 @@
+=== line count / avg line length ===
+     6220 104857661 /var/lib/docker/volumes/dopilot_dopilot-server-data/_data/logs/2026/08/380765bc6c2c449d82a9355adcb2ca30/7e52e2092a714a85aeedec114cab021c.log
+=== log level histogram ===
+     91 ] ERROR:
+     57 ] INFO:
+      5 ] WARNING:
+=== first ERROR lines (trimmed) ===
+120:2026-08-21 11:30:27 [scrapy.core.scraper] ERROR: Error processing {'app_id': '730',
+187:2026-08-21 11:30:27 [scrapy.core.scraper] ERROR: Error processing {'app_id': '730',
+254:2026-08-21 11:30:28 [scrapy.core.scraper] ERROR: Error processing {'app_id': '730',
+321:2026-08-21 11:30:29 [scrapy.core.scraper] ERROR: Error processing {'app_id': '730',
+388:2026-08-21 11:30:29 [scrapy.core.scraper] ERROR: Error processing {'app_id': '730',
+=== psycopg/sqlalchemy error kinds ===
+    182 psycopg.errors.InvalidColumnReference
+     91 sqlalchemy.exc.ProgrammingError
+=== longest lines (bytes) ===
+1148055
+1148055
+1148055
+1148055
+1148055

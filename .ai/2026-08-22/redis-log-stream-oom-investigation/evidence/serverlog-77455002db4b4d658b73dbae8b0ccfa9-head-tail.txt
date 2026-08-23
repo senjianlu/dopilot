@@ -1,0 +1,92 @@
+2026-08-21 11:45:08 [scrapy.utils.log] INFO: Scrapy 2.16.0 started (bot: steammarket-spider)
+2026-08-21 11:45:08 [scrapy.utils.log] INFO: Versions:
+{'lxml': '6.1.1',
+ 'libxml2': '2.14.6',
+ 'cssselect': '1.4.0',
+ 'parsel': '1.11.0',
+ 'w3lib': '2.4.1',
+ 'Twisted': '26.4.0',
+ 'Python': '3.12.13 (main, Jun 24 2026, 02:08:01) [GCC 14.2.0]',
+ 'pyOpenSSL': '26.3.0 (OpenSSL 4.0.1 9 Jun 2026)',
+ 'cryptography': '49.0.0',
+ 'Platform': 'Linux-5.15.0-60-generic-x86_64-with-glibc2.41'}
+2026-08-21 11:45:08 [scrapy.addons] INFO: Enabled addons:
+[]
+2026-08-21 11:45:08 [scrapy.extensions.telnet] INFO: Telnet Password: <redacted>
+2026-08-21 11:45:08 [scrapy.middleware] INFO: Enabled extensions:
+['scrapy.extensions.corestats.CoreStats',
+ 'scrapy.extensions.logcount.LogCount',
+ 'scrapy.extensions.telnet.TelnetConsole',
+ 'scrapy.extensions.memusage.MemoryUsage',
+ 'scrapy.extensions.feedexport.FeedExporter',
+ 'scrapy.extensions.logstats.LogStats',
+ 'app.extensions.resultMonitor.ResultMonitorExtension',
+ 'app.extensions.realtimeMonitor.RealtimeMonitorExtension']
+2026-08-21 11:45:08 [scrapy.crawler] INFO: Overridden settings:
+{'AUTOTHROTTLE_MAX_DELAY': 30.0,
+ 'AUTOTHROTTLE_START_DELAY': 2.0,
+ 'BOT_NAME': 'steammarket-spider',
+ 'CONCURRENT_REQUESTS': 1,
+ 'CONCURRENT_REQUESTS_PER_DOMAIN': 1,
+ 'DOWNLOAD_DELAY': 0.3,
+ 'DOWNLOAD_TIMEOUT': 30,
+ 'FEED_EXPORT_ENCODING': 'utf-8',
+ 'LOG_FILE': '/agent-data/scrapyd/logs/steammarket-spider/c5game/bda1dada9d5511f1978ea66dd6ecce0e.log',
+ 'LOG_LEVEL': 'INFO',
+ 'NEWSPIDER_MODULE': 'app.spiders',
+ 'RANDOMIZE_DOWNLOAD_DELAY': False,
+ 'RETRY_HTTP_CODES': [429, 500, 502, 503, 504, 408],
+ 'RETRY_TIMES': 3,
+ 'SPIDER_MODULES': ['app.spiders'],
+ 'USER_AGENT': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+               'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 '
+               'Safari/537.36'}
+2026-08-21 11:45:09 [app.middlewares.commonInternetProxy] INFO: 🔀 CommonInternetProxyMiddleware 已启用，代理=http://pve-cz-proxypool.tailscale.internal:8079
+2026-08-21 11:45:09 [scrapy.middleware] INFO: Enabled downloader middlewares:
+['scrapy.downloadermiddlewares.offsite.OffsiteMiddleware',
+ 'scrapy.downloadermiddlewares.httpauth.HttpAuthMiddleware',
+ 'scrapy.downloadermiddlewares.downloadtimeout.DownloadTimeoutMiddleware',
+ 'scrapy.downloadermiddlewares.defaultheaders.DefaultHeadersMiddleware',
+ 'scrapy.downloadermiddlewares.useragent.UserAgentMiddleware',
+ 'app.middlewares.commonInternetProxy.CommonInternetProxyMiddleware',
+ 'scrapy.downloadermiddlewares.retry.RetryMiddleware',
+ 'scrapy.downloadermiddlewares.redirect.MetaRefreshMiddleware',
+ 'scrapy.downloadermiddlewares.httpcompression.HttpCompressionMiddleware',
+ 'scrapy.downloadermiddlewares.redirect.RedirectMiddleware',
+ 'scrapy.downloadermiddlewares.cookies.CookiesMiddleware',
+ 'scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware',
+ 'scrapy.downloadermiddlewares.stats.DownloaderStats']
+2026-08-21 11:45:09 [scrapy.middleware] INFO: Enabled spider middlewares:
+['scrapy.spidermiddlewares.start.StartSpiderMiddleware',
+ 'scrapy.spidermiddlewares.httperror.HttpErrorMiddleware',
+ 'scrapy.spidermiddlewares.referer.RefererMiddleware',
+ 'scrapy.spidermiddlewares.urllength.UrlLengthMiddleware',
+ 'scrapy.spidermiddlewares.depth.DepthMiddleware']
+2026-08-21 11:45:09 [scrapy.middleware] INFO: Enabled item pipelines:
+['app.pipelines.commonPriceFee.CommonPriceFeePipeline',
+ 'app.pipelines.websiteC5gameTf2Key.WebsiteC5gameTf2KeyPipeline',
+ 'app.pipelines.commonPriceBatch.CommonPriceBatchPipeline']
+2026-08-21 11:45:09 [scrapy.core.engine] INFO: Spider opened
+2026-08-21 11:45:09 [py.warnings] WARNING: /usr/local/lib/python3.12/site-packages/scrapy/pipelines/__init__.py:101: ScrapyDeprecationWarning: app.pipelines.commonPriceFee.CommonPriceFeePipeline.open_spider returned a Deferred, this is deprecated. Please refactor this function to return a coroutine.
+  return ensure_awaitable(result, _warn=global_object_name(method))
+
+2026-08-21 11:45:09 [app.pipelines.commonPriceFee] INFO: 📥 已取到官方费率快照：1 个市场（C5GAME），官方货币 641 种。
+2026-08-21 11:45:09 [c5game] INFO: 🚚 任务开始 — task_id=adace4041e734a14859363fc0c8e94eb
+2026-08-21 11:45:09 [scrapy.extensions.logstats] INFO: Crawled 0 pages (at 0 pages/min), scraped 0 items (at 0 items/min)
+2026-08-21 11:45:09 [app.extensions.realtimeMonitor] INFO: 🧩 实时吞吐监控已启动（website_code=C5GAME）。
+2026-08-21 11:45:09 [scrapy.extensions.telnet] INFO: Telnet console listening on 127.0.0.1:6029
+2026-08-21 11:45:09 [c5game] INFO: 🚚 C5Game app_id=570：共 35667 个商品，将分 357 批请求。
+2026-08-21 11:45:12 [c5game] WARNING: ⚙️⚠️ 数量缺失或为空(C5Game sellCount，app_id=570，商品：'4ce Talent Sticker - TI 2022'),记为空。
+2026-08-21 11:45:12 [c5game] INFO: 🚚 本批经公共闸拒绝:数量非法×1(闸内明细已限流,此处为精确总数)。
+2026-08-21 11:45:12 [c5game] INFO: 🚚 C5Game app_id=570 本批产出 34 条记录。
+2026-08-21 11:45:12 [app.extensions.realtimeMonitor] INFO: 🧩 实时吞吐已写入 Valkey：1 个秒桶，共 34 条，key=steammarket:status:datasource:realtime:website:C5GAME:total。
+2026-08-21 11:45:12 [c5game] WARNING: ⚙️⚠️ 数量缺失或为空(C5Game sellCount，app_id=570，商品：'Ainkrad Talent Sticker - TI 2022'),记为空。
+2026-08-21 11:45:12 [c5game] INFO: 🚚 本批经公共闸拒绝:数量非法×1(闸内明细已限流,此处为精确总数)。
+2026-08-21 11:45:12 [c5game] INFO: 🚚 C5Game app_id=570 本批产出 84 条记录。
+2026-08-21 11:45:13 [c5game] WARNING: ⚙️⚠️ 数量缺失或为空(C5Game sellCount，app_id=570，商品：'AMMAR_THE_F Player Sticker - TI 2025'),记为空。
+2026-08-21 11:45:13 [c5game] INFO: 🚚 本批经公共闸拒绝:数量非法×1(闸内明细已限流,此处为精确总数)。
+2026-08-21 11:45:13 [c5game] INFO: 🚚 C5Game app_id=570 本批产出 84 条记录。
+2026-08-21 11:45:13 [
+=====TAIL=====
+m_market_hash_name_m1329)s::VARCHAR, %(market_currency_code_m1329)s::VARCHAR, %(market_price_amount_m1329)s, %(quantity_m1329)s::INTEGER, %(is_quantity_minimum_m1329)s, %(is_all_items_same_price_m1329)s, %(cny_buy_amount_m1329)s, %(cny_sale_amount_m1329)s, %(cny_payout_amount_m1329)s, %(buy_chain_id_m1329)s::BIGINT, %(sale_chain_id_m1329)s::BIGINT, %(payout_chain_id_m1329)s::BIGINT, %(crawled_at_m1329)s::TIMESTAMP WITH TIME ZONE, %(updated_at_m1329)s::TIMESTAMP WITH TIME ZONE), (%(market_code_m1330)s::VARCHAR, %(provider_code_m1330)s::VARCHAR, %(app_id_m1330)s::VARCHAR, %(steam_market_hash_name_m1330)s::VARCHAR, %(market_currency_code_m1330)s::VARCHAR, %(market_price_amount_m1330)s, %(quantity_m1330)s::INTEGER, %(is_quantity_minimum_m1330)s, %(is_all_items_same_price_m1330)s, %(cny_buy_amount_m1330)s, %(cny_sale_amount_m1330)s, %(cny_payout_amount_m1330)s, %(buy_chain_id_m1330)s::BIGINT, %(sale_chain_id_m1330)s::BIGINT, %(payout_chain_id_m1330)s::BIGINT, %(crawled_at_m1330)s::TIMESTAMP WITH TIME ZONE, %(updated_at_m1330)s::TIMESTAMP WITH TIME ZONE), (%(market_code_m1331)s::VARCHAR, %(provider_code_m1331)s::VARCHAR, %(app_id_m1331)s::VARCHAR, %(steam_market_hash_name_m1331)s::VARCHAR, %(market_currency_code_m1331)s::VARCHAR, %(market_price_amount_m1331)s, %(quantity_m1331)s::INTEGER, %(is_quantity_minimum_m1331)s, %(is_all_items_same_price_m1331)s, %(cny_buy_amount_m1331)s, %(cny_sale_amount_m1331)s, %(cny_payout_amount_m1331)s, %(buy_chain_id_m1331)s::BIGINT, %(sale_chain_id_m1331)s::BIGINT, %(payout_chain_id_m1331)s::BIGINT, %(crawled_at_m1331)s::TIMESTAMP WITH TIME ZONE, %(updated_at_m1331)s::TIMESTAMP WITH TIME ZONE), (%(market_code_m1332)s::VARCHAR, %(provider_code_m1332)s::VARCHAR, %(app_id_m1332)s::VARCHAR, %(steam_market_hash_name_m1332)s::VARCHAR, %(market_currency_code_m1332)s::VARCHAR, %(market_price_amount_m1332)s, %(quantity_m1332)s::INTEGER, %(is_quantity_minimum_m1332)s, %(is_all_items_same_price_m1332)s, %(cny_buy_amount_m1332)s, %(cny_sale_amount_m1332)s, %(cny_payout_amount_m1332)s, %(buy_chain_id_m1332)s::BIGINT, %(sale_chain_id_m1332)s::BIGINT, %(payout_chain_id_m1332)s::BIGINT, %(crawled_at_m1332)s::TIMESTAMP WITH TIME ZONE, %(updated_at_m1332)s::TIMESTAMP WITH TIME ZONE), (%(market_code_m1333)s::VARCHAR, %(provider_code_m1333)s::VARCHAR, %(app_id_m1333)s::VARCHAR, %(steam_market_hash_name_m1333)s::VARCHAR, %(market_currency_code_m1333)s::VARCHAR, %(market_price_amount_m1333)s, %(quantity_m1333)s::INTEGER, %(is_quantity_minimum_m1333)s, %(is_all_items_same_price_m1333)s, %(cny_buy_amount_m1333)s, %(cny_sale_amount_m1333)s, %(cny_payout_amount_m1333)s, %(buy_chain_id_m1333)s::BIGINT, %(sale_chain_id_m1333)s::BIGINT, %(payout_chain_id_m1333)s::BIGINT, %(crawled_at_m1333)s::TIMESTAMP WITH TIME ZONE, %(updated_at_m1333)s::TIMESTAMP WITH TIME ZONE), (%(market_code_m1334)s::VARCHAR, %(provider_code_m1334)s::VARCHAR, %(app_id_m1334)s::VARCHAR, %(steam_market_hash_name_m1334
+[dopilot:log-truncated max_bytes=104857600 reason=size-cap]

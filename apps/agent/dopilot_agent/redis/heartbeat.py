@@ -66,6 +66,12 @@ class HeartbeatWorker:
             "scrapyd": {
                 "port": s.scrapyd.port,
                 "managed": s.scrapyd.start,
+                # Log-flood guard: the in-process crawler log cap is enforced by
+                # the logcap .pth hook, which in external-scrapyd mode depends on
+                # the operator having installed dopilot-agent into that
+                # environment (docs/04) -> surfaced so the nodes page shows it.
+                "log_cap": "managed" if s.scrapyd.start else "external",
+                "log_cap_bytes": s.agent.max_job_log_bytes,
             }
         }
         if self._redis_status is not None:

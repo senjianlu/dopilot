@@ -72,6 +72,10 @@ class AgentCommandType(str, Enum):
     run = "run"
     stop = "stop"
     cleanup_logs = "cleanup_logs"
+    # Log-flood backpressure: the server's per-execution log file hit its size
+    # cap (or the logs dir budget); the agent must stop tailing/publishing that
+    # execution's log. No state transition; idempotent on the agent.
+    stop_logs = "stop_logs"
 
 
 class StopIntent(str, Enum):
@@ -204,6 +208,14 @@ class AgentEvent(BaseModel):
     error_code: str | None = None
     error_detail: dict[str, Any] = Field(default_factory=dict)
     lost_reason: LostReason | None = None
+    # Log-flood guard (resource caps): optional terminal-only stats the agent
+    # parses from the scrapy log tail (``'log_count/ERROR'`` /
+    # ``'finish_reason'``) plus the final local log size. All default None so
+    # events from older agents (no fields) keep parsing; ``None`` means
+    # "unknown", never "zero".
+    error_count: int | None = None
+    finish_reason: str | None = None
+    log_bytes: int | None = None
     created_at: str
 
     @computed_field  # type: ignore[prop-decorator]

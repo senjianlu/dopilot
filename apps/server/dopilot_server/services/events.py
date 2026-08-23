@@ -23,6 +23,7 @@ so the reconcile loop's event-stall clock is decoupled from ``updated_at``.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from dopilot_protocol import AgentEvent, AgentEventType, StopIntent
@@ -39,7 +40,9 @@ from ..models.event_audit import (
     EventAudit,
 )
 from ..models.execution import Execution
+from ..models.notification import SEVERITY_WARNING, TYPE_LOG_FLOOD
 from . import executions as svc
+from . import notifications as notif
 from . import outbox as outbox_svc
 from . import states
 from .states import (
@@ -58,6 +61,10 @@ OUTCOME_SKIPPED_NO_ATTEMPT = "skipped_no_attempt"
 # table: at one heartbeat per attempt per minute, audit rows would dwarf the
 # real lifecycle audit; a heartbeat is idempotent so it needs no dedupe either).
 OUTCOME_HEARTBEAT = "heartbeat"
+# Agent error_code for a run the log-flood watchdog stopped (see agent
+# ``redis/commands.py``): surfaces as a ``log_flood`` notification here.
+LOG_FLOOD_ERROR_CODE = "log_flood"
+logger = logging.getLogger(__name__)
 
 _EVENT_TO_EXEC = {
     AgentEventType.accepted: states.EXEC_PENDING,
@@ -90,6 +97,14 @@ def _apply_status(
             execution.error_detail = dict(event.error_detail)
         if new_status == EXEC_LOST and event.lost_reason is not None:
             execution.lost_reason = event.lost_reason.value
+        # Log-flood guard: terminal-only scrapy stats + final local log size
+        # (None = unknown; never overwrite a known value with None).
+        if event.error_count is not None:
+            execution.error_count = event.error_count
+        if event.finish_reason is not None:
+            execution.finish_reason = event.finish_reason
+        if event.log_bytes is not None:
+            execution.log_bytes = event.log_bytes
 
 
 def _maybe_update_lost_reason(execution: Execution, event: AgentEvent) -> None:
@@ -130,7 +145,11 @@ async def _request_reclaim(session: AsyncSession, execution: Execution) -> None:
 async def _update_task(
     session: AsyncSession, execution: Execution, now: datetime
 ) -> None:
-    task = await svc.get_task(session, execution.task_id)
+    # Terminal-writer protocol (log-flood guard): the task row is locked for
+    # the rollup so it serialises with the outcome recorder / reconcile / the
+    # dispatcher (lock order task -> executions -> log files -> schedule; the
+    # execution row was locked by the caller before this point).
+    task = await svc.get_task(session, execution.task_id, for_update=True)
     if task is None:
         return
     # convergence: a running execution moves a still-queued task to running.
@@ -149,8 +168,15 @@ async def _update_task(
         and rerollable
         and states.is_valid_task_transition(task.status, rolled)
     ):
+        was_lost = task.status == TASK_LOST
         task.status = rolled
         task.finished_at = now
+        if was_lost and task.outcome_recorded_at is not None:
+            # A recorded soft-lost outcome was overridden by an authoritative
+            # agent terminal: un-record it so the outcome recorder re-judges
+            # the task and corrects the schedule ledger (auto-disable).
+            task.outcome_recorded_at = None
+            task.outcome_erroneous = None
 
 
 def _audit(
@@ -210,7 +236,11 @@ async def apply_event(
     if dup.scalar_one_or_none() is not None:
         return OUTCOME_SKIPPED_DUP
 
-    execution = await svc.get_execution(session, event.execution_id)
+    # Lock order task -> execution: take the task row first so a concurrent
+    # terminal writer (reconcile mark_lost / dispatch timeout / recorder) and
+    # this event never interleave on the same rows.
+    await svc.get_task(session, event.task_id, for_update=True)
+    execution = await svc.get_execution(session, event.execution_id, for_update=True)
     if execution is None:
         _audit(session, event, redis_msg_id, OUTCOME_SKIPPED_NO_ATTEMPT)
         return OUTCOME_SKIPPED_NO_ATTEMPT
@@ -250,5 +280,34 @@ async def apply_event(
     execution.last_event_at = now
     execution.stalled_at = None
     await _update_task(session, execution, now)
+    if (
+        outcome in (OUTCOME_APPLIED, OUTCOME_OVERRIDE_LOST)
+        and event.type.is_terminal
+        and event.error_code == LOG_FLOOD_ERROR_CODE
+    ):
+        await _notify_log_flood(session, event)
     _audit(session, event, redis_msg_id, outcome)
     return outcome
+
+
+async def _notify_log_flood(session: AsyncSession, event: AgentEvent) -> None:
+    """Raise the ``log_flood`` alert (once per execution) for a flood-stopped run."""
+    detail = dict(event.error_detail or {})
+    try:
+        await notif.notify(
+            session,
+            type=TYPE_LOG_FLOOD,
+            severity=SEVERITY_WARNING,
+            payload={
+                "task_id": event.task_id,
+                "execution_id": event.execution_id,
+                "agent_id": event.agent_id,
+                "log_bytes": event.log_bytes if event.log_bytes is not None
+                else detail.get("log_bytes"),
+                "cap": detail.get("cap"),
+                "kill_escalation": detail.get("kill_escalation"),
+            },
+            dedupe_key=event.execution_id,
+        )
+    except Exception:  # noqa: BLE001 - alerting never breaks event application
+        logger.warning("log_flood notify failed for %s", event.execution_id, exc_info=True)

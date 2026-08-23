@@ -61,6 +61,9 @@ class TaskOrigin:
     execution_template_id: str | None = None
     schedule_id: str | None = None
     template_snapshot: dict[str, Any] = field(default_factory=dict)
+    # Log-flood guard / auto-disable: the schedule's ``outcome_generation`` at
+    # creation, frozen onto the task (None for non-schedule tasks).
+    schedule_generation: int | None = None
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -168,6 +171,7 @@ def create_task(
         source=origin.source,
         execution_template_id=origin.execution_template_id,
         schedule_id=origin.schedule_id,
+        schedule_generation=origin.schedule_generation,
         template_snapshot=dict(origin.template_snapshot or {}),
     )
     session.add(task)
@@ -264,8 +268,17 @@ def create_log_file(
 # ---------------------------------------------------------------------------
 
 
-async def get_task(session: AsyncSession, task_id: str) -> Task | None:
-    result = await session.execute(select(Task).where(Task.id == task_id))
+async def get_task(
+    session: AsyncSession, task_id: str, *, for_update: bool = False
+) -> Task | None:
+    # ``for_update`` = the task-row lock every terminal writer takes first
+    # (lock order task -> executions -> execution_log_files -> schedule).
+    stmt = select(Task).where(Task.id == task_id)
+    if for_update:
+        # populate_existing: a stale copy already in the identity map is
+        # overwritten with the row as it is UNDER the lock.
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
 
@@ -282,11 +295,12 @@ async def get_task_or_404(session: AsyncSession, task_id: str) -> Task:
 
 
 async def get_execution(
-    session: AsyncSession, execution_id: str
+    session: AsyncSession, execution_id: str, *, for_update: bool = False
 ) -> Execution | None:
-    result = await session.execute(
-        select(Execution).where(Execution.id == execution_id)
-    )
+    stmt = select(Execution).where(Execution.id == execution_id)
+    if for_update:
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
 
@@ -499,16 +513,20 @@ async def get_log_file(
     task_id: str,
     execution_id: str,
     stream: str = "log",
+    *,
+    for_update: bool = False,
 ) -> ExecutionLogFile | None:
     # task_id = Task.id, execution_id = Execution.id — they map straight onto the
-    # ExecutionLogFile index columns.
-    result = await session.execute(
-        select(ExecutionLogFile).where(
-            ExecutionLogFile.task_id == task_id,
-            ExecutionLogFile.execution_id == execution_id,
-            ExecutionLogFile.stream == stream,
-        )
+    # ExecutionLogFile index columns. ``for_update`` takes the row lock the
+    # log-flood guard relies on (consumer vs recorder seal vs retention).
+    stmt = select(ExecutionLogFile).where(
+        ExecutionLogFile.task_id == task_id,
+        ExecutionLogFile.execution_id == execution_id,
+        ExecutionLogFile.stream == stream,
     )
+    if for_update:
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
 

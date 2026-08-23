@@ -192,3 +192,21 @@ def test_build_request_reads_cache_never_walks_fs(workdir: Path, monkeypatch) ->
     assert req.detail["disk"] == sample
     assert calls["snapshot"] == 1  # cache read exactly once
     assert calls["walk"] == 0  # zero filesystem traversal in the heartbeat path
+
+
+# --- TC-01h: log-cap mode is reported in the heartbeat detail ----------------------
+
+
+def test_build_request_reports_log_cap_mode(workdir: Path) -> None:
+    store = _store_with_attempts(workdir, 0)
+    external = _settings(workdir)
+    assert external.scrapyd.start is False
+    req = HeartbeatWorker(settings=external, store=store, version="1").build_request()
+    assert req.detail["scrapyd"]["log_cap"] == "external"
+    assert req.detail["scrapyd"]["log_cap_bytes"] == external.agent.max_job_log_bytes
+
+    managed = external.model_copy(
+        update={"scrapyd": external.scrapyd.model_copy(update={"start": True})}
+    )
+    req = HeartbeatWorker(settings=managed, store=store, version="1").build_request()
+    assert req.detail["scrapyd"]["log_cap"] == "managed"

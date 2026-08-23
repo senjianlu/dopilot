@@ -61,6 +61,10 @@ const schedule: Schedule = {
   cron: null,
   overrides: {},
   next_run_at: null,
+  consecutive_error_count: 0,
+  auto_disabled_at: null,
+  auto_disabled_reason: null,
+  outcome_generation: 0,
   created_at: null,
   updated_at: null,
 };
@@ -382,5 +386,50 @@ describe("SchedulesPage", () => {
     await user.click(screen.getByTestId("schedule-disable-all"));
     await user.click(screen.getByTestId("confirm-accept"));
     await waitFor(() => expect(disableAllSchedules).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("SchedulesPage auto-disable badge (TC-29)", () => {
+  it("shows the auto-disabled badge with the consecutive-error tooltip", async () => {
+    const disabled: Schedule = {
+      ...schedule,
+      id: "sch-2",
+      name: "flooding-schedule",
+      enabled: false,
+      consecutive_error_count: 5,
+      auto_disabled_at: "2026-08-22T12:10:00+00:00",
+      auto_disabled_reason: { consecutive_errors: 5, threshold: 5, task_ids: [] },
+      outcome_generation: 0,
+    };
+    listSchedules.mockResolvedValue(schedulesResponse([schedule, disabled]));
+    const user = userEvent.setup();
+    renderWithProviders(<SchedulesPage />);
+    const badge = await screen.findByTestId("schedule-auto-disabled-flooding-schedule");
+    expect(badge).toHaveTextContent("Auto-disabled");  // test locale is en
+    expect(
+      screen.queryByTestId("schedule-auto-disabled-demo-schedule"),
+    ).not.toBeInTheDocument();
+    await user.hover(badge);
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/after 5 consecutive erroneous runs/).length,
+      ).toBeGreaterThan(0),
+    );
+    await user.unhover(badge);
+    // keyboard: the trigger is a real button, focusable via Tab, and focus
+    // alone surfaces the reason (no pointer needed)
+    expect(badge.tagName).toBe("BUTTON");
+    badge.blur();
+    await user.keyboard("{Escape}");
+    let guard = 0;
+    while (document.activeElement !== badge && guard++ < 50) {
+      await user.tab();
+    }
+    expect(badge).toHaveFocus();
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/after 5 consecutive erroneous runs/).length,
+      ).toBeGreaterThan(0),
+    );
   });
 });

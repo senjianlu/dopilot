@@ -22,9 +22,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import shutil
+import signal
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dopilot_protocol import (
@@ -48,7 +51,8 @@ from ..artifacts.cache import ArtifactCacheError, ScrapyArtifactCache
 from ..artifacts.wheel_cache import PythonWheelCache, WheelCacheError
 from ..runners.python_wheel import PythonWheelRunner, WheelRunnerError
 from ..runners.scrapyd import RunnerError, ScrapyRunner
-from ..state.store import StateStore
+from ..scrapyd.stats import log_size, parse_scrapy_stats, read_log_tail
+from ..state.store import AttemptState, StateStore
 from .events import EventPublisher
 from .status import RedisRuntimeStatus
 
@@ -96,6 +100,11 @@ class CommandConsumer:
         wheel_runner: PythonWheelRunner | None = None,
         wheel_cache: PythonWheelCache | None = None,
         attempt_heartbeat_interval_seconds: int = 60,
+        max_job_log_bytes: int = 0,
+        log_flood_kill_after_seconds: int = 30,
+        scrapyd_pid: Callable[[], int | None] | None = None,
+        proc_root: str | os.PathLike[str] = "/proc",
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self._redis = redis
         self._agent_id = agent_id
@@ -133,6 +142,16 @@ class CommandConsumer:
         # Only stamped on a SUCCESSFUL emit, so a failed XADD retries next pass.
         self._attempt_hb_interval = attempt_heartbeat_interval_seconds
         self._last_attempt_heartbeat: dict[str, float] = {}
+        # Log-flood watchdog (second line of defence behind the in-process
+        # logcap hook): cap in bytes (0 = off), escalation delay, a provider of
+        # the MANAGED scrapyd pid (None in external-scrapyd mode -> the single-PID
+        # kill level is disabled), the /proc root (tests substitute a fake) and a
+        # wall clock (tests substitute a mock).
+        self._log_cap = max(0, int(max_job_log_bytes))
+        self._flood_kill_after = max(0, int(log_flood_kill_after_seconds))
+        self._scrapyd_pid = scrapyd_pid
+        self._proc_root = Path(proc_root)
+        self._now = now or (lambda: datetime.now(UTC))
 
     def set_log_publisher(self, publisher: object) -> None:
         """Wire the LogPublisher so cleanup can release its per-execution state."""
@@ -299,6 +318,7 @@ class CommandConsumer:
                 ):
                     await self._maybe_emit_heartbeat(state.task_id, execution_id)
                 continue
+            state = await self._flood_watchdog(state) or state
             resp = await self._runner.status(execution_id, state.task_id)
             terminal = _STATUS_TO_TERMINAL.get(resp.status)
             if terminal is None:
@@ -309,19 +329,249 @@ class CommandConsumer:
                     await self._maybe_emit_heartbeat(state.task_id, execution_id)
                 continue
             self._last_attempt_heartbeat.pop(execution_id, None)
-            self._store.mark_done(
-                execution_id,
-                result=terminal.short,
-                exit_code=resp.exit_code,
-            )
-            await self._events.emit_terminal(
-                state.task_id,
-                execution_id,
-                terminal,
-                exit_code=resp.exit_code,
-            )
+            await self._finish_scrapy_attempt(state, terminal, exit_code=resp.exit_code)
             reconciled += 1
         return reconciled
+
+    async def _finish_scrapy_attempt(
+        self, state: AttemptState, terminal: AgentEventType, *, exit_code: int | None
+    ) -> None:
+        """Persist + emit a scrapyd attempt's terminal, with stats and flood override.
+
+        Parses the scrapy stats block from the log tail (``error_count`` /
+        ``finish_reason``) and the final local log size so the server can judge
+        a ``finished`` run that was actually erroneous. A flood-stopped attempt
+        (the watchdog saw the log at/over the cap) is ALWAYS reported as
+        ``failed`` / ``log_flood`` regardless of scrapyd's own verdict.
+        """
+        execution_id = state.execution_id
+        tail = await asyncio.to_thread(read_log_tail, state.log_path)
+        stats = parse_scrapy_stats(tail)
+        size = await asyncio.to_thread(log_size, state.log_path)
+        log_bytes = max(size or 0, state.log_flood_bytes) if state.log_flood else size
+        self._store.mark_stats(
+            execution_id,
+            error_count=stats.error_count,
+            finish_reason=stats.finish_reason,
+            log_bytes=log_bytes,
+        )
+        error_code: str | None = None
+        error_detail: dict | None = None
+        if state.log_flood:
+            terminal = AgentEventType.failed
+            error_code = "log_flood"
+            error_detail = {
+                "log_bytes": log_bytes,
+                "cap": self._log_cap,
+                "kill_escalation": state.log_flood_escalation,
+            }
+            # The process is gone: bound the local file for good (disk cap).
+            await asyncio.to_thread(self._truncate_local_log, state.log_path)
+        self._store.mark_done(
+            execution_id,
+            result=terminal.short,
+            exit_code=exit_code,
+            error_code=error_code,
+        )
+        await self._events.emit_terminal(
+            state.task_id,
+            execution_id,
+            terminal,
+            exit_code=exit_code,
+            error_code=error_code,
+            error_detail=error_detail,
+            error_count=stats.error_count,
+            finish_reason=stats.finish_reason,
+            log_bytes=log_bytes,
+        )
+
+    # --- log-flood watchdog --------------------------------------------------
+    def _flood_marker(self) -> bytes:
+        return (
+            f"\n[dopilot:job-log-truncated max_bytes={self._log_cap} "
+            f"reason=size-cap]\n"
+        ).encode()
+
+    def _truncate_local_log(self, log_path: str) -> None:
+        """Cut the local job.log back to ``cap`` + exactly one marker (idempotent).
+
+        Any file at or past the cap ends up as ``<first cap bytes> + marker``:
+        the first detection (even at cap + 1) is cut and marked, and a file
+        that already carries the marker at ``cap`` is left alone unless it grew
+        past it again. scrapy/scrapyd write with O_APPEND, so truncating under
+        a live writer is safe: its next record lands after the marker and the
+        next tick cuts it back again — disk use stays at cap + marker + one
+        tick of writes.
+        """
+        if self._log_cap <= 0:
+            return
+        marker = self._flood_marker()
+        cap = self._log_cap
+        try:
+            size = os.path.getsize(log_path)
+        except OSError:
+            return
+        if size < cap:
+            return
+        with open(log_path, "r+b") as fh:
+            if size == cap + len(marker):
+                fh.seek(cap)
+                if fh.read(len(marker)) == marker:
+                    return  # already exactly cap + marker
+            fh.truncate(cap)
+            fh.seek(cap)
+            fh.write(marker)
+            fh.flush()
+
+    async def _flood_watchdog(self, state: AttemptState) -> AttemptState | None:
+        """Per-tick log-flood check for one started scrapyd attempt.
+
+        Returns the refreshed state when it changed, else None. Cap 0 = off.
+        """
+        if self._log_cap <= 0 or not state.log_path:
+            return None
+        size = await asyncio.to_thread(log_size, state.log_path)
+        if size is None:
+            return None
+        execution_id = state.execution_id
+        if not state.log_flood:
+            if size < self._log_cap:
+                return None
+            requested_at = self._now().isoformat()
+            state = self._store.mark_log_flood(
+                execution_id, log_bytes=size, requested_at=requested_at,
+                escalation="term",
+            ) or state
+            logger.warning(
+                "log flood: %s job.log is %d bytes (cap %d); cancelling",
+                execution_id, size, self._log_cap,
+            )
+            # Bound the disk RIGHT NOW (not only from the next tick): a writer
+            # that bypasses the in-process FileHandler hook must not get a whole
+            # tick interval of unbounded growth.
+            await asyncio.to_thread(self._truncate_local_log, state.log_path)
+            await self._flood_cancel(state, signal_name=None)
+            return state
+
+        # Already flooding: keep the disk bounded, then escalate the stop.
+        await asyncio.to_thread(self._truncate_local_log, state.log_path)
+        if size > state.log_flood_bytes:
+            state = self._store.mark_log_flood(
+                execution_id, log_bytes=size, requested_at=state.log_flood_requested_at
+                or self._now().isoformat(),
+            ) or state
+        elapsed = self._flood_elapsed(state)
+        if elapsed >= 2 * self._flood_kill_after:
+            if state.log_flood_escalation != "pidkill":
+                if await self._flood_pid_kill(state):
+                    state = self._store.mark_log_flood(
+                        execution_id, log_bytes=size,
+                        requested_at=state.log_flood_requested_at or "",
+                        escalation="pidkill",
+                    ) or state
+                    return state
+            await self._flood_cancel(state, signal_name="KILL")
+        elif elapsed >= self._flood_kill_after:
+            if state.log_flood_escalation != "kill":
+                state = self._store.mark_log_flood(
+                    execution_id, log_bytes=size,
+                    requested_at=state.log_flood_requested_at or "",
+                    escalation="kill",
+                ) or state
+            await self._flood_cancel(state, signal_name="KILL")
+        else:
+            await self._flood_cancel(state, signal_name=None)
+        return state
+
+    def _flood_elapsed(self, state: AttemptState) -> float:
+        if not state.log_flood_requested_at:
+            return 0.0
+        try:
+            started = datetime.fromisoformat(state.log_flood_requested_at)
+        except ValueError:
+            return 0.0
+        return max(0.0, (self._now() - started).total_seconds())
+
+    async def _flood_cancel(self, state: AttemptState, *, signal_name: str | None) -> None:
+        try:
+            await self._runner.stop(
+                state.execution_id, state.task_id, signal=signal_name
+            )
+        except Exception:  # noqa: BLE001 - retried every tick
+            logger.warning(
+                "log flood: scrapyd cancel (%s) failed for %s; will retry",
+                signal_name or "TERM", state.execution_id, exc_info=True,
+            )
+
+    async def _flood_pid_kill(self, state: AttemptState) -> bool:
+        """SIGKILL the single crawler PID provably owned by the managed scrapyd.
+
+        Only in managed-scrapyd mode (a known scrapyd pid). The candidate must
+        be the UNIQUE process whose argv carries ``crawl`` + ``_job=<job id>``
+        and whose parent is that scrapyd pid; 0 or >1 candidates -> never kill
+        (log an error, keep re-sending cancel). Never ``killpg``: scrapyd spawns
+        crawlers without their own process group.
+        """
+        parent = self._scrapyd_pid() if self._scrapyd_pid is not None else None
+        if parent is None:
+            logger.warning(
+                "log flood: no managed scrapyd pid (external mode); pid kill skipped for %s",
+                state.execution_id,
+            )
+            return False
+        candidates = await asyncio.to_thread(
+            self._find_crawler_pids, state.scrapyd_job_id, parent
+        )
+        if len(candidates) != 1:
+            logger.error(
+                "log flood: %d crawler candidates for job %s (need exactly 1); not killing",
+                len(candidates), state.scrapyd_job_id,
+            )
+            return False
+        pid = candidates[0]
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            logger.warning("log flood: SIGKILL %d failed", pid, exc_info=True)
+            return False
+        logger.warning(
+            "log flood: SIGKILLed crawler pid %d for %s", pid, state.execution_id
+        )
+        return True
+
+    def _find_crawler_pids(self, job_id: str, parent_pid: int) -> list[int]:
+        found: list[int] = []
+        if not job_id:
+            return found
+        try:
+            entries = os.listdir(self._proc_root)
+        except OSError:
+            return found
+        for name in entries:
+            if not name.isdigit():
+                continue
+            base = self._proc_root / name
+            try:
+                argv = (base / "cmdline").read_bytes().split(b"\0")
+                stat = (base / "stat").read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            args = [a.decode("utf-8", errors="replace") for a in argv if a]
+            # EXACT match on the scrapyd job argument (``-a _job=<id>`` is its
+            # own argv token): a substring test would let ``_job=abc2`` stand
+            # in for a vanished ``abc`` and SIGKILL the wrong crawler.
+            if "crawl" not in args or f"_job={job_id}" not in args:
+                continue
+            # /proc/<pid>/stat: "pid (comm) state ppid ..." — comm may contain
+            # spaces/parens, so split after the LAST ')'.
+            try:
+                ppid = int(stat.rsplit(")", 1)[1].split()[1])
+            except (IndexError, ValueError):
+                continue
+            if ppid != parent_pid:
+                continue
+            found.append(int(name))
+        return found
 
     async def _maybe_emit_heartbeat(self, task_id: str, execution_id: str) -> None:
         """Rate-limited attempt-liveness heartbeat (caller confirmed alive)."""
@@ -374,7 +624,18 @@ class CommandConsumer:
         return processed
 
     async def _process(self, msg_id: object, fields: object) -> None:
-        cmd = from_stream_entry(AgentCommand, fields)
+        # Decode INSIDE the failure boundary: an undecodable entry (unknown
+        # command type from a newer server, corrupt JSON) is logged and ACKed
+        # instead of raising out of the drain loop, where it would be re-claimed
+        # and re-raised forever as a poison message.
+        try:
+            cmd = from_stream_entry(AgentCommand, fields)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "undecodable command entry %s dropped (ACKed)", msg_id, exc_info=True
+            )
+            await self._redis.xack(self._stream, self._group, msg_id)
+            return
         # Mark in-flight BEFORE taking the lock so the janitor's active-set check
         # (which it does under the same lock) always sees an in-progress command
         # even before the runner registers _procs / writes job.pgid (R-04).
@@ -387,12 +648,21 @@ class CommandConsumer:
                     await self._handle_stop(cmd)
                 elif cmd.type == AgentCommandType.cleanup_logs:
                     await self._handle_cleanup(cmd)
+                elif cmd.type == AgentCommandType.stop_logs:
+                    self._handle_stop_logs(cmd)
             except Exception:  # noqa: BLE001 - record + ack; never poison-loop
                 logger.exception("command handler failed: %s", cmd.command_id)
             finally:
                 self._processing.discard(cmd.execution_id)
                 # XACK = reliable takeover (success or idempotent skip).
                 await self._redis.xack(self._stream, self._group, msg_id)
+
+    def _handle_stop_logs(self, cmd: AgentCommand) -> None:
+        """Server backpressure: stop tailing this execution's log (idempotent)."""
+        if self._log_publisher is not None and hasattr(self._log_publisher, "cap"):
+            self._log_publisher.cap(cmd.execution_id)
+        else:
+            self._store.mark_log_capped(cmd.execution_id)
 
     # --- handlers ----------------------------------------------------------
     async def _handle_run(self, cmd: AgentCommand) -> None:
@@ -756,11 +1026,8 @@ class CommandConsumer:
         resp = await self._runner.status(cmd.execution_id, cmd.task_id)
         terminal = _STATUS_TO_TERMINAL.get(resp.status)
         if terminal is not None:
-            # a genuine terminal exists -> agent>server override.
-            self._store.mark_done(cmd.execution_id, result=terminal.short)
-            await self._events.emit_terminal(
-                cmd.task_id, cmd.execution_id, terminal, exit_code=resp.exit_code
-            )
+            # a genuine terminal exists -> agent>server override (with stats).
+            await self._finish_scrapy_attempt(state, terminal, exit_code=resp.exit_code)
         else:
             # still running -> kill to reclaim resources; execution stays lost.
             await self._runner.stop(cmd.execution_id, cmd.task_id)

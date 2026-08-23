@@ -62,6 +62,17 @@ async def run_agent(settings: Settings, *, stop: asyncio.Event | None = None) ->
 
     if runtime.process is not None:
         runtime.process.start()
+    elif s.agent.max_job_log_bytes > 0:
+        # External scrapyd mode: the in-process crawler log cap still works
+        # (the cap travels as a ``-s`` setting), but ONLY if that environment
+        # has dopilot-agent installed (the logcap .pth hook). Make it visible.
+        logger.warning(
+            "scrapyd.start=false: the per-job log cap (%d bytes) relies on the "
+            "external scrapyd environment having dopilot-agent installed "
+            "(dopilot_logcap.pth); the watchdog still cancels/truncates flooding "
+            "jobs but cannot SIGKILL crawler pids it does not own",
+            s.agent.max_job_log_bytes,
+        )
 
     redis_client = None
     consumer: CommandConsumer | None = None
@@ -93,6 +104,14 @@ async def run_agent(settings: Settings, *, stop: asyncio.Event | None = None) ->
             attempt_heartbeat_interval_seconds=(
                 s.agent.attempt_heartbeat_interval_seconds
             ),
+            # Log-flood watchdog: cap + escalation; the managed scrapyd pid is
+            # the proof-of-ownership for the single-PID kill level (None in
+            # external mode -> that level is disabled).
+            max_job_log_bytes=s.agent.max_job_log_bytes,
+            log_flood_kill_after_seconds=s.agent.log_flood_kill_after_seconds,
+            scrapyd_pid=(
+                (lambda: runtime.process.pid) if runtime.process is not None else None
+            ),
         )
         log_publisher = LogPublisher(
             redis=redis_client,
@@ -104,11 +123,12 @@ async def run_agent(settings: Settings, *, stop: asyncio.Event | None = None) ->
             # Resource caps (C6): release EOF-safe bookkeeping the moment EOF is
             # published for a terminal execution.
             on_eof=consumer.on_execution_eof,
+            # Log-flood guard: per-execution publish cap + agent-wide rate limit.
+            max_job_log_bytes=s.agent.max_job_log_bytes,
+            rate_bytes_per_second=s.redis.log_publish_rate_bytes_per_second,
         )
         # Let cleanup release the publisher's per-execution cursor/EOF state (C6).
         consumer.set_log_publisher(log_publisher)
-        consumer.start()
-        log_publisher.start()
 
     # Resource caps (C1/C4): local-disk janitor. Runs regardless of Redis (it only
     # touches local files); when a consumer exists its cleanup callback is wired so
@@ -132,7 +152,21 @@ async def run_agent(settings: Settings, *, stop: asyncio.Event | None = None) ->
         # Resource dashboard (D1): each sweep publishes a disk sample here; the
         # heartbeat worker reads it and reports it under detail["disk"].
         disk_status=runtime.disk_status,
+        # Log-flood guard (C8): scrapyd listjobs lets the janitor prove a
+        # state-less oversized job.log is NOT a running job before truncating.
+        scrapyd_client=runtime.client,
     )
+    # Startup cleanup FIRST (log-flood guard G1): one full janitor sweep — TTL
+    # GC, cache eviction and the oversized-job.log truncation (C8) — completes
+    # before any worker starts consuming commands or tailing logs.
+    try:
+        await janitor.sweep_once()
+    except Exception:  # noqa: BLE001 - startup cleanup must never block startup
+        logger.warning("startup janitor sweep failed", exc_info=True)
+    if consumer is not None:
+        consumer.start()
+    if log_publisher is not None:
+        log_publisher.start()
     janitor.start()
     if runtime.heartbeat is not None:
         runtime.heartbeat.start()

@@ -152,6 +152,54 @@ class FakeRedisStreams:
     async def xlen(self, stream: str) -> int:
         return await self._c.xlen(stream)
 
+    async def xinfo_stream(self, stream: str) -> dict[str, Any]:
+        try:
+            return await self._c.xinfo_stream(stream)
+        except Exception as exc:  # noqa: BLE001 - mirror RedisStreams' mapping
+            if "no such key" in str(exc).lower():
+                return {"length": 0, "first-entry": None}
+            raise
+
+    async def info(self, section: str | None = None) -> dict[str, Any]:
+        return await (self._c.info() if section is None else self._c.info(section))
+
+    async def xtrim(self, stream, *, minid=None, maxlen=None, approximate=True) -> int:
+        self.calls.append(("xtrim", stream))
+        if minid is not None:
+            return await self._c.xtrim(stream, minid=minid, approximate=approximate)
+        return await self._c.xtrim(stream, maxlen=maxlen, approximate=approximate)
+
+    # Log-flood guard double for MEMORY USAGE: fakeredis has no allocator view,
+    # so estimate = sum of every entry's field bytes + 64B per-entry overhead.
+    # ``memory_usage_override`` lets a test pin the reported value (e.g. to
+    # simulate a stream that never converges).
+    memory_usage_override: int | None = None
+    memory_usage_calls: int = 0
+
+    async def memory_usage(self, key: str, *, samples: int = 0) -> int | None:
+        self.memory_usage_calls += 1
+        if self.memory_usage_override is not None:
+            return self.memory_usage_override
+        if not await self._c.exists(key):
+            return None
+        total = 0
+        for _id, fields in await self._c.xrange(key):
+            total += 64 + sum(len(k) + len(v) for k, v in fields.items())
+        return total
+
+    async def scan_keys(self, pattern: str) -> list[str]:
+        out = []
+        async for key in self._c.scan_iter(match=pattern, count=200):
+            out.append(key.decode() if isinstance(key, bytes) else str(key))
+        return out
+
+    async def delete(self, *keys: str) -> int:
+        self.calls.append(("delete", ",".join(keys)))
+        return int(await self._c.delete(*keys)) if keys else 0
+
+    async def xrange(self, stream: str, min_id: str, max_id: str, *, count: int = 1) -> Any:
+        return await self._c.xrange(stream, min=min_id, max=max_id, count=count)
+
     async def aclose(self) -> None:
         await self._c.aclose()
 
@@ -496,3 +544,46 @@ async def exec_client_auth_on(
         exec_redis,
     ) as ac:
         yield ac
+
+
+# --------------------------------------------------------------------------
+# PostgreSQL-backed fixtures (log-flood guard concurrency tests)
+# --------------------------------------------------------------------------
+# ``FOR UPDATE`` row locks and the partial-unique-index upsert only behave for
+# real under PostgreSQL (aiosqlite serialises everything). The plan requires the
+# concurrency cases to produce PostgreSQL evidence, so these fixtures FAIL
+# (never skip) when ``DOPILOT_TEST_DATABASE_URL`` is not set — start
+# ``scripts/dev-db.sh up`` and export e.g.
+# ``postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot``.
+import os  # noqa: E402
+
+PG_TEST_URL = os.environ.get("DOPILOT_TEST_DATABASE_URL")
+
+
+@pytest_asyncio.fixture
+async def pg_engine() -> AsyncIterator[AsyncEngine]:
+    if not PG_TEST_URL:
+        pytest.fail(
+            "DOPILOT_TEST_DATABASE_URL is not set: PostgreSQL concurrency tests must run "
+            "against scripts/dev-db.sh (they are not allowed to skip)"
+        )
+    engine = create_async_engine(PG_TEST_URL)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        yield engine
+    finally:
+        # Dispose FIRST: a test that failed mid-interleaving may leave a task
+        # holding a row lock in a pooled connection; dropping the schema on a
+        # fresh engine afterwards can then never deadlock on it.
+        await engine.dispose()
+        cleanup = create_async_engine(PG_TEST_URL)
+        async with cleanup.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await cleanup.dispose()
+
+
+@pytest.fixture
+def pg_sessionmaker(pg_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(bind=pg_engine, expire_on_commit=False, class_=AsyncSession)

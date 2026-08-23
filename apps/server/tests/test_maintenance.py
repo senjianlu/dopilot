@@ -350,3 +350,46 @@ async def test_mark_lost_api(
     body = resp.json()
     assert body["task_status"] == states.TASK_LOST
     assert body["executions_marked"] == 1
+
+
+# --- R-04 (round 2): the manual API paths settle the shared logs-dir gauge ------------
+
+
+async def test_terminal_cleanup_api_settles_shared_logs_gauge(
+    client, db_session: AsyncSession, exec_settings: Settings
+):
+    from dopilot_server.logs.dir_gauge import LogsDirGauge, walk_size
+
+    task, _e, log = await _make_task(
+        db_session, exec_settings,
+        status=states.TASK_COMPLETE, age_days=40, exec_status=states.EXEC_FINISHED,
+    )
+    assert log is not None and os.path.exists(log.storage_path)
+    gauge = LogsDirGauge(exec_settings.logs.root_dir, budget=10**9)
+    await gauge.calibrate()
+    before = gauge.value
+    assert before == walk_size(exec_settings.logs.root_dir) > 0
+    # the real lifespan parks the gauge on app.state; the ASGI test client's app
+    # gets it the same way
+    client._transport.app.state.logs_gauge = gauge
+
+    resp = await client.post(
+        "/api/v1/maintenance/terminal-cleanup",
+        json={"older_than_days": 30, "dry_run": False},
+    )
+    assert resp.status_code == 200 and resp.json()["tasks"] == 1
+    assert not os.path.exists(log.storage_path)
+    assert gauge.value == walk_size(exec_settings.logs.root_dir) == before - int(log.size_bytes)
+    assert await db_session.get(Task, task.id) is None
+
+    # sweep-now takes the same gauge
+    task2, _e2, log2 = await _make_task(
+        db_session, exec_settings,
+        status=states.TASK_COMPLETE, age_days=40, exec_status=states.EXEC_FINISHED,
+    )
+    await gauge.calibrate()
+    before = gauge.value
+    resp = await client.post("/api/v1/maintenance/sweep-now")
+    assert resp.status_code == 200, resp.text
+    assert not os.path.exists(log2.storage_path)
+    assert gauge.value == walk_size(exec_settings.logs.root_dir) == before - int(log2.size_bytes)

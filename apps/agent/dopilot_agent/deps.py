@@ -89,6 +89,7 @@ def build_runtime(settings: Settings) -> AgentRuntime:
         client=client,
         store=store,
         logs_dir=scrapyd_logs_dir(workdir),
+        max_job_log_bytes=settings.agent.max_job_log_bytes,
     )
     redis_status = RedisRuntimeStatus() if settings.redis.url else None
     # Shared disk-usage sample: the janitor publishes it, the heartbeat reads it.

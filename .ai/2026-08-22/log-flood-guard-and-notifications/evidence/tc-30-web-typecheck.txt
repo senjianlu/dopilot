@@ -1,0 +1,5 @@
+$ corepack pnpm typecheck   (cwd: apps/web)
+
+[2m$ tsc --noEmit[22m
+
+exit code: 0

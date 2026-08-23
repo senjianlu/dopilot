@@ -186,6 +186,46 @@ const zh = {
     overrideStrategy: "覆盖节点策略",
     overrideStrategyNone: "不覆盖（沿用模板）",
     overrideNodes: "覆盖节点",
+    autoDisabled: "已自动禁用",
+    autoDisabledHint:
+      "因连续 {{count}} 次运行出错于 {{at}} 被自动禁用；重新启用后重新计数。",
+    consecutiveErrors: "连续出错 {{count}} 次",
+  },
+  notifications: {
+    title: "消息中心",
+    markAllRead: "全部已读",
+    loading: "加载中…",
+    empty: "暂无消息",
+    types: {
+      schedule_auto_disabled: {
+        title: "调度“{{schedule_name}}”已被自动禁用",
+        body: "连续 {{consecutive_errors}} 次运行出错，达到阈值（{{threshold}}）。请修复爬虫后再重新启用该调度。",
+      },
+      log_flood: {
+        title: "日志洪泛：执行已被终止",
+        body: "{{agent_id}} 上的执行 {{execution_id}} 写入了 {{log_bytes}} 字节（上限 {{cap}}），已被取消。",
+      },
+      log_truncated: {
+        title: "日志已截断（{{reason}}）",
+        body: "执行 {{execution_id}} 触及 {{reason}} 上限，已通知 agent 停止推送。",
+      },
+      redis_stream_over_budget: {
+        title: "Redis 日志流超出预算",
+        body: "{{initial_bytes}} 字节 > 预算 {{budget}}：已裁剪 {{trimmed}} 条（清空：{{cleared}}）。",
+      },
+      logs_dir_over_budget: {
+        title: "服务端日志目录超出预算",
+        body: "{{bytes}} 字节 > 预算 {{budget}}，且没有可淘汰的已封口日志；新的日志增量正在被丢弃。",
+      },
+      stale_command_streams_deleted: {
+        title: "已清理退役 agent 的命令流",
+        body: "已删除退役 agent 的命令流：{{agent_ids}}。",
+      },
+      sent_commands_requeued: {
+        title: "已重新投递丢失的命令",
+        body: "{{count}} 条已发送的命令从流中消失，已重新排队投递。",
+      },
+    },
   },
   task: {
     title: "任务详情",

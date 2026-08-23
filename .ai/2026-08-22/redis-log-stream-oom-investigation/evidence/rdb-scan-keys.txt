@@ -1,0 +1,220 @@
+header b'REDIS0012'
+aux b'redis-ver' b'7.4.10'
+aux b'redis-bits' b'64'
+aux b'ctime' b'1787368837'
+aux b'used-mem' b'9272726752'
+aux b'aof-base' b'0'
+SELECTDB 0
+RESIZEDB keys=8 expires=0
+{
+ "key": "dopilot:agent:dopilot-agent-0:commands",
+ "type": "stream_lp3",
+ "expire": null,
+ "file_bytes": 28804458,
+ "listpacks": 19781,
+ "stored_bytes": 28685678,
+ "logical_bytes": 70475696,
+ "length": 100004,
+ "last_id": "1784907900143-0",
+ "first_id": "1782951420289-0",
+ "entries_added": 181970,
+ "groups": [
+  {
+   "name": "agent",
+   "last_delivered": "1784907900143-0",
+   "entries_read": 181970,
+   "pel": 0,
+   "consumers": [
+    {
+     "name": "dopilot-agent-0",
+     "pel": 0
+    }
+   ]
+  }
+ ]
+}
+{
+ "key": "dopilot:server:logs",
+ "type": "stream_lp3",
+ "expire": null,
+ "file_bytes": 1484322515,
+ "listpacks": 50383,
+ "stored_bytes": 1483878413,
+ "logical_bytes": 7952851827,
+ "length": 100000,
+ "last_id": "1787364917829-0",
+ "first_id": "1787283791431-0",
+ "entries_added": 3463952,
+ "groups": [
+  {
+   "name": "server-logs",
+   "last_delivered": "1787364917829-0",
+   "entries_read": 3463952,
+   "pel": 0,
+   "consumers": [
+    {
+     "name": "server-1",
+     "pel": 0
+    }
+   ]
+  }
+ ]
+}
+{
+ "key": "dopilot:agent:agent-02:commands",
+ "type": "stream_lp3",
+ "expire": null,
+ "file_bytes": 28731446,
+ "listpacks": 19775,
+ "stored_bytes": 28612709,
+ "logical_bytes": 69346356,
+ "length": 100002,
+ "last_id": "1787365032617-0",
+ "first_id": "1786530240664-0",
+ "entries_added": 165965,
+ "groups": [
+  {
+   "name": "agent",
+   "last_delivered": "1787365032617-0",
+   "entries_read": 165965,
+   "pel": 0,
+   "consumers": [
+    {
+     "name": "agent-02",
+     "pel": 0
+    }
+   ]
+  }
+ ]
+}
+{
+ "key": "dopilot:server:agent-events",
+ "type": "stream_lp3",
+ "expire": null,
+ "file_bytes": 7291880,
+ "listpacks": 5153,
+ "stored_bytes": 7260870,
+ "logical_bytes": 20005030,
+ "length": 53393,
+ "last_id": "1787364918084-0",
+ "first_id": "1787248035891-0",
+ "entries_added": 1123085,
+ "groups": [
+  {
+   "name": "server-events",
+   "last_delivered": "1787364918084-0",
+   "entries_read": 1123085,
+   "pel": 0,
+   "consumers": [
+    {
+     "name": "server-1",
+     "pel": 0
+    }
+   ]
+  }
+ ]
+}
+{
+ "key": "dopilot:agent:dopilot-agent-1:commands",
+ "type": "stream_lp3",
+ "expire": null,
+ "file_bytes": 28817493,
+ "listpacks": 19805,
+ "stored_bytes": 28698569,
+ "logical_bytes": 70480204,
+ "length": 100006,
+ "last_id": "1784452904657-0",
+ "first_id": "1782953340225-0",
+ "entries_added": 182700,
+ "groups": [
+  {
+   "name": "agent",
+   "last_delivered": "1784452904657-0",
+   "entries_read": 182700,
+   "pel": 0,
+   "consumers": [
+    {
+     "name": "dopilot-agent-1",
+     "pel": 0
+    }
+   ]
+  }
+ ]
+}
+{
+ "key": "dopilot:agent:dopilot-agent-01:commands",
+ "type": "stream_lp3",
+ "expire": null,
+ "file_bytes": 897,
+ "listpacks": 1,
+ "stored_bytes": 812,
+ "logical_bytes": 1400,
+ "length": 2,
+ "last_id": "1785122628929-0",
+ "first_id": "1785122544532-0",
+ "entries_added": 2,
+ "groups": [
+  {
+   "name": "agent",
+   "last_delivered": "1785122628929-0",
+   "entries_read": 2,
+   "pel": 0,
+   "consumers": [
+    {
+     "name": "dopilot-agent-01",
+     "pel": 0
+    }
+   ]
+  }
+ ]
+}
+{
+ "key": "dopilot:agent:agent-01:commands",
+ "type": "stream_lp3",
+ "expire": null,
+ "file_bytes": 28770278,
+ "listpacks": 19755,
+ "stored_bytes": 28651661,
+ "logical_bytes": 69339959,
+ "length": 100002,
+ "last_id": "1787359046864-0",
+ "first_id": "1786533240476-0",
+ "entries_added": 165707,
+ "groups": [
+  {
+   "name": "agent",
+   "last_delivered": "1787359046864-0",
+   "entries_read": 165707,
+   "pel": 0,
+   "consumers": [
+    {
+     "name": "agent-01",
+     "pel": 0
+    }
+   ]
+  }
+ ]
+}
+{
+ "key": "dopilot:agent:dopilot-agent-02:commands",
+ "type": "stream_lp3",
+ "expire": null,
+ "file_bytes": 29,
+ "listpacks": 0,
+ "stored_bytes": 0,
+ "logical_bytes": 0,
+ "length": 0,
+ "last_id": "0-0",
+ "first_id": "0-0",
+ "entries_added": 0,
+ "groups": [
+  {
+   "name": "agent",
+   "last_delivered": "0-0",
+   "entries_read": 18446744073709551615,
+   "pel": 0,
+   "consumers": []
+  }
+ ]
+}
+EOF at 1606739366

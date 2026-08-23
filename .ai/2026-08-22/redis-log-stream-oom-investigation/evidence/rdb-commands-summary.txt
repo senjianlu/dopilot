@@ -1,0 +1,31 @@
+commands decoded: 400016
+window 08-21T10:00..08-22T03:30: 3425
+--- by type: Counter({'cleanup_logs': 1718, 'run': 1698, 'stop': 9})
+--- run commands per hour (all / steammarket):
+  2026-08-21T10  run= 690  steammarket= 690
+  2026-08-21T11  run= 689  steammarket= 689
+  2026-08-21T12  run=  99  steammarket=  99
+  2026-08-21T13  run=  89  steammarket=  89
+  2026-08-21T14  run=  21  steammarket=  21
+  2026-08-21T15  run=  21  steammarket=  21
+  2026-08-21T16  run=  85  steammarket=  85
+  2026-08-22T02  run=   4  steammarket=   4
+--- steammarket projects/spiders in window:
+[(('steammarket-spider', None), 1698)]
+--- the 5 giant executions:
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'run', 'agent': 'agent-01', 'task': '380765bc6c2c449d82a9355adcb2ca30', 'execution': '7e52e2092a714a85aeedec114cab021c', 'intent': 'null', 'project': 'steammarket-spider', 'spider': None, 'created': '2026-08-21T11:30:00.979260+00:00'}
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'run', 'agent': 'agent-01', 'task': 'adace4041e734a14859363fc0c8e94eb', 'execution': '77455002db4b4d658b73dbae8b0ccfa9', 'intent': 'null', 'project': 'steammarket-spider', 'spider': None, 'created': '2026-08-21T11:45:00.432164+00:00'}
+   {'stream': 'dopilot:agent:agent-02:commands', 'type': 'run', 'agent': 'agent-02', 'task': 'ebc73b9d6c7344c1a4c8436ac279a2b2', 'execution': '69a7ee968b004b57b919a22b3e2a70b8', 'intent': 'null', 'project': 'steammarket-spider', 'spider': None, 'created': '2026-08-21T12:00:02.165115+00:00'}
+   {'stream': 'dopilot:agent:agent-02:commands', 'type': 'stop', 'agent': 'agent-02', 'task': 'ebc73b9d6c7344c1a4c8436ac279a2b2', 'execution': '69a7ee968b004b57b919a22b3e2a70b8', 'intent': 'reclaim', 'project': None, 'spider': None, 'created': '2026-08-21T12:10:29.073937+00:00'}
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'cleanup_logs', 'agent': 'agent-01', 'task': '380765bc6c2c449d82a9355adcb2ca30', 'execution': '7e52e2092a714a85aeedec114cab021c', 'intent': 'null', 'project': None, 'spider': None, 'created': '2026-08-21T12:10:29.295120+00:00'}
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'cleanup_logs', 'agent': 'agent-01', 'task': 'adace4041e734a14859363fc0c8e94eb', 'execution': '77455002db4b4d658b73dbae8b0ccfa9', 'intent': 'null', 'project': None, 'spider': None, 'created': '2026-08-21T12:10:29.315875+00:00'}
+   {'stream': 'dopilot:agent:agent-02:commands', 'type': 'cleanup_logs', 'agent': 'agent-02', 'task': 'ebc73b9d6c7344c1a4c8436ac279a2b2', 'execution': '69a7ee968b004b57b919a22b3e2a70b8', 'intent': 'null', 'project': None, 'spider': None, 'created': '2026-08-21T12:10:29.332435+00:00'}
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'stop', 'agent': 'agent-01', 'task': 'adace4041e734a14859363fc0c8e94eb', 'execution': '77455002db4b4d658b73dbae8b0ccfa9', 'intent': 'reclaim', 'project': None, 'spider': None, 'created': '2026-08-21T12:10:31.767455+00:00'}
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'stop', 'agent': 'agent-01', 'task': '380765bc6c2c449d82a9355adcb2ca30', 'execution': '7e52e2092a714a85aeedec114cab021c', 'intent': 'reclaim', 'project': None, 'spider': None, 'created': '2026-08-21T12:10:31.769440+00:00'}
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'run', 'agent': 'agent-01', 'task': '5c3593c854f54586821ba22f8677d9b9', 'execution': '68c3466be3ad4dfa93ebbe82f5ebe564', 'intent': 'null', 'project': 'steammarket-spider', 'spider': None, 'created': '2026-08-21T16:00:01.420159+00:00'}
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'run', 'agent': 'agent-01', 'task': '249dc1b63a7e41d09ae927d0044db504', 'execution': '7b98eb548030427985758a32d568c6f9', 'intent': 'null', 'project': 'steammarket-spider', 'spider': None, 'created': '2026-08-21T16:00:02.043860+00:00'}
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'stop', 'agent': 'agent-01', 'task': '5c3593c854f54586821ba22f8677d9b9', 'execution': '68c3466be3ad4dfa93ebbe82f5ebe564', 'intent': 'reclaim', 'project': None, 'spider': None, 'created': '2026-08-21T16:04:37.125944+00:00'}
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'stop', 'agent': 'agent-01', 'task': '249dc1b63a7e41d09ae927d0044db504', 'execution': '7b98eb548030427985758a32d568c6f9', 'intent': 'reclaim', 'project': None, 'spider': None, 'created': '2026-08-21T16:04:37.133605+00:00'}
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'cleanup_logs', 'agent': 'agent-01', 'task': '249dc1b63a7e41d09ae927d0044db504', 'execution': '7b98eb548030427985758a32d568c6f9', 'intent': 'null', 'project': None, 'spider': None, 'created': '2026-08-21T16:05:36.310774+00:00'}
+   {'stream': 'dopilot:agent:agent-01:commands', 'type': 'cleanup_logs', 'agent': 'agent-01', 'task': '5c3593c854f54586821ba22f8677d9b9', 'execution': '68c3466be3ad4dfa93ebbe82f5ebe564', 'intent': 'null', 'project': None, 'spider': None, 'created': '2026-08-21T16:05:36.719468+00:00'}
+--- stop commands in window: [('2026-08-21T12:10:28', 'agent-01', 'reclaim', '975ff11c'), ('2026-08-21T12:10:29', 'agent-02', 'reclaim', '69a7ee96'), ('2026-08-21T12:10:31', 'agent-01', 'reclaim', '77455002'), ('2026-08-21T12:10:31', 'agent-01', 'reclaim', '7e52e209'), ('2026-08-21T16:04:37', 'agent-01', 'reclaim', '9b794a5d'), ('2026-08-21T16:04:37', 'agent-01', 'reclaim', '68c3466b'), ('2026-08-21T16:04:37', 'agent-01', 'reclaim', '7b98eb54'), ('2026-08-21T16:04:39', 'agent-01', 'reclaim', '52929500'), ('2026-08-21T16:04:41', 'agent-02', 'reclaim', '3a43d990')]

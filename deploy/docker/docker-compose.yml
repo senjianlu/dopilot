@@ -140,6 +140,15 @@ services:
   redis:
     image: redis:7
     logging: *default-logging
+    # Container memory hard limit (log-flood guard): Redis LOADING an RDB/AOF
+    # ignores --maxmemory, so a dataset that outgrew the budget (e.g. a flooded
+    # log stream replayed from AOF) would otherwise take the HOST down with
+    # it. With this cgroup cap only the redis container is OOM-killed and
+    # restarted; if that repeats, wipe the redis volume per the recovery
+    # runbook (docs/architecture/05-deployment.md) — the streams are a
+    # transient bus (decision 0008). Keep it above --maxmemory.
+    mem_limit: ${DOPILOT_REDIS_MEM_LIMIT:-1g}
+    memswap_limit: ${DOPILOT_REDIS_MEM_LIMIT:-1g}
     command:
       - "redis-server"
       - "--appendonly"
@@ -226,6 +235,10 @@ services:
     command: ["dopilot-server", "-b", "0.0.0.0", "-p", "5000"]
     init: true
     logging: *default-logging
+    # Container memory hard limit (log-flood guard): the server itself stays
+    # small (~200MB observed in production); this bounds any future leak.
+    mem_limit: ${DOPILOT_SERVER_MEM_LIMIT:-2g}
+    memswap_limit: ${DOPILOT_SERVER_MEM_LIMIT:-2g}
     environment:
       DOPILOT_DATABASE_URL: postgresql+psycopg://dopilot:dopilot@db:5432/dopilot
       DOPILOT_REDIS_URL: redis://:${DOPILOT_REDIS_PASSWORD:-change-me-redis-pass}@redis:6379/0

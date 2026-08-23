@@ -1,0 +1,186 @@
+2026-08-22T03:18:08+0000 pve-cz-console kernel: docker invoked oom-killer: gfp_mask=0x1100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0
+2026-08-22T03:18:09+0000 pve-cz-console kernel: CPU: 1 PID: 2523 Comm: docker Not tainted 5.15.0-187-generic #197-Ubuntu
+2026-08-22T03:18:09+0000 pve-cz-console kernel: Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS rel-1.15.0-0-g2dd4b9b3f840-prebuilt.qemu.org 04/01/2014
+2026-08-22T03:18:09+0000 pve-cz-console kernel: Call Trace:
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  <TASK>
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  show_stack+0x52/0x5c
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  dump_stack_lvl+0x4a/0x63
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  dump_stack+0x10/0x16
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  dump_header+0x53/0x23c
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  oom_kill_process.cold+0xb/0x10
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  out_of_memory+0x106/0x2e0
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  __alloc_pages_slowpath.constprop.0+0xacb/0xbc0
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  __alloc_pages+0x311/0x330
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  alloc_pages+0x9e/0x1e0
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  __page_cache_alloc+0x7e/0x90
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  pagecache_get_page+0x152/0x590
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  ? page_cache_ra_unbounded+0x163/0x210
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  filemap_fault+0x488/0xab0
+2026-08-22T03:18:09+0000 pve-cz-console kernel:  ? filemap_map_pages+0x309/0x400
+2026-08-22T03:18:10+0000 pve-cz-console kernel:  __do_fault+0x3c/0x120
+2026-08-22T03:18:11+0000 pve-cz-console kernel:  do_read_fault+0xeb/0x160
+2026-08-22T03:18:12+0000 pve-cz-console kernel:  do_fault+0xa0/0x2e0
+2026-08-22T03:18:12+0000 pve-cz-console kernel:  handle_pte_fault+0x1cd/0x240
+2026-08-22T03:18:13+0000 pve-cz-console kernel:  __handle_mm_fault+0x405/0x6f0
+2026-08-22T03:18:14+0000 pve-cz-console kernel:  handle_mm_fault+0xd8/0x2c0
+2026-08-22T03:18:14+0000 pve-cz-console kernel:  do_user_addr_fault+0x1c9/0x640
+2026-08-22T03:18:15+0000 pve-cz-console kernel:  exc_page_fault+0x77/0x170
+2026-08-22T03:18:16+0000 pve-cz-console kernel:  asm_exc_page_fault+0x27/0x30
+2026-08-22T03:18:16+0000 pve-cz-console kernel: RIP: 0033:0x55b2515e44e0
+2026-08-22T03:18:18+0000 pve-cz-console kernel: Code: Unable to access opcode bytes at RIP 0x55b2515e44b6.
+2026-08-22T03:18:19+0000 pve-cz-console kernel: RSP: 002b:00007f4d82687cb0 EFLAGS: 00010216
+2026-08-22T03:18:19+0000 pve-cz-console kernel: RAX: 000055b2534c6a30 RBX: 0000000000000001 RCX: 0000000000000000
+2026-08-22T03:18:20+0000 pve-cz-console kernel: RDX: 000000f5a8230008 RSI: 0000000df9c2a902 RDI: 00000000000009d8
+2026-08-22T03:18:20+0000 pve-cz-console kernel: RBP: 00007f4d82687d18 R08: 0000000000000000 R09: 000000000000000a
+2026-08-22T03:18:20+0000 pve-cz-console kernel: R10: 00007ffcb7722080 R11: 0000000000000202 R12: 00007f4d82687d08
+2026-08-22T03:18:21+0000 pve-cz-console kernel: R13: 0000000000000001 R14: 000000f5a81d8b40 R15: 00007ffcb76fdb10
+2026-08-22T03:18:22+0000 pve-cz-console kernel:  </TASK>
+2026-08-22T03:18:22+0000 pve-cz-console kernel: Mem-Info:
+2026-08-22T03:18:23+0000 pve-cz-console kernel: active_anon:305178 inactive_anon:1650407 isolated_anon:0
+2026-08-22T03:18:23+0000 pve-cz-console kernel: Node 0 active_anon:1220712kB inactive_anon:6601628kB active_file:244kB inactive_file:168kB unevictable:27812kB isolated(anon):0kB isolated(file):0kB mapped:29008kB dirty:0kB writeback:0kB shmem:27124kB shmem_thp: 0kB shmem_pmdmapped: 0kB anon_thp: 0kB writeback_tmp:0kB kernel_stack
+2026-08-22T03:18:24+0000 pve-cz-console kernel: Node 0 DMA free:14336kB min:128kB low:160kB high:192kB reserved_highatomic:0KB active_anon:0kB inactive_anon:0kB active_file:0kB inactive_file:0kB unevictable:0kB writepending:0kB present:15992kB managed:15360kB mlocked:0kB bounce:0kB free_pcp:0kB local_pcp:0kB free_cma:0kB
+2026-08-22T03:18:24+0000 pve-cz-console kernel: lowmem_reserve[]: 0 2827 7805 7805 7805
+2026-08-22T03:18:25+0000 pve-cz-console kernel: Node 0 DMA32 free:43860kB min:24432kB low:30540kB high:36648kB reserved_highatomic:0KB active_anon:865060kB inactive_anon:2094168kB active_file:196kB inactive_file:428kB unevictable:0kB writepending:0kB present:3129192kB managed:3014936kB mlocked:0kB bounce:0kB free_pcp:1468kB loca
+2026-08-22T03:18:26+0000 pve-cz-console kernel: lowmem_reserve[]: 0 0 4978 4978 4978
+2026-08-22T03:18:26+0000 pve-cz-console kernel: Node 0 Normal free:44476kB min:43020kB low:53772kB high:64524kB reserved_highatomic:2048KB active_anon:355652kB inactive_anon:4507460kB active_file:216kB inactive_file:0kB unevictable:27812kB writepending:0kB present:5242880kB managed:5098008kB mlocked:27812kB bounce:0kB free_pcp:0
+2026-08-22T03:18:27+0000 pve-cz-console kernel: lowmem_reserve[]: 0 0 0 0 0
+2026-08-22T03:18:28+0000 pve-cz-console kernel: Node 0 DMA: 0*4kB 0*8kB 0*16kB 0*32kB 0*64kB 0*128kB 0*256kB 0*512kB 0*1024kB 1*2048kB (M) 3*4096kB (M) = 14336kB
+2026-08-22T03:18:28+0000 pve-cz-console kernel: Node 0 DMA32: 301*4kB (UME) 350*8kB (UME) 329*16kB (UME) 229*32kB (UE) 164*64kB (UME) 87*128kB (UME) 22*256kB (UM) 0*512kB 0*1024kB 0*2048kB 0*4096kB = 43860kB
+2026-08-22T03:18:28+0000 pve-cz-console kernel: Node 0 Normal: 1607*4kB (UMEH) 918*8kB (UMEH) 562*16kB (UMEH) 337*32kB (UMEH) 139*64kB (UMEH) 14*128kB (UM) 1*256kB (M) 0*512kB 0*1024kB 0*2048kB 0*4096kB = 44492kB
+2026-08-22T03:18:29+0000 pve-cz-console kernel: Node 0 hugepages_total=0 hugepages_free=0 hugepages_surp=0 hugepages_size=2048kB
+2026-08-22T03:18:30+0000 pve-cz-console kernel: 327645 total pagecache pages
+2026-08-22T03:18:30+0000 pve-cz-console kernel: 318469 pages in swap cache
+2026-08-22T03:18:30+0000 pve-cz-console kernel: Swap cache stats: add 859010, delete 540542, find 320642/363902
+2026-08-22T03:18:30+0000 pve-cz-console kernel: Free swap  = 0kB
+2026-08-22T03:18:31+0000 pve-cz-console kernel: Total swap = 2097148kB
+2026-08-22T03:18:31+0000 pve-cz-console kernel: 2097016 pages RAM
+2026-08-22T03:18:31+0000 pve-cz-console kernel: 0 pages HighMem/MovableOnly
+2026-08-22T03:18:31+0000 pve-cz-console kernel: 64940 pages reserved
+2026-08-22T03:18:31+0000 pve-cz-console kernel: 0 pages hwpoisoned
+2026-08-22T03:18:32+0000 pve-cz-console kernel: Tasks state (memory values in pages):
+2026-08-22T03:18:32+0000 pve-cz-console kernel: [  pid  ]   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name
+2026-08-22T03:18:32+0000 pve-cz-console kernel: [    361]     0   361     9918      587    98304        1          -250 systemd-journal
+2026-08-22T03:18:32+0000 pve-cz-console kernel: [    400]     0   400    72365     6810   114688        0         -1000 multipathd
+2026-08-22T03:18:32+0000 pve-cz-console kernel: [    403]     0   403     6500     1080    77824       21         -1000 systemd-udevd
+2026-08-22T03:18:32+0000 pve-cz-console kernel: [    552]   104   552    22341      635    77824        0             0 systemd-timesyn
+2026-08-22T03:18:32+0000 pve-cz-console kernel: [    611]   101   611     4065      491    77824        0             0 systemd-network
+2026-08-22T03:18:32+0000 pve-cz-console kernel: [    613]   102   613     6420     1432    86016       50             0 systemd-resolve
+2026-08-22T03:18:33+0000 pve-cz-console kernel: [    626]     0   626     1724      164    53248        0             0 cron
+2026-08-22T03:18:33+0000 pve-cz-console kernel: [    627]   103   627     2272      972    61440        0          -900 dbus-daemon
+2026-08-22T03:18:33+0000 pve-cz-console kernel: [    633]     0   633   329983     2599   290816      672             0 infisical
+2026-08-22T03:18:34+0000 pve-cz-console kernel: [    634]     0   634    20693      623    61440        0             0 irqbalance
+2026-08-22T03:18:34+0000 pve-cz-console kernel: [    635]     0   635     8209     2673   102400      387             0 networkd-dispat
+2026-08-22T03:18:34+0000 pve-cz-console kernel: [    636]     0   636   310662     1578   126976       45             0 node_exporter
+2026-08-22T03:18:35+0000 pve-cz-console kernel: [    637]     0   637    58628      791    86016        0             0 polkitd
+2026-08-22T03:18:35+0000 pve-cz-console kernel: [    638]   107   638    55601     1128    81920        1             0 rsyslogd
+2026-08-22T03:18:35+0000 pve-cz-console kernel: [    642]     0   642   481197     3170   270336      780          -900 snapd
+2026-08-22T03:18:35+0000 pve-cz-console kernel: [    645]     0   645     3834      673    65536        0             0 systemd-logind
+2026-08-22T03:18:35+0000 pve-cz-console kernel: [    647]     0   647   313582     3980   249856      840             0 tailscaled
+2026-08-22T03:18:36+0000 pve-cz-console kernel: [    648]     0   648    98177     1383   126976        0             0 udisksd
+2026-08-22T03:18:37+0000 pve-cz-console kernel: [    649]     0   649   523710     4365   339968     1136          -999 containerd
+2026-08-22T03:18:37+0000 pve-cz-console kernel: [    699]     0   699     3859      943    73728      188         -1000 sshd
+2026-08-22T03:18:37+0000 pve-cz-console kernel: [    701]     0   701    79258     1147   118784       22             0 ModemManager
+2026-08-22T03:18:38+0000 pve-cz-console kernel: [    715]     0   715     1544      211    49152        0             0 agetty
+2026-08-22T03:18:38+0000 pve-cz-console kernel: [    716]     0   716    27438     2470   126976      295             0 unattended-upgr
+2026-08-22T03:18:38+0000 pve-cz-console kernel: [    728]     0   728   636674     6199   507904     1575          -500 dockerd
+2026-08-22T03:18:38+0000 pve-cz-console kernel: [    750]     0   750     4295     1123    69632       77             0 sshd
+2026-08-22T03:18:39+0000 pve-cz-console kernel: [    769]  1000   769     4300     1056    81920       17             0 systemd
+2026-08-22T03:18:39+0000 pve-cz-console kernel: [    770]  1000   770    25941      579    94208      372             0 (sd-pam)
+2026-08-22T03:18:40+0000 pve-cz-console kernel: [    931]  1000   931     4328     1018    69632       55             0 sshd
+2026-08-22T03:18:40+0000 pve-cz-console kernel: [    932]  1000   932     2227      817    53248      134             0 bash
+2026-08-22T03:18:41+0000 pve-cz-console kernel: [   1523]     0  1523   308773     1008   110592        0          -998 containerd-shim
+2026-08-22T03:18:41+0000 pve-cz-console kernel: [   1524]     0  1524   308837      888   106496        0          -998 containerd-shim
+2026-08-22T03:18:41+0000 pve-cz-console kernel: [   1526]     0  1526   308901      982   110592        1          -998 containerd-shim
+2026-08-22T03:18:43+0000 pve-cz-console kernel: [   1535]     0  1535   308901      877   118784        1          -998 containerd-shim
+2026-08-22T03:18:43+0000 pve-cz-console kernel: [   1542]     0  1542   308837     1137   110592       20          -998 containerd-shim
+2026-08-22T03:18:44+0000 pve-cz-console kernel: [   1595]     0  1595   308901     1136   118784        4          -998 containerd-shim
+2026-08-22T03:18:44+0000 pve-cz-console kernel: [   1620]     0  1620    96427    11540   258048     2754             0 adspowerful-ser
+2026-08-22T03:18:45+0000 pve-cz-console kernel: [   1631]   999  1631  2464615  1540251 18370560   506979             0 redis-server
+2026-08-22T03:18:45+0000 pve-cz-console kernel: [   1681]     0  1681       56        0    24576        3             0 docker-entrypoi
+2026-08-22T03:18:45+0000 pve-cz-console kernel: [   1686]   999  1686    54189     1286   155648      419             0 postgres
+2026-08-22T03:18:45+0000 pve-cz-console kernel: [   1702]     0  1702   329460     3625   290816      817             0 agent
+2026-08-22T03:18:46+0000 pve-cz-console kernel: [   1712]     0  1712      284        5    28672        8             0 docker-init
+2026-08-22T03:18:46+0000 pve-cz-console kernel: [   1866]     0  1866   436737      602   155648        0          -500 docker-proxy
+2026-08-22T03:18:46+0000 pve-cz-console kernel: [   1874]     0  1874   436737      614   151552        0          -500 docker-proxy
+2026-08-22T03:18:47+0000 pve-cz-console kernel: [   1893]     0  1893   436737      560   155648        0          -500 docker-proxy
+2026-08-22T03:18:47+0000 pve-cz-console kernel: [   1901]     0  1901   436737      571   147456        0          -500 docker-proxy
+2026-08-22T03:18:47+0000 pve-cz-console kernel: [   1922]     0  1922   436737      540   167936        0          -500 docker-proxy
+2026-08-22T03:18:48+0000 pve-cz-console kernel: [   1928]     0  1928   436737      618   155648        0          -500 docker-proxy
+2026-08-22T03:18:48+0000 pve-cz-console kernel: [   1945]     0  1945   436737      302   159744      301          -500 docker-proxy
+2026-08-22T03:18:48+0000 pve-cz-console kernel: [   1951]     0  1951   436737      474   151552      123          -500 docker-proxy
+2026-08-22T03:18:48+0000 pve-cz-console kernel: [   1971]   100  1971   338222     4751   368640      172             0 consul
+2026-08-22T03:18:48+0000 pve-cz-console kernel: [   1975]     0  1975   436737      566   159744        0          -500 docker-proxy
+2026-08-22T03:18:49+0000 pve-cz-console kernel: [   1981]     0  1981   418240      379   151552        0          -500 docker-proxy
+2026-08-22T03:18:49+0000 pve-cz-console kernel: [   2048]     0  2048   418304      596   147456       32          -500 docker-proxy
+2026-08-22T03:18:50+0000 pve-cz-console kernel: [   2054]     0  2054   436737      572   163840       20          -500 docker-proxy
+2026-08-22T03:18:50+0000 pve-cz-console kernel: [   2070]     0  2070   150181    19552   442368     4682             0 dopilot-server
+2026-08-22T03:18:50+0000 pve-cz-console kernel: [   2157]   999  2157    54222      216   139264      420             0 postgres
+2026-08-22T03:18:51+0000 pve-cz-console kernel: [   2158]   999  2158    54228      388   139264      412             0 postgres
+2026-08-22T03:18:52+0000 pve-cz-console kernel: [   2176]   999  2176    54189     1251   135168      412             0 postgres
+2026-08-22T03:18:53+0000 pve-cz-console kernel: [   2177]   999  2177    54588      453   151552      408             0 postgres
+2026-08-22T03:18:53+0000 pve-cz-console kernel: [   2178]   999  2178    54584      268   139264      408             0 postgres
+2026-08-22T03:18:54+0000 pve-cz-console kernel: [   2181]     0  2181     4295     1221    69632       21             0 sshd
+2026-08-22T03:18:54+0000 pve-cz-console kernel: [   2235]  1000  2235     4328      820    69632      179             0 sshd
+2026-08-22T03:18:54+0000 pve-cz-console kernel: [   2236]  1000  2236     2227      550    65536      394             0 bash
+2026-08-22T03:18:55+0000 pve-cz-console kernel: [   2261]   999  2261    54960     2392   172032      368             0 postgres
+2026-08-22T03:18:55+0000 pve-cz-console kernel: [   2262]   999  2262    55012     2667   180224      368             0 postgres
+2026-08-22T03:18:56+0000 pve-cz-console kernel: [   2263]   999  2263    55002     2918   176128      368             0 postgres
+2026-08-22T03:18:57+0000 pve-cz-console kernel: [   2264]   999  2264    55014     2796   176128      368             0 postgres
+2026-08-22T03:18:58+0000 pve-cz-console kernel: [   2265]   999  2265    55003     2766   180224      368             0 postgres
+2026-08-22T03:18:58+0000 pve-cz-console kernel: [   2277]  1000  2277     2917      411    65536        1             0 sudo
+2026-08-22T03:18:59+0000 pve-cz-console kernel: [   2352]   999  2352    54891     1645   159744      370             0 postgres
+2026-08-22T03:19:00+0000 pve-cz-console kernel: [   2363]  1000  2363     2917      228    65536        8             0 sudo
+2026-08-22T03:19:00+0000 pve-cz-console kernel: [   2364]     0  2364     2548      518    61440        1             0 su
+2026-08-22T03:19:01+0000 pve-cz-console kernel: [   2365]     0  2365     1941      473    65536        0             0 bash
+2026-08-22T03:19:02+0000 pve-cz-console kernel: [   2447]   999  2447  2464234  1851193 18362368   196843             0 redis-server
+2026-08-22T03:19:03+0000 pve-cz-console kernel: [   2520]     0  2520   415317      961   192512        0             0 docker
+2026-08-22T03:19:04+0000 pve-cz-console kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=user.slice,mems_allowed=0,global_oom,task_memcg=/system.slice/docker-6eeeea6bac89078299657caf214a0bc1e2766dedbc7a0d585dafaf852e72e5b4.scope,task=redis-server,pid=2447,uid=999
+2026-08-22T03:19:05+0000 pve-cz-console kernel: Out of memory: Killed process 2447 (redis-server) total-vm:9856936kB, anon-rss:7404772kB, file-rss:0kB, shmem-rss:0kB, UID:999 pgtables:17932kB oom_score_adj:0
+2026-08-22T03:19:06+0000 pve-cz-console kernel: postgres invoked oom-killer: gfp_mask=0x1100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0
+2026-08-22T03:19:06+0000 pve-cz-console kernel: CPU: 1 PID: 2158 Comm: postgres Not tainted 5.15.0-187-generic #197-Ubuntu
+2026-08-22T03:19:06+0000 pve-cz-console kernel: Hardware name: QEMU Standard PC (i440FX + PIIX, 1996), BIOS rel-1.15.0-0-g2dd4b9b3f840-prebuilt.qemu.org 04/01/2014
+2026-08-22T03:19:06+0000 pve-cz-console kernel: Call Trace:
+2026-08-22T03:19:06+0000 pve-cz-console kernel:  <TASK>
+2026-08-22T03:19:07+0000 pve-cz-console kernel:  show_stack+0x52/0x5c
+2026-08-22T03:19:07+0000 pve-cz-console kernel:  dump_stack_lvl+0x4a/0x63
+2026-08-22T03:19:08+0000 pve-cz-console kernel:  dump_stack+0x10/0x16
+2026-08-22T03:19:09+0000 pve-cz-console kernel:  dump_header+0x53/0x23c
+2026-08-22T03:19:09+0000 pve-cz-console kernel:  oom_kill_process.cold+0xb/0x10
+2026-08-22T03:19:09+0000 pve-cz-console kernel:  out_of_memory+0x106/0x2e0
+2026-08-22T03:19:09+0000 pve-cz-console kernel:  __alloc_pages_slowpath.constprop.0+0xacb/0xbc0
+2026-08-22T03:19:10+0000 pve-cz-console kernel:  __alloc_pages+0x311/0x330
+2026-08-22T03:19:10+0000 pve-cz-console kernel:  alloc_pages+0x9e/0x1e0
+2026-08-22T03:19:11+0000 pve-cz-console kernel:  __page_cache_alloc+0x7e/0x90
+2026-08-22T03:19:11+0000 pve-cz-console kernel:  pagecache_get_page+0x152/0x590
+2026-08-22T03:19:12+0000 pve-cz-console kernel:  ? page_cache_ra_unbounded+0x163/0x210
+2026-08-22T03:19:12+0000 pve-cz-console kernel:  filemap_fault+0x488/0xab0
+2026-08-22T03:19:13+0000 pve-cz-console kernel:  ? filemap_map_pages+0x309/0x400
+2026-08-22T03:19:13+0000 pve-cz-console kernel:  __do_fault+0x3c/0x120
+2026-08-22T03:19:14+0000 pve-cz-console kernel:  do_read_fault+0xeb/0x160
+2026-08-22T03:19:14+0000 pve-cz-console kernel:  do_fault+0xa0/0x2e0
+2026-08-22T03:19:14+0000 pve-cz-console kernel:  handle_pte_fault+0x1cd/0x240
+2026-08-22T03:19:14+0000 pve-cz-console kernel:  __handle_mm_fault+0x405/0x6f0
+2026-08-22T03:19:15+0000 pve-cz-console kernel:  handle_mm_fault+0xd8/0x2c0
+2026-08-22T03:19:15+0000 pve-cz-console kernel:  do_user_addr_fault+0x1c9/0x640
+2026-08-22T03:19:16+0000 pve-cz-console kernel:  exc_page_fault+0x77/0x170
+2026-08-22T03:19:17+0000 pve-cz-console kernel:  asm_exc_page_fault+0x27/0x30
+2026-08-22T03:19:17+0000 pve-cz-console kernel: RIP: 0033:0x5621955f5cd0
+2026-08-22T03:19:17+0000 pve-cz-console kernel: Code: Unable to access opcode bytes at RIP 0x5621955f5ca6.
+2026-08-22T03:19:18+0000 pve-cz-console kernel: RSP: 002b:00007ffc6b624fc8 EFLAGS: 00010202
+2026-08-22T03:19:18+0000 pve-cz-console kernel: RAX: 0000000000000000 RBX: 00000000000036fa RCX: 0000000000004000
+2026-08-22T03:19:19+0000 pve-cz-console kernel: RDX: 0000000000000000 RSI: 0000000000000000 RDI: 00005621b162bb08
+2026-08-22T03:19:19+0000 pve-cz-console kernel: RBP: 00007ffc6b625020 R08: 00000000000036fb R09: 0000000000000000
+2026-08-22T03:19:20+0000 pve-cz-console kernel: R10: 00000000000000c8 R11: 0000000000000202 R12: 0000000000003715
+2026-08-22T03:19:21+0000 pve-cz-console kernel: R13: 00007ffc6b625110 R14: 0000000000000905 R15: 0000000000000001
+2026-08-22T03:19:21+0000 pve-cz-console kernel:  </TASK>
+2026-08-22T03:19:22+0000 pve-cz-console kernel: Mem-Info:
+2026-08-22T03:19:22+0000 pve-cz-console kernel: active_anon:674914 inactive_anon:1278884 isolated_anon:0
+2026-08-22T03:19:22+0000 pve-cz-console kernel: Node 0 active_anon:2699656kB inactive_anon:5115536kB active_file:24kB inactive_file:376kB unevictable:27812kB isolated(anon):0kB isolated(file):20kB mapped:28900kB dirty:20kB writeback:0kB shmem:27152kB shmem_thp: 0kB shmem_pmdmapped: 0kB anon_thp: 0kB writeback_tmp:0kB kernel_stac
+2026-08-22T03:19:23+0000 pve-cz-console kernel: Node 0 DMA free:14336kB min:128kB low:160kB high:192kB reserved_highatomic:0KB active_anon:0kB inactive_anon:0kB active_file:0kB inactive_file:0kB unevictable:0kB writepending:0kB present:15992kB managed:15360kB mlocked:0kB bounce:0kB free_pcp:0kB local_pcp:0kB free_cma:0kB
+2026-08-22T03:19:23+0000 pve-cz-console kernel: lowmem_reserve[]: 0 2827 7805 7805 7805
+2026-08-22T03:19:24+0000 pve-cz-console kernel: Node 0 DMA32 free:44112kB min:24432kB low:30540kB high:36648kB reserved_highatomic:0KB active_anon:2015972kB inactive_anon:943244kB active_file:204kB inactive_file:64kB unevictable:0kB writepending:20kB present:3129192kB managed:3014936kB mlocked:0kB bounce:0kB free_pcp:2032kB loca
+2026-08-22T03:19:24+0000 pve-cz-console kernel: lowmem_reserve[]: 0 0 4978 4978 4978
+2026-08-22T03:19:24+0000 pve-cz-console kernel: Node 0 Normal free:46588kB min:43020kB low:53772kB high:64524kB reserved_highatomic:4096KB active_anon:683684kB inactive_anon:4172292kB active_file:52kB inactive_file:116kB unevictable:27812kB writepending:0kB present:5242880kB managed:5098008kB mlocked:27812kB bounce:0kB free_pcp:
+2026-08-22T03:19:25+0000 pve-cz-console kernel: lowmem_reserve[]: 0 0 0 0 0
+2026-08-22T03:19:25+0000 pve-cz-console kernel: Node 0 DMA: 0*4kB 0*8kB 0*16kB 0*32kB 0*64kB 0*128kB 0*256kB 0*512kB 0*1024kB 1*2048kB (M) 3*4096kB (M) = 14336kB
+2026-08-22T03:19:26+0000 pve-cz-console kernel: Node 0 DMA32: 52*4kB (ME) 141*8kB (UME) 213*16kB (UME) 138*32kB (UME) 114*64kB (UME) 66*128kB (UE) 35*256kB (U) 13*512kB (U) 0*1024kB 2*2048kB (M) 0*4096kB = 44616kB

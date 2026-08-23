@@ -37,12 +37,14 @@ from .config.loader import DEFAULT_CONFIG_PATH, get_settings, load_settings
 from .config.settings import Settings
 from .db.engine import dispose_engines, get_session, get_sessionmaker
 from .errors import ApiError
+from .logs.dir_gauge import LogsDirGauge
 from .logs.sse import SubscriptionManager
 from .redis.client import build_redis
 from .redis.commands import CommandProducer
 from .redis.consumers import EventConsumer, LogConsumer
 from .redis.dispatcher import CommandDispatcher
 from .redis.reconcile import RedisReconcileLoop
+from .redis.stream_guard import StreamGuardLoop
 from .resource_stats import ResourceStatsLoop
 from .retention import RetentionSweepLoop
 from .scheduler.runner import ScheduleRunner, build_schedule_runner
@@ -127,6 +129,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         retention_loop: RetentionSweepLoop | None = None
         stats_loop: ResourceStatsLoop | None = None
         schedule_runner: ScheduleRunner | None = None
+        stream_guard: StreamGuardLoop | None = None
         if owns_runtime:
             app.dependency_overrides[get_session] = _session_dependency
             # Expose the request sessionmaker so endpoints that outlive a normal
@@ -145,16 +148,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await seed_builtin_artifacts(session, active)
 
             redis_client = build_redis(active.redis.url)
+
+            # Log-flood guard startup cleanup (G1) — BEFORE any consumer starts:
+            # (1) trim the log stream back under its byte budget so a Redis that
+            # was flooded (or a replayed AOF) is cut down first; (2) calibrate
+            # the logs-dir gauge from a real walk so the consumer's admission
+            # check starts exact. Schema is already at head (the external
+            # migrate service / alembic runs before the server; the lifespan
+            # never migrates).
+            stream_guard = StreamGuardLoop(redis_client, active, bg_maker)
+            await stream_guard.enforce_once()
+            logs_gauge = LogsDirGauge(active.logs.root_dir, active.logs.max_total_bytes)
+            await logs_gauge.calibrate()
+            app.state.logs_gauge = logs_gauge
+            app.state.stream_guard = stream_guard
+
             producer = CommandProducer(redis_client, active.redis)
-            dispatcher = CommandDispatcher(bg_maker, producer)
+            dispatcher = CommandDispatcher(bg_maker, producer, settings=active)
             event_consumer = EventConsumer(
                 bg_maker, redis_client, consumer_name=active.redis.consumer_name
             )
             log_consumer = LogConsumer(
                 bg_maker, redis_client, active, app.state.subscriptions,
-                consumer_name=active.redis.consumer_name,
+                consumer_name=active.redis.consumer_name, gauge=logs_gauge,
             )
-            reconcile_loop = RedisReconcileLoop(bg_maker, active)
+            # Phase 1.7: the single-instance schedule runner (OFF unless
+            # [scheduler].enabled). Built early so the reconcile loop's
+            # auto-disable callback can reload it AFTER each committed tick.
+            schedule_runner = build_schedule_runner(bg_maker, active, dispatcher)
+
+            async def _on_schedules_disabled(_ids: list[str]) -> None:
+                if schedule_runner is not None:
+                    await schedule_runner.reload()
+
+            reconcile_loop = RedisReconcileLoop(
+                bg_maker, active, on_schedules_disabled=_on_schedules_disabled
+            )
 
             dispatcher.start()
             event_consumer.start()
@@ -168,22 +197,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # disabled — limits should hold without operator action.
             if active.maintenance.enabled:
                 retention_loop = RetentionSweepLoop(
-                    bg_maker, active, redis_client
+                    bg_maker, active, redis_client, gauge=logs_gauge
                 )
                 retention_loop.start()
             app.state.retention_loop = retention_loop
+            # The periodic stream-byte guard starts LAST of the workers (plan
+            # TC-32 order): its startup trim already ran above, before any
+            # consumer, so nothing is lost by starting the loop after retention.
+            stream_guard.start()
 
             # Resource dashboard (D2): periodic usage sampler. The endpoint serves
             # only this cached snapshot (never samples per request). OFF only when
             # stats_interval_seconds<=0.
             if active.maintenance.stats_interval_seconds > 0:
-                stats_loop = ResourceStatsLoop(bg_maker, active, redis_client)
+                stats_loop = ResourceStatsLoop(
+                    bg_maker, active, redis_client, gauge=logs_gauge
+                )
                 stats_loop.start()
             app.state.resource_stats = stats_loop
 
-            # Phase 1.7: the single-instance schedule runner (OFF unless
-            # [scheduler].enabled). Drives the schedules table via APScheduler.
-            schedule_runner = build_schedule_runner(bg_maker, active, dispatcher)
             if schedule_runner is not None:
                 await schedule_runner.start()
             app.state.schedule_runner = schedule_runner
@@ -194,8 +226,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if schedule_runner is not None:
                     await schedule_runner.stop()
                 for worker in (
-                    stats_loop, retention_loop, reconcile_loop, log_consumer,
-                    event_consumer, dispatcher,
+                    stats_loop, retention_loop, stream_guard, reconcile_loop,
+                    log_consumer, event_consumer, dispatcher,
                 ):
                     if worker is not None:
                         await worker.stop()

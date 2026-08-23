@@ -1,7 +1,8 @@
 """Thin async Redis Streams client wrapper (server side).
 
 Exposes only the narrow surface dopilot uses (XADD / XREADGROUP / XACK /
-XAUTOCLAIM / XGROUP CREATE / XLEN), so it is interchangeable with a test double
+XAUTOCLAIM / XGROUP CREATE / XLEN / XTRIM / MEMORY USAGE / SCAN / DEL /
+XRANGE), so it is interchangeable with a test double
 and with ``fakeredis.aioredis``. Built with ``decode_responses=False`` to keep
 byte fidelity for log offset semantics (log bodies are base64 bytes).
 
@@ -71,6 +72,14 @@ class RedisStreamClient(Protocol):
         maxlen: int | None = None,
         approximate: bool = True,
     ) -> int: ...
+
+    async def memory_usage(self, key: str, *, samples: int = 0) -> int | None: ...
+
+    async def scan_keys(self, pattern: str) -> list[str]: ...
+
+    async def delete(self, *keys: str) -> int: ...
+
+    async def xrange(self, stream: str, min_id: str, max_id: str, *, count: int = 1) -> Any: ...
 
     async def aclose(self) -> None: ...
 
@@ -182,6 +191,31 @@ class RedisStreams:
         return await self._c.xtrim(
             stream, maxlen=maxlen, approximate=approximate
         )
+
+    async def memory_usage(self, key: str, *, samples: int = 0) -> int | None:
+        """``MEMORY USAGE key SAMPLES n`` (0 = every element, exact). None if gone.
+
+        Log-flood guard: the stream guard measures the log stream's real memory
+        footprint with this (MAXLEN counts entries, which bounds nothing at
+        256KB/entry).
+        """
+        return await self._c.memory_usage(key, samples=samples)
+
+    async def scan_keys(self, pattern: str) -> list[str]:
+        """All keys matching ``pattern`` via SCAN (never KEYS)."""
+        out: list[str] = []
+        async for key in self._c.scan_iter(match=pattern, count=200):
+            out.append(key.decode() if isinstance(key, bytes) else str(key))
+        return out
+
+    async def delete(self, *keys: str) -> int:
+        if not keys:
+            return 0
+        return int(await self._c.delete(*keys))
+
+    async def xrange(self, stream: str, min_id: str, max_id: str, *, count: int = 1) -> Any:
+        """``XRANGE stream min max COUNT n`` — used to check a message still exists."""
+        return await self._c.xrange(stream, min=min_id, max=max_id, count=count)
 
     async def aclose(self) -> None:
         await self._c.aclose()

@@ -30,8 +30,10 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -97,6 +99,20 @@ class Task(Base):
     status_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     status_detail: Mapped[dict] = mapped_column(_JSON, nullable=False, default=dict)
     params: Mapped[dict] = mapped_column(_JSON, nullable=False, default=dict)
+    # Log-flood guard / auto-disable: the schedule's ``outcome_generation`` at
+    # task CREATION time (fixed for life; NULL for non-schedule tasks and
+    # treated as 0 for rows that predate migration 0013). A manual re-enable
+    # bumps the schedule generation, so older tasks — even when a late agent
+    # terminal rewrites their ``finished_at`` — never count toward the new run.
+    schedule_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Outcome recorder stamp (``services.outcomes``): set once the task's final
+    # result was judged AND its log files were sealed; cleared by the event
+    # consumer when a soft ``lost`` is overridden by an agent terminal so the
+    # recorder re-judges (and the ledger is corrected).
+    outcome_recorded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    outcome_erroneous: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -111,6 +127,10 @@ class Task(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_tasks_status_outcome_recorded_at", "status", "outcome_recorded_at"),
     )
 
 
@@ -144,6 +164,12 @@ class Execution(Base):
     exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String, nullable=True)
     error_detail: Mapped[dict] = mapped_column(_JSON, nullable=False, default=dict)
+    # Log-flood guard: terminal-only stats the agent parses from the scrapy log
+    # tail (``log_count/ERROR`` / ``finish_reason``) and the final local log
+    # size. NULL = unknown (older agent / truncated log), never zero.
+    error_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finish_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    log_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # Phase 1.5: set to "lost" when an agent-authoritative terminal overrides a
     # prior server-inferred lost (audit of the soft-terminal override).
     reconciled_from: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -213,6 +239,12 @@ class ExecutionLogFile(Base):
     log_integrity: Mapped[str] = mapped_column(
         String, nullable=False, default="complete"
     )
+    # Why ``log_integrity`` became "truncated": ``size-cap`` (per-file cap hit
+    # while consuming), ``dir-budget`` (logs-dir budget exhausted while
+    # consuming) or ``maintenance`` (retention cut an already-sealed file, e.g.
+    # after the cap was lowered). Only the first two count as an erroneous
+    # outcome; ``maintenance`` never changes a recorded result.
+    truncation_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     gap_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     first_gap_expected_offset: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True

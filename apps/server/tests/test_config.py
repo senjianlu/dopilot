@@ -564,3 +564,73 @@ def test_explicit_path_wins_over_default_path(tmp_path, monkeypatch):
     default_cfg.write_text('[auth]\ndisabled = true\n', encoding="utf-8")
     settings = load_settings(str(explicit), default_path=str(default_cfg))
     assert settings.server.host == "explicithost"
+
+
+# --- TC-26 (server): log-flood guard settings, env names, production TOML ----------
+
+_LOG_GUARD_ENVS = (
+    "DOPILOT_LOG_MAX_FILE_BYTES",
+    "DOPILOT_LOG_MAX_TOTAL_BYTES",
+    "DOPILOT_REDIS_STREAM_MAX_BYTES_LOGS",
+    "DOPILOT_REDIS_STREAM_GUARD_INTERVAL_SECONDS",
+    "DOPILOT_REDIS_SENT_RECONCILE_INTERVAL_SECONDS",
+    "DOPILOT_REDIS_SENT_RECONCILE_MIN_AGE_SECONDS",
+    "DOPILOT_SCHEDULER_AUTO_DISABLE_AFTER_ERRORS",
+    "DOPILOT_SCHEDULER_LOST_OUTCOME_GRACE_SECONDS",
+    "DOPILOT_MAINTENANCE_STALE_COMMAND_STREAM_DAYS",
+    "DOPILOT_MAINTENANCE_NOTIFICATION_RETENTION_DAYS",
+    "DOPILOT_MAINTENANCE_NOTIFICATION_UNREAD_MAX_DAYS",
+    "DOPILOT_MAINTENANCE_NOTIFICATION_MAX_ROWS",
+)
+
+
+def test_log_flood_guard_defaults(tmp_path, monkeypatch):
+    for var in _LOG_GUARD_ENVS:
+        monkeypatch.delenv(var, raising=False)
+    s = load_settings(_write_toml(tmp_path))
+    assert s.logs.max_file_bytes == 33554432  # 32MiB (was 100MiB)
+    assert s.logs.max_total_bytes == 21474836480  # 20GB
+    assert s.redis.stream_max_bytes_logs == 268435456  # 256MB
+    assert s.redis.stream_guard_interval_seconds == 30
+    assert s.redis.sent_reconcile_interval_seconds == 300
+    assert s.redis.sent_reconcile_min_age_seconds == 60
+    assert s.scheduler.auto_disable_after_errors == 5
+    assert s.scheduler.lost_outcome_grace_seconds == 86400
+    assert s.maintenance.stale_command_stream_days == 7
+    assert s.maintenance.notification_retention_days == 30
+    assert s.maintenance.notification_unread_max_days == 90
+    assert s.maintenance.notification_max_rows == 2000
+
+
+def test_log_flood_guard_env_overrides(tmp_path, monkeypatch):
+    for i, var in enumerate(_LOG_GUARD_ENVS, start=1):
+        monkeypatch.setenv(var, str(1000 + i))
+    s = load_settings(_write_toml(tmp_path))
+    assert s.logs.max_file_bytes == 1001  # the pre-existing DOPILOT_LOG_ name keeps working
+    assert s.logs.max_total_bytes == 1002
+    assert s.redis.stream_max_bytes_logs == 1003
+    assert s.redis.stream_guard_interval_seconds == 1004
+    assert s.redis.sent_reconcile_interval_seconds == 1005
+    assert s.redis.sent_reconcile_min_age_seconds == 1006
+    assert s.scheduler.auto_disable_after_errors == 1007
+    assert s.scheduler.lost_outcome_grace_seconds == 1008
+    assert s.maintenance.stale_command_stream_days == 1009
+    assert s.maintenance.notification_retention_days == 1010
+    assert s.maintenance.notification_unread_max_days == 1011
+    assert s.maintenance.notification_max_rows == 1012
+
+
+def test_production_docker_toml_carries_the_new_caps(monkeypatch):
+    """The image loads configs/server.docker.toml — it must not re-widen the cap."""
+    from pathlib import Path
+
+    for var in _LOG_GUARD_ENVS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("DOPILOT_AUTH_DISABLED", "true")
+    repo = Path(__file__).resolve().parents[3]
+    s = load_settings(str(repo / "configs" / "server.docker.toml"))
+    assert s.logs.max_file_bytes == 33554432
+    assert s.logs.max_total_bytes == 21474836480
+    assert s.redis.stream_max_bytes_logs == 268435456
+    assert s.scheduler.auto_disable_after_errors == 5
+    assert s.maintenance.notification_max_rows == 2000

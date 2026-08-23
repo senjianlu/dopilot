@@ -1,0 +1,35 @@
+$ .venv/bin/python -m pytest packages/protocol/tests/test_stream_schemas.py -v
+(cwd: /home/rabbir/Projects/dopilot; DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot)
+
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 19 items
+
+packages/protocol/tests/test_stream_schemas.py::test_stream_topology_constants [32mPASSED[0m[32m [  5%][0m
+packages/protocol/tests/test_stream_schemas.py::test_command_type_and_stop_intent_values [32mPASSED[0m[32m [ 10%][0m
+packages/protocol/tests/test_stream_schemas.py::test_agent_command_defaults_and_roundtrip [32mPASSED[0m[32m [ 15%][0m
+packages/protocol/tests/test_stream_schemas.py::test_run_command_python_wheel_task_type_roundtrip [32mPASSED[0m[32m [ 21%][0m
+packages/protocol/tests/test_stream_schemas.py::test_stop_command_carries_intent [32mPASSED[0m[32m [ 26%][0m
+packages/protocol/tests/test_stream_schemas.py::test_event_type_values_and_helpers [32mPASSED[0m[32m [ 31%][0m
+packages/protocol/tests/test_stream_schemas.py::test_heartbeat_event_type_is_non_terminal_liveness [32mPASSED[0m[32m [ 36%][0m
+packages/protocol/tests/test_stream_schemas.py::test_heartbeat_event_wire_roundtrip [32mPASSED[0m[32m [ 42%][0m
+packages/protocol/tests/test_stream_schemas.py::test_lost_reason_source_split [32mPASSED[0m[32m [ 47%][0m
+packages/protocol/tests/test_stream_schemas.py::test_agent_event_status_is_computed_from_type [32mPASSED[0m[32m [ 52%][0m
+packages/protocol/tests/test_stream_schemas.py::test_agent_event_lost_reason_roundtrip [32mPASSED[0m[32m [ 57%][0m
+packages/protocol/tests/test_stream_schemas.py::test_agent_log_event_base64_byte_fidelity [32mPASSED[0m[32m [ 63%][0m
+packages/protocol/tests/test_stream_schemas.py::test_heartbeat_request_reuses_capability_set [32mPASSED[0m[32m [ 68%][0m
+packages/protocol/tests/test_stream_schemas.py::test_heartbeat_response_defaults [32mPASSED[0m[32m [ 73%][0m
+packages/protocol/tests/test_stream_schemas.py::test_wire_codec_roundtrip_for_each_message [32mPASSED[0m[32m [ 78%][0m
+packages/protocol/tests/test_stream_schemas.py::test_wire_codec_accepts_str_keyed_fields [32mPASSED[0m[32m [ 84%][0m
+packages/protocol/tests/test_stream_schemas.py::test_agent_event_parses_legacy_json_without_stats_fields [32mPASSED[0m[32m [ 89%][0m
+packages/protocol/tests/test_stream_schemas.py::test_agent_event_stats_fields_roundtrip [32mPASSED[0m[32m [ 94%][0m
+packages/protocol/tests/test_stream_schemas.py::test_stop_logs_command_roundtrip [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m19 passed[0m[32m in 0.13s[0m[32m ==============================[0m
+
+exit code: 0

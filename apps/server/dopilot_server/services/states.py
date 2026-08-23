@@ -228,3 +228,70 @@ def rollup_task_status(execution_statuses: list[str]) -> str | None:
     if any(s == EXEC_CANCELED for s in execution_statuses):
         return TASK_CANCELED
     return TASK_COMPLETE
+
+
+# ---- log-flood guard: outcome judgement (auto-disable) ----
+LOG_FLOOD_ERROR_CODE = "log_flood"
+# Only these truncation reasons mean "the run itself misbehaved"; a retention
+# cut of an already-sealed file (``maintenance``) never changes an outcome.
+ERRONEOUS_TRUNCATION_REASONS = frozenset({"size-cap", "dir-budget"})
+
+
+def execution_is_erroneous(
+    execution: object, log_file: object | None, max_file_bytes: int = 0
+) -> bool:
+    """Was this execution's run erroneous (auto-disable judgement)?
+
+    - ``failed`` / ``lost`` terminals are erroneous;
+    - ``error_code == log_flood`` (watchdog-stopped) is erroneous;
+    - ONLY for ``finished``: scrapy stats ``error_count > 0`` or a
+      ``finish_reason`` other than ``finished`` (a canceled run's
+      ``shutdown`` reason / stats are NOT an error);
+    - a log file truncated for ``size-cap`` / ``dir-budget``;
+    - ``max_file_bytes > 0`` and the agent-reported ``log_bytes`` reached it
+      (truncation is inevitable; independent of whether the server's
+      increment already landed). 0 = cap disabled -> never judged on size.
+    """
+    status = getattr(execution, "status", None)
+    if status in (EXEC_FAILED, EXEC_LOST):
+        return True
+    if getattr(execution, "error_code", None) == LOG_FLOOD_ERROR_CODE:
+        return True
+    if status == EXEC_FINISHED:
+        error_count = getattr(execution, "error_count", None)
+        if error_count is not None and error_count > 0:
+            return True
+        finish_reason = getattr(execution, "finish_reason", None)
+        if finish_reason is not None and finish_reason != "finished":
+            return True
+    if (
+        log_file is not None
+        and getattr(log_file, "log_integrity", None) == "truncated"
+        and getattr(log_file, "truncation_reason", None) in ERRONEOUS_TRUNCATION_REASONS
+    ):
+        return True
+    log_bytes = getattr(execution, "log_bytes", None)
+    if max_file_bytes > 0 and log_bytes is not None and log_bytes >= max_file_bytes:
+        return True
+    return False
+
+
+def task_is_erroneous(
+    task: object,
+    executions: list,
+    log_files: dict[str, object] | None = None,
+    max_file_bytes: int = 0,
+) -> bool:
+    """A task is erroneous iff its status is failed/lost or ANY execution is.
+
+    ``log_files`` maps ``execution_id`` -> ``ExecutionLogFile`` (the ``log``
+    stream). A terminal task with no executions (e.g. ``no_target``) is judged
+    on its own status only.
+    """
+    if getattr(task, "status", None) in (TASK_FAILED, TASK_LOST):
+        return True
+    files = log_files or {}
+    return any(
+        execution_is_erroneous(e, files.get(getattr(e, "id", None)), max_file_bytes)
+        for e in executions
+    )

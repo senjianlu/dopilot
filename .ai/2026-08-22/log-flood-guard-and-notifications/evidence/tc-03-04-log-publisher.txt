@@ -1,0 +1,25 @@
+$ .venv/bin/python -m pytest apps/agent/tests/test_log_publisher.py -v
+(cwd: /home/rabbir/Projects/dopilot; DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot)
+
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot/apps/agent
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 9 items
+
+apps/agent/tests/test_log_publisher.py::test_publishes_increments_byte_exact [32mPASSED[0m[32m [ 11%][0m
+apps/agent/tests/test_log_publisher.py::test_resume_from_cursor_no_duplicate [32mPASSED[0m[32m [ 22%][0m
+apps/agent/tests/test_log_publisher.py::test_chunking_by_max_bytes_strictly_increasing [32mPASSED[0m[32m [ 33%][0m
+apps/agent/tests/test_log_publisher.py::test_terminal_emits_eof_once [32mPASSED[0m[32m [ 44%][0m
+apps/agent/tests/test_log_publisher.py::test_xadd_failure_does_not_advance_cursor [32mPASSED[0m[32m [ 55%][0m
+apps/agent/tests/test_log_publisher.py::test_publish_cap_emits_marker_once_then_stops_tailing [32mPASSED[0m[32m [ 66%][0m
+apps/agent/tests/test_log_publisher.py::test_rate_limit_bounds_bytes_per_tick_and_rotates [32mPASSED[0m[32m [ 77%][0m
+apps/agent/tests/test_log_publisher.py::test_markers_are_bucket_accounted_under_starved_allowance [32mPASSED[0m[32m [ 88%][0m
+apps/agent/tests/test_log_publisher.py::test_marker_never_overshoots_bucket_at_minimum_rate [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m9 passed[0m[32m in 0.22s[0m[32m ===============================[0m
+
+exit code: 0
