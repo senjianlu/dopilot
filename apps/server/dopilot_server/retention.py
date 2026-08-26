@@ -11,6 +11,10 @@ maintenance API. Each tick, in order:
 2. prunes ``event_audit`` rows older than
    ``maintenance.event_audit_retention_days``
    (:func:`~dopilot_server.services.maintenance.prune_event_audit`, batched);
+   then prunes RESOLVED command-outbox rows older than
+   ``maintenance.outbox_retention_days``
+   (:func:`~dopilot_server.services.maintenance.prune_resolved_outbox`,
+   batched; reclaim rows and active/lost tasks' rows are never touched);
 3. time-trims the Redis log + event streams
    (:func:`~dopilot_server.services.maintenance.trim_log_streams`,
    ``XTRIM MINID``);
@@ -41,6 +45,7 @@ from .services.maintenance import (
     delete_stale_command_streams,
     evict_logs_dir_to_budget,
     prune_event_audit,
+    prune_resolved_outbox,
     trim_log_streams,
     truncate_oversized_log_files,
 )
@@ -110,6 +115,18 @@ class RetentionSweepLoop:
             except Exception:  # noqa: BLE001
                 logger.error(
                     "retention: event_audit prune failed", exc_info=True
+                )
+                await session.rollback()
+
+        # Step 2b: resolved command-outbox prune (commits per batch; OOM
+        # guard — never touches reclaim rows, in-flight rows, or rows of
+        # active/lost tasks, see ``prune_resolved_outbox``).
+        async with self._sm() as session:
+            try:
+                await prune_resolved_outbox(session, self._settings, now=now)
+            except Exception:  # noqa: BLE001
+                logger.error(
+                    "retention: resolved outbox prune failed", exc_info=True
                 )
                 await session.rollback()
 

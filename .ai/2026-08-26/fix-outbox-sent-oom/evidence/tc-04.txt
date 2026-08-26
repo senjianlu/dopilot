@@ -1,0 +1,17 @@
+$ .venv/bin/python -m pytest apps/server/tests/test_maintenance.py -k test_prune_outbox_keeps_unresolved_states or test_prune_outbox_keeps_active_fresh_and_disabled -v
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 24 items / 20 deselected / 4 selected
+
+apps/server/tests/test_maintenance.py::test_prune_outbox_keeps_unresolved_states[pending] [32mPASSED[0m[32m [ 25%][0m
+apps/server/tests/test_maintenance.py::test_prune_outbox_keeps_unresolved_states[dispatching] [32mPASSED[0m[32m [ 50%][0m
+apps/server/tests/test_maintenance.py::test_prune_outbox_keeps_unresolved_states[failed_retryable] [32mPASSED[0m[32m [ 75%][0m
+apps/server/tests/test_maintenance.py::test_prune_outbox_keeps_active_fresh_and_disabled [32mPASSED[0m[32m [100%][0m
+
+[32m======================= [32m[1m4 passed[0m, [33m20 deselected[0m[32m in 0.22s[0m[32m =======================[0m
+exit=0

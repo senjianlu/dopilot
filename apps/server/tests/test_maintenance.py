@@ -393,3 +393,322 @@ async def test_terminal_cleanup_api_settles_shared_logs_gauge(
     assert resp.status_code == 200, resp.text
     assert not os.path.exists(log2.storage_path)
     assert gauge.value == walk_size(exec_settings.logs.root_dir) == before - int(log2.size_bytes)
+
+
+# ---------------------------------------------------------------------------
+# TC-03/04/05/10/11/12 (fix-outbox-sent-oom): resolved-outbox retention
+# ---------------------------------------------------------------------------
+
+from dopilot_server.models.command_outbox import (  # noqa: E402
+    OUTBOX_CANCELED,
+    OUTBOX_DISPATCHING,
+    OUTBOX_FAILED,
+    OUTBOX_FAILED_RETRYABLE,
+    OUTBOX_PENDING,
+)
+
+
+def _outbox_row(
+    session: AsyncSession,
+    *,
+    task_id: str,
+    status: str = OUTBOX_SENT,
+    age_days: float = 8.0,
+    type_: str = "run",
+    intent: str | None = None,
+    execution_id: str | None = None,
+) -> CommandOutbox:
+    row = CommandOutbox(
+        command_id=_new_id(),
+        agent_id="agent-1",
+        task_id=task_id,
+        execution_id=execution_id or _new_id(),
+        type=type_,
+        intent=intent,
+        payload={},
+        status=status,
+        updated_at=datetime.now(UTC) - timedelta(days=age_days),
+    )
+    session.add(row)
+    return row
+
+
+async def _outbox_ids(session: AsyncSession) -> set[str]:
+    return set(
+        (await session.execute(select(CommandOutbox.command_id))).scalars().all()
+    )
+
+
+async def test_prune_resolved_outbox_deletes_in_batches(
+    db_session: AsyncSession, settings: Settings
+):
+    """TC-03: old resolved rows of hard-terminal / missing tasks go, batched."""
+    task, _, _ = await _make_task(
+        db_session, settings,
+        status=states.TASK_COMPLETE, age_days=40,
+        exec_status=states.EXEC_FINISHED, with_log=False,
+    )
+    doomed = [
+        _outbox_row(db_session, task_id=task.id, status=OUTBOX_SENT),
+        _outbox_row(db_session, task_id=task.id, status=OUTBOX_FAILED),
+        _outbox_row(db_session, task_id=task.id, status=OUTBOX_CANCELED),
+        _outbox_row(db_session, task_id=_new_id()),  # orphan: task row gone
+    ]
+    await db_session.commit()
+    settings.maintenance.outbox_delete_batch = 2  # 4 rows -> 2 batches
+
+    deleted = await maint.prune_resolved_outbox(
+        db_session, settings, now=datetime.now(UTC)
+    )
+    assert deleted == 4
+    remaining = await _outbox_ids(db_session)
+    assert not remaining.intersection({r.command_id for r in doomed})
+
+
+@pytest.mark.parametrize(
+    "status", [OUTBOX_PENDING, OUTBOX_DISPATCHING, OUTBOX_FAILED_RETRYABLE]
+)
+async def test_prune_outbox_keeps_unresolved_states(
+    db_session: AsyncSession, settings: Settings, status: str
+):
+    """TC-04a: every OUTBOX_UNRESOLVED state survives, however old."""
+    task, _, _ = await _make_task(
+        db_session, settings,
+        status=states.TASK_COMPLETE, age_days=40,
+        exec_status=states.EXEC_FINISHED, with_log=False,
+    )
+    kept = _outbox_row(db_session, task_id=task.id, status=status, age_days=400)
+    await db_session.commit()
+
+    deleted = await maint.prune_resolved_outbox(
+        db_session, settings, now=datetime.now(UTC)
+    )
+    assert deleted == 0
+    assert kept.command_id in await _outbox_ids(db_session)
+
+
+async def test_prune_outbox_keeps_active_fresh_and_disabled(
+    db_session: AsyncSession, settings: Settings
+):
+    """TC-04b: active-task rows and fresh rows survive; 0 disables entirely."""
+    active_task, _, _ = await _make_task(
+        db_session, settings,
+        status=states.TASK_RUNNING, age_days=40,
+        exec_status=states.EXEC_RUNNING, with_log=False,
+    )
+    done_task, _, _ = await _make_task(
+        db_session, settings,
+        status=states.TASK_COMPLETE, age_days=40,
+        exec_status=states.EXEC_FINISHED, with_log=False,
+    )
+    active_row = _outbox_row(db_session, task_id=active_task.id, age_days=40)
+    fresh_row = _outbox_row(db_session, task_id=done_task.id, age_days=1)
+    old_row = _outbox_row(db_session, task_id=done_task.id, age_days=40)
+    await db_session.commit()
+
+    deleted = await maint.prune_resolved_outbox(
+        db_session, settings, now=datetime.now(UTC)
+    )
+    assert deleted == 1  # only the old resolved row of the settled task
+    remaining = await _outbox_ids(db_session)
+    assert active_row.command_id in remaining
+    assert fresh_row.command_id in remaining
+    assert old_row.command_id not in remaining
+
+    # retention 0 = disabled: an eligible row is NOT touched
+    another = _outbox_row(db_session, task_id=done_task.id, age_days=40)
+    await db_session.commit()
+    settings.maintenance.outbox_retention_days = 0
+    deleted = await maint.prune_resolved_outbox(
+        db_session, settings, now=datetime.now(UTC)
+    )
+    assert deleted == 0
+    assert another.command_id in await _outbox_ids(db_session)
+
+
+async def test_prune_outbox_keeps_reclaim_and_lost_rows(
+    db_session: AsyncSession, settings: Settings
+):
+    """TC-11: reclaim rows (any status, even orphaned) and lost tasks' rows stay."""
+    done_task, _, _ = await _make_task(
+        db_session, settings,
+        status=states.TASK_COMPLETE, age_days=40,
+        exec_status=states.EXEC_FINISHED, with_log=False,
+    )
+    lost_task, _, _ = await _make_task(
+        db_session, settings,
+        status=states.TASK_LOST, age_days=40,
+        exec_status=states.EXEC_LOST, with_log=False,
+    )
+    reclaim_sent = _outbox_row(
+        db_session, task_id=done_task.id, status=OUTBOX_SENT,
+        age_days=40, type_="stop", intent="reclaim",
+    )
+    reclaim_failed = _outbox_row(
+        db_session, task_id=done_task.id, status=OUTBOX_FAILED,
+        age_days=40, type_="stop", intent="reclaim",
+    )
+    reclaim_orphan = _outbox_row(
+        db_session, task_id=_new_id(), status=OUTBOX_SENT,
+        age_days=40, type_="stop", intent="reclaim",
+    )
+    lost_run = _outbox_row(db_session, task_id=lost_task.id, age_days=40)
+    plain_old = _outbox_row(db_session, task_id=done_task.id, age_days=40)
+    await db_session.commit()
+
+    deleted = await maint.prune_resolved_outbox(
+        db_session, settings, now=datetime.now(UTC)
+    )
+    assert deleted == 1  # ONLY the plain old row of the settled task
+    remaining = await _outbox_ids(db_session)
+    for row in (reclaim_sent, reclaim_failed, reclaim_orphan, lost_run):
+        assert row.command_id in remaining
+    assert plain_old.command_id not in remaining
+
+
+async def test_prune_outbox_preserves_reclaim_invariants(
+    db_session: AsyncSession, settings: Settings
+):
+    """TC-12: after a prune, heartbeat reclaim stays at-most-once and the
+    lost-log finalize gate still opens (the persisted fact survived)."""
+    import uuid as _uuid
+
+    from dopilot_protocol import AgentEvent, AgentEventType
+    from dopilot_server.redis.reconcile import finalize_drained_logs
+    from dopilot_server.services.events import apply_event
+    from dopilot_server.services.outbox import reclaim_ever_issued
+
+    lost_task, execution, _ = await _make_task(
+        db_session, settings,
+        status=states.TASK_LOST, age_days=40,
+        exec_status=states.EXEC_LOST, with_log=False,
+    )
+    execution.finished_at = datetime.now(UTC) - timedelta(days=39)
+    reclaim_row = _outbox_row(
+        db_session, task_id=lost_task.id, status=OUTBOX_SENT,
+        age_days=40, type_="stop", intent="reclaim", execution_id=execution.id,
+    )
+    log_file = ExecutionLogFile(
+        task_id=lost_task.id, execution_id=execution.id, stream="log",
+        storage_path="/tmp/dopilot-tc12.log", size_bytes=0,
+        last_pulled_offset=0, status=states.LOG_ACTIVE,
+    )
+    db_session.add(log_file)
+    await db_session.commit()
+
+    deleted = await maint.prune_resolved_outbox(
+        db_session, settings, now=datetime.now(UTC)
+    )
+    assert deleted == 0
+    assert reclaim_row.command_id in await _outbox_ids(db_session)
+    assert await reclaim_ever_issued(db_session, execution.id) is True
+
+    async def _reclaim_count() -> int:
+        return len(
+            (
+                await db_session.execute(
+                    select(CommandOutbox.command_id).where(
+                        CommandOutbox.execution_id == execution.id,
+                        CommandOutbox.type == "stop",
+                        CommandOutbox.intent == "reclaim",
+                    )
+                )
+            ).scalars().all()
+        )
+
+    # (a) heartbeat on the lost execution does NOT enqueue a second reclaim
+    before = await _reclaim_count()
+    assert before == 1
+    ev = AgentEvent(
+        event_id=_uuid.uuid4().hex,
+        agent_id="agent-1",
+        task_id=lost_task.id,
+        execution_id=execution.id,
+        type=AgentEventType.heartbeat,
+        created_at="t",
+    )
+    await apply_event(db_session, ev, "m-tc12")
+    await db_session.commit()
+    assert await _reclaim_count() == 1
+
+    # (b) the finalize gate still sees the reclaim fact: reclaimed-lost logs
+    # ARE finalized (a pruned fact would leave the file draining forever)
+    settings.logs.log_drain_timeout_seconds = 0
+    exec_id = execution.id
+    count = await finalize_drained_logs(db_session, settings)
+    await db_session.commit()
+    assert count == 1
+    db_session.expire_all()
+    lf = (
+        await db_session.execute(
+            select(ExecutionLogFile).where(
+                ExecutionLogFile.execution_id == exec_id
+            )
+        )
+    ).scalar_one()
+    assert lf.status == states.LOG_COMPLETE
+
+
+async def test_sweep_runs_outbox_prune(
+    db_session: AsyncSession, exec_settings: Settings, test_sessionmaker
+):
+    """TC-05: RetentionSweepLoop.sweep_once wires the outbox prune in."""
+    from dopilot_server.retention import RetentionSweepLoop
+
+    task, _, _ = await _make_task(
+        db_session, exec_settings,
+        status=states.TASK_COMPLETE, age_days=5,  # young: survives step 1
+        exec_status=states.EXEC_FINISHED, with_log=False,
+    )
+    doomed = _outbox_row(db_session, task_id=task.id, age_days=8)
+    await db_session.commit()
+
+    loop = RetentionSweepLoop(test_sessionmaker, exec_settings, None)
+    await loop.sweep_once()
+
+    assert doomed.command_id not in await _outbox_ids(db_session)
+    assert await db_session.get(Task, task.id) is not None  # step 1 untouched
+
+
+async def test_sweep_outbox_step_failure_isolation(
+    db_session: AsyncSession, exec_settings: Settings, test_sessionmaker, monkeypatch
+):
+    """TC-10: the outbox step neither kills later steps nor dies with earlier ones."""
+    import dopilot_server.retention as retention_mod
+    from dopilot_server.retention import RetentionSweepLoop
+
+    task, _, _ = await _make_task(
+        db_session, exec_settings,
+        status=states.TASK_COMPLETE, age_days=5,
+        exec_status=states.EXEC_FINISHED, with_log=False,
+    )
+    doomed = _outbox_row(db_session, task_id=task.id, age_days=8)
+    await db_session.commit()
+
+    # (a) outbox prune raises -> later steps still run (notification prune spy)
+    later_ran: list[bool] = []
+
+    async def _boom(*a, **k):
+        raise RuntimeError("outbox prune boom")
+
+    async def _notif_spy(*a, **k):
+        later_ran.append(True)
+        return 0
+
+    monkeypatch.setattr(retention_mod, "prune_resolved_outbox", _boom)
+    monkeypatch.setattr(retention_mod, "prune_notifications", _notif_spy)
+    loop = RetentionSweepLoop(test_sessionmaker, exec_settings, None)
+    await loop.sweep_once()
+    assert later_ran == [True]
+    assert doomed.command_id in await _outbox_ids(db_session)  # prune really failed
+
+    # (b) an EARLIER step raises -> the outbox prune still runs
+    monkeypatch.undo()
+
+    async def _audit_boom(*a, **k):
+        raise RuntimeError("event audit boom")
+
+    monkeypatch.setattr(retention_mod, "prune_event_audit", _audit_boom)
+    loop = RetentionSweepLoop(test_sessionmaker, exec_settings, None)
+    await loop.sweep_once()
+    assert doomed.command_id not in await _outbox_ids(db_session)

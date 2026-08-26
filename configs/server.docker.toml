@@ -74,6 +74,9 @@ stream_guard_interval_seconds = 30
 # and every interval, only for rows older than min_age. 0 interval disables.
 sent_reconcile_interval_seconds = 300
 sent_reconcile_min_age_seconds = 60
+# OOM guard: max "sent" rows examined per reconcile call (keyset-paged sweep
+# with a frozen per-sweep boundary; coverage is unaffected, only paced).
+sent_reconcile_batch_limit = 500
 consumer_name = "server-1"
 require_aof = true
 
@@ -136,6 +139,11 @@ enabled = true
 sweep_interval_seconds = 3600
 event_audit_retention_days = 30
 event_audit_delete_batch = 5000
+# OOM guard: resolved (sent/failed/canceled) command-outbox rows of settled
+# tasks are pruned after this many days (0 disables). Reclaim rows, in-flight
+# rows and active/lost tasks' rows are never pruned here.
+outbox_retention_days = 7
+outbox_delete_batch = 5000
 # Log-flood guard: delete command streams of retired agent ids (no node /
 # soft-deleted / heartbeat older than this) once this many days old. 0 disables.
 stale_command_stream_days = 7

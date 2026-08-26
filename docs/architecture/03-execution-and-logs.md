@@ -58,7 +58,9 @@ coalesce 抑制同源堆积。取消先 CAS 置未 sent outbox 为 `canceled`，
   仍活跃 attempt 的日志/状态文件。心跳到达 server 侧已标 `lost` 的
   execution 时同样触发该保护:状态保持 lost,并投递
   `stop(intent=reclaim)`（按「曾投递过即不再投」持久去重,每 execution
-  终生至多一条）。
+  终生至多一条）。该去重事实与任务同寿命:outbox 保留清扫
+  (`prune_resolved_outbox`) 永不删除 `stop(intent=reclaim)` 行,它们只随
+  任务经 `cleanup_terminal_data` 删除。
 - **事件消费者毒丸容错**:server event consumer 对无法解析的事件条目
   （如版本偏斜下的未知事件类型）记 warning 后 XACK 跳过,不让单条坏消息
   卡死整条事件流。注意这只保护新版 server;升级顺序约束见
