@@ -120,6 +120,8 @@ _INT_OVERRIDES: tuple[tuple[str, str, str], ...] = (
      "sent_reconcile_interval_seconds"),
     ("DOPILOT_REDIS_SENT_RECONCILE_MIN_AGE_SECONDS", "redis",
      "sent_reconcile_min_age_seconds"),
+    ("DOPILOT_REDIS_SENT_RECONCILE_BATCH_LIMIT", "redis",
+     "sent_reconcile_batch_limit"),
     ("DOPILOT_SCHEDULER_AUTO_DISABLE_AFTER_ERRORS", "scheduler", "auto_disable_after_errors"),
     ("DOPILOT_SCHEDULER_LOST_OUTCOME_GRACE_SECONDS", "scheduler",
      "lost_outcome_grace_seconds"),
@@ -147,6 +149,16 @@ _INT_OVERRIDES: tuple[tuple[str, str, str], ...] = (
         "DOPILOT_MAINTENANCE_EVENT_AUDIT_DELETE_BATCH",
         "maintenance",
         "event_audit_delete_batch",
+    ),
+    (
+        "DOPILOT_MAINTENANCE_OUTBOX_RETENTION_DAYS",
+        "maintenance",
+        "outbox_retention_days",
+    ),
+    (
+        "DOPILOT_MAINTENANCE_OUTBOX_DELETE_BATCH",
+        "maintenance",
+        "outbox_delete_batch",
     ),
     (
         "DOPILOT_MAINTENANCE_STATS_INTERVAL_SECONDS",

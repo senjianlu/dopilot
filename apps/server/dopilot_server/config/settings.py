@@ -103,6 +103,11 @@ class RedisSettings(BaseModel):
     # (so an in-flight XADD is never mistaken for a lost one). 0 interval = off.
     sent_reconcile_interval_seconds: int = 300
     sent_reconcile_min_age_seconds: int = 60
+    # OOM guard (2026-08-26 incident): max ``sent`` rows examined per reconcile
+    # call. The scan is keyset-paged with a per-sweep frozen boundary, so any
+    # lost message is still checked within ``2*ceil(N/batch)+1`` intervals —
+    # memory use no longer scales with the outbox table.
+    sent_reconcile_batch_limit: int = 500
     # Time bound for the log stream, enforced by the retention sweep as a periodic
     # ``XTRIM <stream> MINID ~ <now - log_retention_seconds>``. Entries older than
     # this window are trimmed regardless of MAXLEN. 0 disables the time-based
@@ -231,6 +236,15 @@ class MaintenanceSettings(BaseModel):
     event_audit_retention_days: int = 30
     # Batch size for the ``event_audit`` delete, to avoid long table locks.
     event_audit_delete_batch: int = 5000
+    # How many days RESOLVED command-outbox rows (sent / failed / canceled) are
+    # retained after they settle (OOM guard, 2026-08-26 incident: ``sent`` rows
+    # used to live forever and grew unbounded). Rows of ACTIVE or ``lost``
+    # (soft-terminal) tasks and ``stop(intent=reclaim)`` rows — the persistent
+    # at-most-once reclaim fact — are NEVER pruned here; they go with their
+    # task (``cleanup_terminal_data``). 0 disables outbox pruning.
+    outbox_retention_days: int = 7
+    # Batch size for the outbox delete, to avoid long table locks.
+    outbox_delete_batch: int = 5000
     # Log-flood guard: per-agent command streams left behind by retired agent
     # ids (no node row, soft-deleted node, or heartbeat older than this) are
     # deleted once this many days old AND nothing non-terminal / undelivered

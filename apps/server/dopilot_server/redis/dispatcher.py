@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from dopilot_protocol import AgentCommand, AgentCommandType, StopIntent, command_stream
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config.settings import Settings
@@ -42,6 +42,7 @@ from ..models.command_outbox import (
     OUTBOX_SENT,
     CommandOutbox,
 )
+from ..models.execution import Task
 from ..models.notification import SEVERITY_INFO, TYPE_SENT_COMMANDS_REQUEUED
 from ..services import executions as svc
 from ..services import notifications as notif
@@ -82,6 +83,7 @@ class CommandDispatcher:
         interval_seconds: float = 2.0,
         settings: Settings | None = None,
         clock: Callable[[], float] = time.monotonic,
+        dispatch_batch_limit: int = 1000,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._producer = producer
@@ -94,6 +96,13 @@ class CommandDispatcher:
         self._clock = clock
         self._last_sent_reconcile: float | None = None
         self.sent_reconcile_calls = 0
+        # Bounded scans (OOM guard): per-tick cap on dispatchable rows, and the
+        # keyset cursor + frozen sweep boundary of the paged ``sent`` reconcile.
+        # Both cursor states are memory-only: a restart simply rescans from the
+        # head, which is cheap because the page query is bounded.
+        self._dispatch_batch_limit = max(1, dispatch_batch_limit)
+        self._sent_reconcile_cursor: tuple[datetime, str] | None = None
+        self._sent_reconcile_hwm: datetime | None = None
 
     # --- single-row dispatch ----------------------------------------------
     def _build_command(self, row: CommandOutbox) -> AgentCommand:
@@ -189,6 +198,19 @@ class CommandDispatcher:
         very next ``_process_row`` would fail the row as ``dispatch_timeout``
         instead of re-XADDing it. Returns the requeued command ids. Caller
         commits.
+
+        Bounded scan (OOM guard, 2026-08-26 incident): the query is filtered to
+        ACTIVE-task rows in SQL (terminal-task rows were only ever skipped per
+        row — 424k of them once materialized ~2GiB of ORM objects and OOM-looped
+        the server) and paged by a keyset cursor over ``(updated_at,
+        command_id)``, at most ``sent_reconcile_batch_limit`` rows per call.
+        Each full-table sweep freezes its boundary (``hwm`` = the cutoff at
+        sweep start) so rows that become eligible mid-sweep can never push the
+        scan end away — without that, a sustained producer keeps every page
+        full and rows behind the cursor would never be re-checked. An empty
+        page past the boundary wraps around ONCE in the same call (fresh
+        boundary). Any lost message is therefore checked within
+        ``2*ceil(N/batch)+1`` reconcile intervals, independent of write rate.
         """
         if self._settings is None:
             return []
@@ -196,17 +218,56 @@ class CommandDispatcher:
         now = now or datetime.now(UTC)
         min_age = self._settings.redis.sent_reconcile_min_age_seconds
         cutoff = now - timedelta(seconds=max(0, min_age))
+        batch = max(1, self._settings.redis.sent_reconcile_batch_limit)
+        if self._sent_reconcile_cursor is None or self._sent_reconcile_hwm is None:
+            # Sweep start: freeze this sweep's boundary.
+            self._sent_reconcile_cursor = None
+            self._sent_reconcile_hwm = cutoff
+
+        def _page_stmt(cursor: tuple[datetime, str] | None, hwm: datetime):
+            stmt = (
+                select(CommandOutbox)
+                .join(Task, Task.id == CommandOutbox.task_id)
+                .where(
+                    CommandOutbox.status == OUTBOX_SENT,
+                    CommandOutbox.updated_at < hwm,
+                    Task.status.in_(tuple(states.TASK_ACTIVE)),
+                )
+                .order_by(CommandOutbox.updated_at, CommandOutbox.command_id)
+                .limit(batch)
+            )
+            if cursor is not None:
+                stmt = stmt.where(
+                    tuple_(CommandOutbox.updated_at, CommandOutbox.command_id)
+                    > tuple_(*cursor)
+                )
+            return stmt
+
         rows = (
             (
                 await session.execute(
-                    select(CommandOutbox).where(
-                        CommandOutbox.status == OUTBOX_SENT,
-                        CommandOutbox.updated_at < cutoff,
-                    )
+                    _page_stmt(self._sent_reconcile_cursor, self._sent_reconcile_hwm)
                 )
             )
             .scalars()
             .all()
+        )
+        if not rows and self._sent_reconcile_cursor is not None:
+            # Cursor reached this sweep's boundary: wrap around once in the
+            # same call, starting a new sweep with a freshly frozen boundary.
+            self._sent_reconcile_cursor = None
+            self._sent_reconcile_hwm = cutoff
+            rows = (
+                (await session.execute(_page_stmt(None, cutoff))).scalars().all()
+            )
+        # Snapshot the page-end key BEFORE any processing: ``updated_at`` has
+        # ``onupdate=func.now()``, so a requeue (or the notify flush) rewrites
+        # it on the ORM rows — reading it afterwards would jump the cursor past
+        # unscanned old rows (starvation).
+        page_end: tuple[datetime, str] | None = (
+            (rows[-1].updated_at, rows[-1].command_id)
+            if len(rows) == batch
+            else None
         )
         redis = getattr(self._producer, "redis", None)
         requeued: list[str] = []
@@ -250,6 +311,11 @@ class CommandDispatcher:
                 )
             except Exception:  # noqa: BLE001
                 logger.warning("sent reconcile notification failed", exc_info=True)
+        # Advance the keyset cursor (snapshotted BEFORE processing, see above).
+        # A short page means this sweep is done — next call starts a new sweep.
+        self._sent_reconcile_cursor = page_end
+        if page_end is None:
+            self._sent_reconcile_hwm = None
         return requeued
 
     def _sent_reconcile_due(self) -> bool:
@@ -290,12 +356,20 @@ class CommandDispatcher:
                     await self.reconcile_sent_once(session)
                 except Exception:  # noqa: BLE001 - never block dispatch
                     logger.warning("sent reconcile failed", exc_info=True)
+            # Bounded FIFO batch (OOM guard): oldest rows first, at most
+            # ``dispatch_batch_limit`` per tick — a safety net for extreme
+            # backlogs (long Redis outage); the next tick picks up the rest.
+            # No starvation here: every processed row transitions state
+            # (sent / retry_count++ / give-up), unlike the sent reconcile.
             rows = (
                 (
                     await session.execute(
-                        select(CommandOutbox).where(
+                        select(CommandOutbox)
+                        .where(
                             CommandOutbox.status.in_(tuple(OUTBOX_DISPATCHABLE))
                         )
+                        .order_by(CommandOutbox.created_at)
+                        .limit(self._dispatch_batch_limit)
                     )
                 )
                 .scalars()

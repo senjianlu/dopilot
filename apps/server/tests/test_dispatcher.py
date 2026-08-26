@@ -204,3 +204,66 @@ async def test_retry_exhaustion_fails_run_task(
         )
     ).scalar_one()
     assert refreshed_task.status == states.TASK_FAILED
+
+
+# --- TC-07 (fix-outbox-sent-oom): per-tick dispatch batch limit lives in SQL ----------
+
+
+async def test_tick_dispatch_batch_limit_sql(
+    db_session, fake_redis, test_sessionmaker, db_engine
+):
+    from sqlalchemy import event as sa_event
+
+    fake = fake_redis()
+    producer = CommandProducer(fake, RedisSettings())
+    disp = CommandDispatcher(test_sessionmaker, producer, dispatch_batch_limit=2)
+    base = datetime.now(UTC) - timedelta(seconds=60)
+    rows = []
+    for i, agent in enumerate(("ag-1", "ag-2", "ag-3")):
+        _t, _e, row = await _seed_run(db_session, agent_id=agent, manual=False)
+        row.created_at = base + timedelta(seconds=i)  # oldest first: ag-1, ag-2, ag-3
+        rows.append(row)
+    await db_session.commit()
+
+    captured: list[tuple[str, object]] = []
+
+    def spy(conn, cursor, statement, parameters, context, executemany):
+        captured.append((statement, parameters))
+
+    sa_event.listen(db_engine.sync_engine, "before_cursor_execute", spy)
+    try:
+        await disp._tick()
+    finally:
+        sa_event.remove(db_engine.sync_engine, "before_cursor_execute", spy)
+
+    # exactly the two OLDEST rows were dispatched; the third is still pending
+    row_ids = [r.command_id for r in rows]
+    db_session.expire_all()
+    statuses = [
+        (await db_session.get(CommandOutbox, rid)).status for rid in row_ids
+    ]
+    assert statuses == [OUTBOX_SENT, OUTBOX_SENT, "pending"]
+    assert len(await fake.entries(command_stream("ag-1"))) == 1
+    assert len(await fake.entries(command_stream("ag-2"))) == 1
+    assert await fake.entries(command_stream("ag-3")) == []
+    # SQL-side proof: the dispatchable SELECT orders by created_at and LIMITs 2
+    tick_selects = [
+        (s, p)
+        for s, p in captured
+        if s.lstrip().upper().startswith("SELECT")
+        and "command_outbox" in s
+        and "ORDER BY" in s.upper()
+    ]
+    assert tick_selects, "dispatchable SELECT with ORDER BY not captured"
+    stmt, params = tick_selects[0]
+    upper = stmt.upper()
+    assert "ORDER BY COMMAND_OUTBOX.CREATED_AT" in upper
+    assert "LIMIT" in upper
+    assert (2 in tuple(params)) or ("LIMIT 2" in upper), (
+        f"LIMIT value 2 not found in stmt/params: {stmt!r} / {params!r}"
+    )
+
+    # the next tick picks up the remainder
+    await disp._tick()
+    db_session.expire_all()
+    assert (await db_session.get(CommandOutbox, row_ids[2])).status == OUTBOX_SENT

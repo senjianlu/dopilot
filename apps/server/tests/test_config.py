@@ -634,3 +634,61 @@ def test_production_docker_toml_carries_the_new_caps(monkeypatch):
     assert s.redis.stream_max_bytes_logs == 268435456
     assert s.scheduler.auto_disable_after_errors == 5
     assert s.maintenance.notification_max_rows == 2000
+
+
+# --- fix-outbox-sent-oom (TC-06): bounded reconcile + outbox retention knobs ----------
+
+_OUTBOX_OOM_ENVS = (
+    "DOPILOT_REDIS_SENT_RECONCILE_BATCH_LIMIT",
+    "DOPILOT_MAINTENANCE_OUTBOX_RETENTION_DAYS",
+    "DOPILOT_MAINTENANCE_OUTBOX_DELETE_BATCH",
+)
+
+
+def test_outbox_oom_guard_defaults(tmp_path, monkeypatch):
+    for var in _OUTBOX_OOM_ENVS:
+        monkeypatch.delenv(var, raising=False)
+    s = load_settings(_write_toml(tmp_path))
+    assert s.redis.sent_reconcile_batch_limit == 500
+    assert s.maintenance.outbox_retention_days == 7
+    assert s.maintenance.outbox_delete_batch == 5000
+
+
+def test_outbox_oom_guard_toml_overrides(tmp_path, monkeypatch):
+    for var in _OUTBOX_OOM_ENVS:
+        monkeypatch.delenv(var, raising=False)
+    path = tmp_path / "dopilot-outbox.toml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            [database]
+            url = "sqlite+aiosqlite:///:memory:"
+
+            [auth]
+            admin_username = "admin"
+            admin_password = "pw"
+            token_secret = "secret"
+
+            [redis]
+            sent_reconcile_batch_limit = 123
+
+            [maintenance]
+            outbox_retention_days = 9
+            outbox_delete_batch = 77
+            """
+        ),
+        encoding="utf-8",
+    )
+    s = load_settings(str(path))
+    assert s.redis.sent_reconcile_batch_limit == 123
+    assert s.maintenance.outbox_retention_days == 9
+    assert s.maintenance.outbox_delete_batch == 77
+
+
+def test_outbox_oom_guard_env_overrides(tmp_path, monkeypatch):
+    for i, var in enumerate(_OUTBOX_OOM_ENVS, start=1):
+        monkeypatch.setenv(var, str(2000 + i))
+    s = load_settings(_write_toml(tmp_path))
+    assert s.redis.sent_reconcile_batch_limit == 2001
+    assert s.maintenance.outbox_retention_days == 2002
+    assert s.maintenance.outbox_delete_batch == 2003

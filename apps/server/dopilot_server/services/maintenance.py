@@ -27,15 +27,22 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from dopilot_protocol import StopIntent
 from dopilot_protocol.streams import EVENT_STREAM, LOG_STREAM
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config.settings import Settings
 from ..errors import ApiError
 from ..logs import files
 from ..logs.dir_gauge import LogsDirGauge, file_size
-from ..models.command_outbox import OUTBOX_UNRESOLVED, CommandOutbox
+from ..models.command_outbox import (
+    OUTBOX_CANCELED,
+    OUTBOX_FAILED,
+    OUTBOX_SENT,
+    OUTBOX_UNRESOLVED,
+    CommandOutbox,
+)
 from ..models.event_audit import EventAudit
 from ..models.execution import Execution, ExecutionLogFile, Task
 from ..models.node import Node
@@ -587,6 +594,85 @@ async def prune_event_audit(
             break
         await session.execute(
             delete(EventAudit).where(EventAudit.id.in_(ids))
+        )
+        await session.commit()
+        total += len(ids)
+        if len(ids) < batch:
+            break
+    return total
+
+
+#: Outbox rows that reached a terminal outbox state (dispatch settled). The
+#: complement of ``OUTBOX_UNRESOLVED`` — in-flight rows are NEVER pruned.
+OUTBOX_RESOLVED = (OUTBOX_SENT, OUTBOX_FAILED, OUTBOX_CANCELED)
+
+
+async def prune_resolved_outbox(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    now: datetime,
+) -> int:
+    """Delete RESOLVED command-outbox rows of settled tasks (OOM guard).
+
+    ``sent`` rows used to stay forever ("a sent row normally stays sent") and
+    grew unbounded — 424k rows OOM-looped the server on 2026-08-26. Rows in a
+    RESOLVED outbox state (``sent`` / ``failed`` / ``canceled``) older than
+    ``maintenance.outbox_retention_days`` (by ``updated_at``, i.e. when they
+    settled) are deleted in bounded batches (``outbox_delete_batch``),
+    COMMITTING per batch so a large backlog never holds a long table lock.
+    Returns the number of rows deleted. A retention of 0 disables pruning.
+
+    Safety boundary — NEVER deleted here, regardless of age:
+
+    - ``stop(intent=reclaim)`` rows: :func:`~.outbox.reclaim_ever_issued` is
+      deliberately status-blind (a ``sent`` or even ``failed`` row counts) and
+      backs both the heartbeat path's at-most-once reclaim and the
+      ``finalize_drained_logs`` cleanup gate for server-lost executions. The
+      fact must live as long as the task; ``cleanup_terminal_data`` removes it
+      with the task. At most one such row exists per execution, so the
+      table-size impact of keeping them is negligible.
+    - rows whose task is ACTIVE or ``lost``: ``lost`` is a SOFT terminal (a
+      late agent event may still flip it), so its rows also only go with the
+      task. Orphan rows (task row already gone) and hard-terminal tasks'
+      rows are eligible.
+    - ``OUTBOX_UNRESOLVED`` rows (pending / dispatching / failed_retryable):
+      not in the RESOLVED whitelist — in-flight commands are untouchable.
+    """
+    days = settings.maintenance.outbox_retention_days
+    if days <= 0:
+        return 0
+    cutoff = now - timedelta(days=days)
+    batch = max(1, settings.maintenance.outbox_delete_batch)
+    unsafe_task = tuple(states.TASK_ACTIVE) + (states.TASK_LOST,)
+    total = 0
+    while True:
+        ids = (
+            (
+                await session.execute(
+                    select(CommandOutbox.command_id)
+                    .where(
+                        CommandOutbox.status.in_(OUTBOX_RESOLVED),
+                        CommandOutbox.updated_at < cutoff,
+                        ~(
+                            (CommandOutbox.type == "stop")
+                            & (CommandOutbox.intent == StopIntent.reclaim.value)
+                        ),
+                        ~exists().where(
+                            (Task.id == CommandOutbox.task_id)
+                            & Task.status.in_(unsafe_task)
+                        ),
+                    )
+                    .limit(batch)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not ids:
+            break
+        await session.execute(
+            delete(CommandOutbox).where(CommandOutbox.command_id.in_(ids))
         )
         await session.commit()
         total += len(ids)

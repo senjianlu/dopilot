@@ -44,11 +44,11 @@ runtime context 键**同名**:二者表达同一事实("本 agent 的 id"),且�
 | server | `[server]` | `host`/`port`/`public_url`;`data_dir`（默认 `/server-data`，生成令牌的持久化锚点） |
 | server | `[database]` | PostgreSQL URL（env `DOPILOT_DATABASE_URL`） |
 | server | `[auth]` | `admin_username`/`admin_password`/`token_secret`（仅 TOML）/`admin_api_token`/`access_token_ttl_minutes`/`stream_token_ttl_seconds` |
-| server | `[redis]` | `url`、三条 stream 的 maxlen（`stream_maxlen_logs` 默认 100000）、`log_retention_seconds`（由保留清扫实装为定时 `XTRIM MINID`）、`consumer_name`、`require_aof` |
+| server | `[redis]` | `url`、三条 stream 的 maxlen（`stream_maxlen_logs` 默认 100000）、`log_retention_seconds`（由保留清扫实装为定时 `XTRIM MINID`）、`sent_reconcile_batch_limit`（默认 500,OOM 防护:sent reconcile 单次最多检查行数,keyset 游标 + 冻结 sweep 边界分页,覆盖不受影响只是分摊到多个周期）、`consumer_name`、`require_aof` |
 | server | `[agents]` | `heartbeat_timeout_seconds`/`stalled_attempt_seconds`/`lost_after_stalled_seconds`（默认 3600;有运行期心跳后仅约束「agent 在线但存活不可确认」,不是任务时长上限）/`agent_token` |
 | server | `[scheduler]` | `enabled`（in-process runner 开关）、`timezone` |
 | server | `[logs]` | `root_dir=/server-data/logs`、drain/保留窗口参数、`retention_days`（默认 30,自动保留清扫的 cutoff;**0 = 关闭终态清理**,而非 cutoff=now 立删全部）、`max_file_bytes`（单执行日志硬上限，默认 32MiB，超限置 `log_integrity=truncated` 并反压 agent）、`max_total_bytes`（logs 目录总预算，默认 20GB） |
-| server | `[maintenance]` | 自动保留清扫:`enabled`（默认 true）、`sweep_interval_seconds`（默认 3600）、`event_audit_retention_days`（默认 30）、`event_audit_delete_batch`;资源仪表盘采样:`stats_interval_seconds`（默认 60,env `DOPILOT_MAINTENANCE_STATS_INTERVAL_SECONDS`,0 关闭采样 loop） |
+| server | `[maintenance]` | 自动保留清扫:`enabled`（默认 true）、`sweep_interval_seconds`（默认 3600）、`event_audit_retention_days`（默认 30）、`event_audit_delete_batch`、`outbox_retention_days`（默认 7,OOM 防护:已解决 sent/failed/canceled outbox 行随硬终态任务清理,0 关闭;reclaim 行、在途行与活跃/lost 任务的行永不在此清理）、`outbox_delete_batch`（默认 5000）;资源仪表盘采样:`stats_interval_seconds`（默认 60,env `DOPILOT_MAINTENANCE_STATS_INTERVAL_SECONDS`,0 关闭采样 loop） |
 | server | `[artifacts]` | `root_dir`、`max_upload_bytes`（单次上传上限 413，默认 200MiB）、`max_total_bytes`（聚合配额 507，默认 20GiB） |
 | server | `[nodes]` | `agents` 仅作未 heartbeat 节点的占位提示（不再是 poll 目标） |
 | server | `[i18n]` | `locale`（默认 `zh`）、`timezone` |

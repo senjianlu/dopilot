@@ -483,3 +483,219 @@ async def test_sent_reconcile_requeues_past_give_up_deadline(
     task = await db_session.get(type(task), task_id)
     execution = await db_session.get(type(execution), execution_id)
     assert task.status == states.TASK_QUEUED and execution.status == states.EXEC_PENDING
+
+
+# --- TC-01/02/09 (fix-outbox-sent-oom): bounded, keyset-paged sent reconcile ----------
+
+
+class _SqlSpy:
+    """Record every (statement, parameters) sent to the DB cursor."""
+
+    def __init__(self) -> None:
+        self.statements: list[tuple[str, object]] = []
+
+    def __call__(  # noqa: PLR0913 - sqlalchemy event signature
+        self, conn, cursor, statement, parameters, context, executemany
+    ) -> None:
+        self.statements.append((statement, parameters))
+
+    def outbox_selects(self) -> list[tuple[str, object]]:
+        return [
+            (s, p)
+            for s, p in self.statements
+            if s.lstrip().upper().startswith("SELECT") and "command_outbox" in s
+        ]
+
+
+def _reconcile_dispatcher(fake, test_sessionmaker, *, batch: int) -> CommandDispatcher:
+    settings = make_settings()
+    settings.redis.sent_reconcile_interval_seconds = 300
+    settings.redis.sent_reconcile_min_age_seconds = 60
+    settings.redis.sent_reconcile_batch_limit = batch
+    return CommandDispatcher(
+        test_sessionmaker, CommandProducer(fake, RedisSettings()), settings=settings
+    )
+
+
+async def _sent_row(
+    db_session, dispatcher, fake, *, agent, updated_at, task_status=states.TASK_QUEUED
+):
+    """Seed one XADDed ``sent`` row with a controlled ``updated_at`` sort key."""
+    task, execution, row = await _seed_run(
+        db_session, agent_id=agent, task_status=task_status, manual=False
+    )
+    from dopilot_protocol import to_stream_entry
+
+    cmd = dispatcher._build_command(row)
+    msg_id = await fake.xadd(command_stream(agent), to_stream_entry(cmd))
+    row.status = OUTBOX_SENT
+    row.redis_msg_id = msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
+    row.updated_at = updated_at
+    await db_session.commit()
+    return row
+
+
+async def test_sent_reconcile_filters_terminal_in_sql(
+    db_session, fake_redis, test_sessionmaker, db_engine
+):
+    """TC-01: active-task filter + LIMIT live in the SQL statement itself."""
+    from sqlalchemy import event as sa_event
+
+    fake = fake_redis()
+    dispatcher = _reconcile_dispatcher(fake, test_sessionmaker, batch=500)
+    old = datetime.now(UTC) - timedelta(seconds=300)
+    active = await _sent_row(db_session, dispatcher, fake, agent="ag-a", updated_at=old)
+    terminal = await _sent_row(
+        db_session, dispatcher, fake, agent="ag-b", updated_at=old,
+        task_status=states.TASK_COMPLETE,
+    )
+    for agent in ("ag-a", "ag-b"):
+        await fake.delete(command_stream(agent))  # both messages vanish
+
+    spy = _SqlSpy()
+    sa_event.listen(db_engine.sync_engine, "before_cursor_execute", spy)
+    try:
+        requeued = await dispatcher.reconcile_sent_once(db_session)
+        await db_session.commit()
+    finally:
+        sa_event.remove(db_engine.sync_engine, "before_cursor_execute", spy)
+
+    # only the active task's row is requeued; the terminal row is untouched
+    active_id, terminal_id = active.command_id, terminal.command_id
+    assert requeued == [active_id]
+    db_session.expire_all()
+    assert (await db_session.get(CommandOutbox, active_id)).status == OUTBOX_PENDING
+    assert (await db_session.get(CommandOutbox, terminal_id)).status == OUTBOX_SENT
+    # SQL-side proof: the reconcile SELECT joins tasks, filters on the ACTIVE
+    # statuses and carries a LIMIT — the filtering is NOT load-then-skip.
+    page_selects = [
+        (s, p) for s, p in spy.outbox_selects() if "JOIN tasks" in s
+    ]
+    assert page_selects, "reconcile page SELECT (JOIN tasks) not captured"
+    stmt, _params = page_selects[0]
+    upper = stmt.upper()
+    assert "JOIN TASKS" in upper
+    assert "TASKS.STATUS IN" in upper
+    assert "LIMIT" in upper
+
+
+async def test_sent_reconcile_batch_limit_and_cursor_snapshot(
+    db_session, fake_redis, test_sessionmaker, db_engine
+):
+    """TC-02: LIMIT paging + the cursor equals the PRE-processing page end."""
+    from sqlalchemy import event as sa_event
+
+    fake = fake_redis()
+    dispatcher = _reconcile_dispatcher(fake, test_sessionmaker, batch=2)
+    base = datetime.now(UTC) - timedelta(seconds=600)
+    ts1, ts2, ts3 = base, base + timedelta(seconds=60), base + timedelta(seconds=120)
+    r1 = await _sent_row(db_session, dispatcher, fake, agent="ag-1", updated_at=ts1)
+    r2 = await _sent_row(db_session, dispatcher, fake, agent="ag-2", updated_at=ts2)
+    r3 = await _sent_row(db_session, dispatcher, fake, agent="ag-3", updated_at=ts3)
+    for agent in ("ag-1", "ag-2", "ag-3"):
+        await fake.delete(command_stream(agent))  # all three messages vanish
+
+    spy = _SqlSpy()
+    sa_event.listen(db_engine.sync_engine, "before_cursor_execute", spy)
+    try:
+        first = await dispatcher.reconcile_sent_once(db_session)
+        await db_session.commit()
+    finally:
+        sa_event.remove(db_engine.sync_engine, "before_cursor_execute", spy)
+
+    # exactly one batch, in (updated_at, command_id) order
+    assert first == [r1.command_id, r2.command_id]
+    # the cursor is the ORIGINAL seeded page-end key — snapshotted BEFORE the
+    # requeue/notify flush rewrote updated_at (onupdate). A wrong
+    # implementation reading rows[-1] after processing gets a fresh timestamp
+    # here and fails this assertion.
+    cursor = dispatcher._sent_reconcile_cursor
+    assert cursor is not None
+    assert cursor[1] == r2.command_id
+    assert cursor[0] in (ts2, ts2.replace(tzinfo=None))
+    # SQL-side proof: the page SELECT carries LIMIT with value 2
+    page_selects = [
+        (s, p) for s, p in spy.outbox_selects() if "JOIN tasks" in s
+    ]
+    assert page_selects and "LIMIT" in page_selects[0][0].upper()
+    stmt2, params2 = page_selects[0]
+    assert (2 in tuple(params2)) or ("LIMIT 2" in stmt2.upper()), (
+        f"LIMIT value 2 not found in stmt/params: {stmt2!r} / {params2!r}"
+    )
+
+    second = await dispatcher.reconcile_sent_once(db_session)
+    await db_session.commit()
+    assert second == [r3.command_id]
+    assert dispatcher._sent_reconcile_cursor is None  # short page -> sweep done
+
+
+async def test_sent_reconcile_no_starvation_under_sustained_writes(
+    db_session, fake_redis, test_sessionmaker
+):
+    """TC-09: frozen sweep boundary + wraparound re-check old rows forever.
+
+    New eligible rows keep arriving between calls; the sweep boundary frozen at
+    sweep start keeps every page from being pushed away, and the wraparound
+    re-checks row X (verified via an xrange spy) after its message vanishes.
+    """
+    fake = fake_redis()
+    dispatcher = _reconcile_dispatcher(fake, test_sessionmaker, batch=1)
+    t1 = datetime.now(UTC)
+    x = await _sent_row(
+        db_session, dispatcher, fake, agent="ag-x", updated_at=t1 - timedelta(seconds=400)
+    )
+    y = await _sent_row(
+        db_session, dispatcher, fake, agent="ag-y", updated_at=t1 - timedelta(seconds=350)
+    )
+    await fake.delete(command_stream("ag-y"))  # Y's message is lost; X's remains
+
+    checked: list[tuple[str, str]] = []
+    orig_xrange = fake.xrange
+
+    async def spy_xrange(stream, start, end, count=None):
+        checked.append((stream, start))
+        return await orig_xrange(stream, start, end, count=count)
+
+    fake.xrange = spy_xrange
+
+    # call 1 (sweep 1 freezes {X, Y}): page [X]; X still in stream -> no requeue
+    assert await dispatcher.reconcile_sent_once(db_session, now=t1) == []
+    await db_session.commit()
+    assert (command_stream("ag-x"), x.redis_msg_id) in checked
+    # a new eligible row lands mid-sweep: AFTER sweep-1's frozen boundary
+    z1 = await _sent_row(
+        db_session, dispatcher, fake, agent="ag-z1", updated_at=t1 - timedelta(seconds=30)
+    )
+    await fake.delete(command_stream("ag-z1"))
+
+    # call 2: page [Y] (Z1 is outside the frozen boundary); Y requeued
+    assert await dispatcher.reconcile_sent_once(
+        db_session, now=t1 + timedelta(seconds=100)
+    ) == [y.command_id]
+    await db_session.commit()
+
+    # X's message is trimmed AFTER it was first checked; another row arrives
+    x_msg = x.redis_msg_id
+    await fake.delete(command_stream("ag-x"))
+    z2 = await _sent_row(
+        db_session, dispatcher, fake, agent="ag-z2", updated_at=t1 + timedelta(seconds=50)
+    )
+    await fake.delete(command_stream("ag-z2"))
+
+    # call 3: cursor hits sweep-1's boundary -> same-call wraparound starts
+    # sweep 2 (fresh boundary covering X/Z1/Z2) -> X is RE-checked and requeued.
+    checked.clear()
+    assert await dispatcher.reconcile_sent_once(
+        db_session, now=t1 + timedelta(seconds=300)
+    ) == [x.command_id]
+    await db_session.commit()
+    assert (command_stream("ag-x"), x_msg) in checked  # really re-examined
+
+    # call 4: the sweep keeps progressing into the newer rows
+    z1_id, z2_id = z1.command_id, z2.command_id
+    assert await dispatcher.reconcile_sent_once(
+        db_session, now=t1 + timedelta(seconds=400)
+    ) == [z1_id]
+    await db_session.commit()
+    db_session.expire_all()
+    assert (await db_session.get(CommandOutbox, z2_id)).status == OUTBOX_SENT
