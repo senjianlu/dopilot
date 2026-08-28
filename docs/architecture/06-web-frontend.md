@@ -14,6 +14,17 @@
   `dopilot-server` 同源托管（`DOPILOT_WEB_DIST=/app/web`）;`/api/*` 永不
   被改写为 HTML。无独立 Web 容器、无 `next start`。
 - 开发:`next dev` 经 `NEXT_PUBLIC_API_BASE` 指向 server。
+- **日志查看器(`components/features/log-viewer.tsx`)**:SSE 收流 + 一个
+  **复制**按钮,把**当前视图缓冲**写进剪贴板(不发请求)。范围刻意不是"整个
+  日志文件"——首屏只回放尾部(`logs.first_screen_max_lines` /
+  `first_screen_max_bytes`),按钮的无障碍说明 `logs.copyHint` 明写这一点。
+  非安全上下文(http://)下 `navigator.clipboard` 不存在,写入被拒亦然,两种
+  情况都弹 error toast 而非静默失败。
+- **调度并发上限(`/schedules`)**:新建/编辑对话框的 `max_concurrency` 数字项
+  (默认 1,`min=0`),列表列把 `0` 渲染为"不限"。`0` 是
+  [0022](../decisions/0022-schedule-concurrency-limit.md) 的逃生舱,解析时
+  不得用 `Number(v) || 1` 一类写法把它吞成 1。手动触发命中上限时后端返回
+  409 `schedule.concurrency_limit`,页面弹 toast 且**不跳转**。
 - **运维清理页(`/maintenance`)**:双职责——(1) 资源仪表盘,约 10s 轮询
   `GET /maintenance/resource-stats` 的内存快照,按 scope(server 磁盘 /
   PostgreSQL / Redis / 每 agent)分组展示当前值、上限、`Progress` 用量条与

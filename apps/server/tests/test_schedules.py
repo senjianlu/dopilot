@@ -60,6 +60,8 @@ async def test_create_and_list_schedule(exec_client, seeder):
     assert created["execution_template_id"] == template["id"]
     assert created["trigger_type"] == "interval"
     assert created["interval_seconds"] == 30
+    # Concurrency gate default (decision 0022): 1 unless explicitly set.
+    assert created["max_concurrency"] == 1
 
     rows = (await exec_client.get("/api/v1/schedules")).json()["schedules"]
     assert any(s["id"] == created["id"] for s in rows)
@@ -258,7 +260,11 @@ async def test_blank_command_override_inherits_template(exec_client, seeder):
 async def test_repeated_trigger_now_not_coalesced(exec_client, seeder):
     await seeder.healthy_node()
     template = await _create_template(exec_client, seeder)
-    schedule = await _create_schedule(exec_client, template["id"])
+    # max_concurrency=0 (unlimited) keeps this test about what it has always
+    # been about: trigger-now is never backlog-coalesced. The default limit of 1
+    # (decision 0022) would otherwise 409 the second trigger; that behaviour has
+    # its own tests in test_schedule_concurrency.py.
+    schedule = await _create_schedule(exec_client, template["id"], max_concurrency=0)
 
     first = (
         await exec_client.post(f"/api/v1/schedules/{schedule['id']}/trigger-now")

@@ -172,6 +172,11 @@ const zh = {
     cancel: "取消",
     createError: "创建失败",
     triggerError: "触发失败",
+    maxConcurrency: "并发上限",
+    maxConcurrencyHint: "同一调度最多同时运行的任务数；手动触发也计入。0 表示不限。",
+    unlimited: "不限",
+    concurrencyLimitHit:
+      "已达并发上限（运行中 {{active}} / 上限 {{limit}}），本次未触发。",
     invalidCommand: "命令覆盖无效",
     intervalType: "固定间隔",
     cronType: "Cron 表达式",
@@ -261,6 +266,12 @@ const zh = {
     waiting: "等待日志…",
     complete: "已完成",
     error: "日志流连接失败",
+    copy: "复制",
+    // 说明范围:实时流首屏只回放尾部若干行,复制到的是当前窗口内容,不是全量日志。
+    copyHint: "复制当前视图中已加载的日志内容",
+    copied: "已复制到剪贴板",
+    copyFailed: "复制失败",
+    copyUnavailable: "当前环境不支持剪贴板（需要 HTTPS 或 localhost）",
   },
   maintenance: {
     title: "运维清理",
@@ -413,6 +424,9 @@ const zh = {
     invalidCutoff: "无效的截止时间",
     cutoffRequired: "需要提供截止条件（older_than_days 或 before）",
     redisUnavailable: "Redis 不可用",
+    invalidMaxConcurrency: "并发上限无效（须为 0 到 2147483647 之间的整数）",
+    scheduleConcurrencyLimit: "已达该调度的并发上限",
+    scheduleNotFound: "未找到调度",
   },
 } as const;
 

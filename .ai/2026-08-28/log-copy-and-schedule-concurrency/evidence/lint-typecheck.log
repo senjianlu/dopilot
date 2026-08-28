@@ -1,0 +1,14 @@
+########################################################################
+# TC-26  lint + typecheck
+########################################################################
+--- command (repo root): .venv/bin/ruff check apps packages
+[1;32mAll checks passed![0m
+EXIT_CODE=0
+
+--- command (repo root): corepack pnpm --filter web lint
+[2m$ eslint .[22m
+EXIT_CODE=0
+
+--- command (repo root): corepack pnpm --filter web typecheck
+[2m$ tsc --noEmit[22m
+EXIT_CODE=0

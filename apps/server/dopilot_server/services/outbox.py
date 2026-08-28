@@ -212,14 +212,18 @@ async def has_undispatched_backlog_for_schedule(
     (pending / dispatching / failed_retryable) command-outbox row. That is the
     Redis-outage backlog the scheduler must coalesce (refactor/00 §任务投递).
 
-    Deliberately narrow, to honor user decision #2 (concurrent repeated runs are
-    allowed):
+    Deliberately narrow — this predicate answers ONLY "is there an undispatched
+    backlog", never "is the schedule too busy". Concurrency is a separate gate
+    (``services.schedules.acquire_firing_slot``, decision 0022) that superseded
+    the old "concurrent repeated runs are always allowed" stance; the two run
+    back to back inside the same locked region:
 
-    - a ``running`` task does NOT count — a new timer firing must not be
-      suppressed merely because an older run is still active;
+    - a ``running`` task does NOT count HERE — suppressing a firing because an
+      older run is still active is the concurrency gate's job, not this one's;
     - a queued task whose outbox is already ``sent`` does NOT count — the
       command reached Redis, so it is dispatched, not backlog;
-    - manual + trigger-now never call this (only the timer firing does).
+    - manual + trigger-now never call this (only the timer firing does); they are
+      still subject to the concurrency gate.
 
     ``CommandOutbox.task_id`` is the task id, so it joins on ``Task.id``.
     """

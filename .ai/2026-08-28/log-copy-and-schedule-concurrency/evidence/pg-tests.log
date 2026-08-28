@@ -1,0 +1,37 @@
+########################################################################
+# TC-12/13/14  (real row locks, PostgreSQL)
+# command: DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot .venv/bin/python -m pytest apps/server/tests/test_schedule_concurrency_pg.py -v
+########################################################################
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 3 items
+
+apps/server/tests/test_schedule_concurrency_pg.py::test_concurrent_trigger_now_row_lock [32mPASSED[0m[32m [ 33%][0m
+apps/server/tests/test_schedule_concurrency_pg.py::test_limit_change_visible_under_lock [32mPASSED[0m[32m [ 66%][0m
+apps/server/tests/test_schedule_concurrency_pg.py::test_timer_coalesce_sees_backlog_committed_under_lock [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m3 passed[0m[32m in 1.40s[0m[32m ===============================[0m
+EXIT_CODE=0
+
+########################################################################
+# TC-15  (alembic 0013 -> 0014 -> 0013 on real PostgreSQL)
+# command: DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot .venv/bin/python -m pytest apps/server/tests/test_migration_0014_pg.py -v
+########################################################################
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+[1mcollecting ... [0mcollected 1 item
+
+apps/server/tests/test_migration_0014_pg.py::test_migration_0014_backfills_and_indexes [32mPASSED[0m[32m [100%][0m
+
+[32m============================== [32m[1m1 passed[0m[32m in 0.84s[0m[32m ===============================[0m
+EXIT_CODE=0

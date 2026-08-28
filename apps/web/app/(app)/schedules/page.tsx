@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import {
   Card,
   CardAction,
@@ -31,6 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Field,
+  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -69,6 +71,7 @@ import {
 import { listTemplates } from "@/lib/api/templates";
 import { listNodes } from "@/lib/api/nodes";
 import type {
+  ApiError,
   ExecutionTemplate,
   NodeInfo,
   NodeStrategy,
@@ -119,6 +122,10 @@ export default function SchedulesPage() {
 
   const [name, setName] = React.useState("");
   const [enabled, setEnabled] = React.useState(false);
+  // Concurrency gate (decision 0022). 0 means unlimited and MUST survive the
+  // round trip: `Number(v) || 1` and friends would silently turn it into 1 and
+  // make the escape hatch unreachable from the only admin UI there is.
+  const [maxConcurrency, setMaxConcurrency] = React.useState(1);
   const [templateId, setTemplateId] = React.useState("");
   const [triggerType, setTriggerType] = React.useState<TriggerType>("interval");
   const [intervalSeconds, setIntervalSeconds] = React.useState(60);
@@ -223,6 +230,7 @@ export default function SchedulesPage() {
     setName("");
     // Match the backend: a new schedule is created disabled by default.
     setEnabled(false);
+    setMaxConcurrency(1);
     setTemplateId(templates[0]?.id ?? "");
     setTriggerType("interval");
     setIntervalSeconds(60);
@@ -247,6 +255,7 @@ export default function SchedulesPage() {
     setEditingId(schedule.id);
     setName(schedule.name);
     setEnabled(schedule.enabled);
+    setMaxConcurrency(schedule.max_concurrency ?? 1);
     setTemplateId(schedule.execution_template_id);
     setTriggerType(schedule.trigger_type);
     setIntervalSeconds(seconds);
@@ -292,6 +301,7 @@ export default function SchedulesPage() {
     const payload = {
       name,
       enabled,
+      max_concurrency: maxConcurrency,
       execution_template_id: templateId,
       trigger_type: triggerType,
       interval_seconds: triggerType === "interval" ? intervalSeconds : null,
@@ -331,6 +341,25 @@ export default function SchedulesPage() {
     try {
       const res = await triggerSchedule(schedule.id);
       router.push(`/tasks/detail?id=${res.task_id}`);
+    } catch (error) {
+      // A 409 means the concurrency gate refused: nothing was created, so stay
+      // on this page and say why. Without this the rejection was unhandled.
+      const envelope = (error as { response?: { data?: ApiError } })?.response
+        ?.data;
+      if (envelope?.code === "schedule.concurrency_limit") {
+        const detail = (envelope.detail ?? {}) as {
+          active?: number;
+          limit?: number;
+        };
+        toast.error(
+          t("schedules.concurrencyLimitHit", {
+            active: detail.active ?? 0,
+            limit: detail.limit ?? 0,
+          }),
+        );
+      } else {
+        toast.error(t("schedules.triggerError"));
+      }
     } finally {
       setTriggeringId("");
     }
@@ -406,6 +435,7 @@ export default function SchedulesPage() {
             <TableRow>
               <TableHead>{t("schedules.name")}</TableHead>
               <TableHead>{t("schedules.enabled")}</TableHead>
+              <TableHead>{t("schedules.maxConcurrency")}</TableHead>
               <TableHead>{t("schedules.template")}</TableHead>
               <TableHead>{t("schedules.triggerType")}</TableHead>
               <TableHead>{t("schedules.triggerTime")}</TableHead>
@@ -419,7 +449,7 @@ export default function SchedulesPage() {
             {visibleSchedules.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={8}
                   className="text-muted-foreground text-center"
                 >
                   {loading ? "…" : t("schedules.empty")}
@@ -468,6 +498,11 @@ export default function SchedulesPage() {
                         onToggleEnabled(schedule, next)
                       }
                     />
+                  </TableCell>
+                  <TableCell data-testid={`schedule-concurrency-${schedule.name}`}>
+                    {schedule.max_concurrency === 0
+                      ? t("schedules.unlimited")
+                      : schedule.max_concurrency}
                   </TableCell>
                   <TableCell>
                     <span className="inline-flex items-center gap-1">
@@ -544,6 +579,29 @@ export default function SchedulesPage() {
               <FieldLabel htmlFor="sch-enabled">
                 {t("schedules.enabled")}
               </FieldLabel>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="sch-max-concurrency">
+                {t("schedules.maxConcurrency")}
+              </FieldLabel>
+              <Input
+                id="sch-max-concurrency"
+                type="number"
+                min={0}
+                max={2147483647}
+                value={maxConcurrency}
+                data-testid="schedule-max-concurrency-input"
+                onChange={(e) => {
+                  // Parse explicitly: `Number(v) || 1` would turn the meaningful
+                  // 0 ("unlimited") into 1. An empty/!isInteger box falls back
+                  // to the default instead of submitting NaN.
+                  const parsed = Number(e.target.value);
+                  setMaxConcurrency(Number.isInteger(parsed) ? parsed : 1);
+                }}
+              />
+              <FieldDescription>
+                {t("schedules.maxConcurrencyHint")}
+              </FieldDescription>
             </Field>
             <Field>
               <FieldLabel>{t("schedules.template")}</FieldLabel>

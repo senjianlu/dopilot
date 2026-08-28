@@ -131,6 +131,9 @@ class Task(Base):
 
     __table_args__ = (
         Index("ix_tasks_status_outcome_recorded_at", "status", "outcome_recorded_at"),
+        # Schedule concurrency gate (decision 0022): every firing counts this
+        # schedule's ACTIVE tasks, so the lookup must not scan the whole table.
+        Index("ix_tasks_schedule_id_status", "schedule_id", "status"),
     )
 
 
