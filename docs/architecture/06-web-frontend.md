@@ -25,6 +25,20 @@
   [0022](../decisions/0022-schedule-concurrency-limit.md) 的逃生舱,解析时
   不得用 `Number(v) || 1` 一类写法把它吞成 1。手动触发命中上限时后端返回
   409 `schedule.concurrency_limit`,页面弹 toast 且**不跳转**。
+- **任务下钻与目标名搜索(`/tasks`)**:`/schedules` 每行的「任务记录」链接跳到
+  `/tasks?schedule_id=<id>&schedule_name=<name>`,任务页据此初始化筛选并渲染一个
+  可清除的调度芯片(`schedule_name` 纯展示,不参与请求;清除时同时
+  `router.replace("/tasks")` 抹掉 query,免得刷新后筛选复活)。搜索框对
+  `tasks.target` 做大小写不敏感子串匹配(300ms 防抖,回车立即),`maxLength`
+  与后端 `MAX_TARGET_QUERY_LEN=100` 对齐,使 UI 无法构造出会被 400 拒绝的请求;
+  搜索取舍见 [0023](../decisions/0023-task-target-search-without-trigram-index.md)。
+  **实现约束**:该页把 `page/pageSize/build/status/scheduleId/q` 收敛为**单一
+  `filters` 对象**,全部变更走函数式 `setFilters(prev => ...)`,请求由**唯一一个**
+  以 `filters` 为依赖的 effect 发出。这不是风格偏好——防抖回调若按老写法把当时
+  的筛选值当实参快照传出去,用户在 300ms 内改了下拉就会发出**新旧混合**的请求,
+  且它反而更晚返回从而覆盖正确结果。过期响应由 effect cleanup 的 `alive` 标志
+  丢弃。因页面读 `useSearchParams`,组件须置于 `React.Suspense` 边界内,否则静态
+  导出构建直接失败。
 - **运维清理页(`/maintenance`)**:双职责——(1) 资源仪表盘,约 10s 轮询
   `GET /maintenance/resource-stats` 的内存快照,按 scope(server 磁盘 /
   PostgreSQL / Redis / 每 agent)分组展示当前值、上限、`Progress` 用量条与

@@ -1,0 +1,27 @@
+$ corepack pnpm --filter web exec vitest run --reporter=tap "lib/api/__tests__/client.test.ts"
+TAP version 13
+1..1
+ok 1 - lib/api/__tests__/client.test.ts # time=23.94ms {
+    1..4
+    ok 1 - token storage # time=3.02ms {
+        1..1
+        ok 1 - round-trips and clears the bearer token # time=2.24ms
+    }
+    ok 2 - api client interceptors # time=13.85ms {
+        1..2
+        ok 1 - attaches the bearer token to outgoing requests # time=3.28ms
+        ok 2 - clears the token and invokes the unauthorized handler on 401 # time=10.36ms
+    }
+    ok 3 - buildStreamUrl # time=1.99ms {
+        1..2
+        ok 1 - builds the SSE url with stream, execution_id, and stream_token # time=1.30ms
+        ok 2 - defaults the stream name to log with no token # time=0.33ms
+    }
+    ok 4 - listTasks query serialization # time=4.37ms {
+        1..3
+        ok 1 - sends schedule_id and q using their wire names # time=2.05ms
+        ok 2 - omits both keys entirely when unset # time=1.42ms
+        ok 3 - omits them for null and empty-string values too # time=0.73ms
+    }
+}
+EXIT=0

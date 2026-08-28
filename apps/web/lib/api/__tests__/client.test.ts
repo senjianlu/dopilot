@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AxiosAdapter } from "axios";
 import client, { registerUnauthorizedHandler } from "@/lib/api/client";
 import { clearToken, getToken, setToken } from "@/lib/api/token";
-import { buildStreamUrl } from "@/lib/api/tasks";
+import { buildStreamUrl, listTasks } from "@/lib/api/tasks";
 
 describe("token storage", () => {
   beforeEach(() => clearToken());
@@ -71,5 +71,63 @@ describe("buildStreamUrl", () => {
     expect(buildStreamUrl("task-2")).toBe(
       "/api/v1/tasks/task-2/logs/stream?stream=log",
     );
+  });
+});
+
+describe("listTasks query serialization", () => {
+  // Goes through the REAL axios instance (only the transport is swapped), so
+  // it catches a camelCase param that never gets mapped to its snake_case wire
+  // name — something the page-level tests cannot see, since they mock
+  // listTasks itself.
+  async function capture(params: Parameters<typeof listTasks>[0]) {
+    const original = client.defaults.adapter;
+    let seen: Record<string, unknown> = {};
+    client.defaults.adapter = async (config) => {
+      seen = (config.params ?? {}) as Record<string, unknown>;
+      return {
+        data: {
+          tasks: [],
+          page: 1,
+          page_size: 20,
+          total: 0,
+          build_artifacts: [],
+        },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config,
+      };
+    };
+    try {
+      await listTasks(params);
+    } finally {
+      client.defaults.adapter = original;
+    }
+    return seen;
+  }
+
+  it("sends schedule_id and q using their wire names", async () => {
+    const params = await capture({
+      page: 2,
+      scheduleId: "s1",
+      q: "alpha",
+    });
+    expect(params).toMatchObject({
+      page: 2,
+      schedule_id: "s1",
+      q: "alpha",
+    });
+  });
+
+  it("omits both keys entirely when unset", async () => {
+    const params = await capture({});
+    expect(params).not.toHaveProperty("schedule_id");
+    expect(params).not.toHaveProperty("q");
+  });
+
+  it("omits them for null and empty-string values too", async () => {
+    const params = await capture({ scheduleId: null, q: "" });
+    expect(params).not.toHaveProperty("schedule_id");
+    expect(params).not.toHaveProperty("q");
   });
 });

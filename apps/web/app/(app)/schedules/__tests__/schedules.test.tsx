@@ -544,3 +544,30 @@ describe("SchedulesPage auto-disable badge (TC-29)", () => {
     );
   });
 });
+
+describe("SchedulesPage task drill-down", () => {
+  it("links each row to the tasks page filtered by that schedule", async () => {
+    // TC-15
+    renderWithProviders(<SchedulesPage />);
+    const link = await screen.findByTestId("schedule-tasks-demo-schedule");
+    expect(link).toHaveAttribute(
+      "href",
+      "/tasks?schedule_id=sch-1&schedule_name=demo-schedule",
+    );
+  });
+
+  it("url-encodes a schedule name that needs escaping", async () => {
+    // TC-15 (encoding branch): a name with spaces/& must not break the query.
+    listSchedules.mockResolvedValue(
+      schedulesResponse([
+        { ...schedule, id: "sch 2&x", name: "nightly run & more" },
+      ]),
+    );
+    renderWithProviders(<SchedulesPage />);
+    const link = await screen.findByTestId("schedule-tasks-nightly run & more");
+    expect(link).toHaveAttribute(
+      "href",
+      "/tasks?schedule_id=sch%202%26x&schedule_name=nightly%20run%20%26%20more",
+    );
+  });
+});

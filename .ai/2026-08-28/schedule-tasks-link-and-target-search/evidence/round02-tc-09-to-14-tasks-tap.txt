@@ -1,0 +1,35 @@
+$ corepack pnpm --filter web exec vitest run --reporter=tap "app/(app)/tasks/__tests__/tasks.test.tsx"
+TAP version 13
+1..1
+ok 1 - app/(app)/tasks/__tests__/tasks.test.tsx # time=4966.42ms {
+    1..4
+    ok 1 - TasksPage build-artifact filter # time=1007.15ms {
+        1..3
+        ok 1 - shows the build artifact label in the table column (not the spider) # time=342.48ms
+        ok 2 - selecting a build artifact calls listTasks with buildArtifactId # time=402.02ms
+        ok 3 - offers a distinct build-artifact option per known artifact # time=261.68ms
+    }
+    ok 2 - TasksPage status filter # time=963.64ms {
+        1..3
+        ok 1 - sends status null on the first load (all statuses) # time=165.55ms
+        ok 2 - selecting a status calls listTasks with status and resets to page 1 # time=324.01ms
+        ok 3 - preserves status across refresh, pagination, and page-size changes # time=473.63ms
+    }
+    ok 3 - TasksPage schedule drill-down # time=415.83ms {
+        1..3
+        ok 1 - reads schedule_id from the URL and shows a clearable chip # time=153.53ms
+        ok 2 - falls back to the schedule id when no name is in the URL # time=138.92ms
+        ok 3 - sends scheduleId null when the URL carries no schedule # time=123.01ms
+    }
+    ok 4 - TasksPage target search # time=2578.71ms {
+        1..7
+        ok 1 - debounces typing and resets to page 1 # time=181.76ms
+        ok 2 - searches immediately on Enter and does not fire again after the delay # time=690.34ms
+        ok 3 - uses the LATEST filters when the debounce fires, not the ones captured while typing # time=334.09ms
+        ok 4 - discards a stale response that lands after a newer one # time=360.18ms
+        ok 5 - caps the search input so the UI cannot build a request the backend rejects # time=464.23ms
+        ok 6 - surfaces a toast instead of an unhandled rejection when the list fails # time=81.84ms
+        ok 7 - preserves the search term and schedule filter across paging and refresh # time=465.71ms
+    }
+}
+EXIT=0

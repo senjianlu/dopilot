@@ -200,6 +200,12 @@ export interface ListTasksParams {
   pageSize?: TaskPageSize;
   buildArtifactId?: string | null;
   status?: TaskStatus | null;
+  // Narrows the list to one schedule's runs (timer firings and manual
+  // trigger-now alike). Set by the schedules page drill-down link.
+  scheduleId?: string | null;
+  // Case-insensitive substring search on the task target. The backend caps it
+  // at 100 chars (see MAX_TARGET_QUERY_LEN in apps/server .../api/v1/tasks.py).
+  q?: string | null;
 }
 
 // A single atomic execution against an agent/node.

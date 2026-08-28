@@ -23,6 +23,12 @@ export async function listTasks(
   if (params.status) {
     query.status = params.status;
   }
+  if (params.scheduleId) {
+    query.schedule_id = params.scheduleId;
+  }
+  if (params.q) {
+    query.q = params.q;
+  }
   const { data } = await client.get<TasksResponse>("/tasks", {
     params: query,
   });

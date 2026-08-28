@@ -341,6 +341,27 @@ def _task_build_artifact_id():
     return Task.template_snapshot["build_artifact"]["id"].as_string()
 
 
+# The LIKE escape character for the target search. SQLAlchemy renders the
+# ESCAPE clause on both PostgreSQL (native ILIKE) and SQLite (lower() LIKE),
+# so one pattern builder covers the production DB and the test DB alike.
+_LIKE_ESCAPE = "\\"
+
+
+def _like_contains(value: str) -> str:
+    """Build a ``%value%`` LIKE pattern with the user's wildcards neutralised.
+
+    The escape character itself is escaped FIRST: doing it after ``%``/``_``
+    would double-escape the backslashes this function just inserted, turning
+    them back into literals and letting the wildcard through.
+    """
+    escaped = (
+        value.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", _LIKE_ESCAPE + "%")
+        .replace("_", _LIKE_ESCAPE + "_")
+    )
+    return f"%{escaped}%"
+
+
 async def list_tasks_page(
     session: AsyncSession,
     *,
@@ -349,17 +370,27 @@ async def list_tasks_page(
     spider: str | None = None,
     build_artifact_id: str | None = None,
     status: str | None = None,
+    schedule_id: str | None = None,
+    target_query: str | None = None,
 ) -> tuple[list[Task], int]:
     """Return one page of tasks (newest first) + the total matching count.
 
     The product filter is ``build_artifact_id`` (matched against the immutable
     snapshot build artifact), which works for scrapy and python_wheel alike.
     The legacy ``spider`` filter (indexed task-level column) is kept for
-    compatibility. ``status`` filters by the task status column. All supplied
-    filters AND together. Caller validates ``page`` / ``page_size`` / ``status``.
+    compatibility. ``status`` filters by the task status column.
+    ``schedule_id`` narrows to one schedule's runs (both timer firings and
+    manual trigger-now, since both stamp the column) and rides the existing
+    ``ix_tasks_schedule_id_status`` index. ``target_query`` is a
+    case-insensitive substring match on ``target``; it is stripped here, and a
+    blank value means "no filter" (a bare truthiness check would turn "   "
+    into a literal three-space search that matches nothing). All supplied
+    filters AND together. Caller validates ``page`` / ``page_size`` /
+    ``status`` / ``target_query`` length.
     """
     from sqlalchemy import func as _func
 
+    target_query = (target_query or "").strip()
     base = select(Task)
     count_q = select(_func.count()).select_from(Task)
     if build_artifact_id:
@@ -372,6 +403,17 @@ async def list_tasks_page(
     if status:
         base = base.where(Task.status == status)
         count_q = count_q.where(Task.status == status)
+    if schedule_id:
+        base = base.where(Task.schedule_id == schedule_id)
+        count_q = count_q.where(Task.schedule_id == schedule_id)
+    if target_query:
+        # Applied to BOTH queries: filtering only ``base`` would leave ``total``
+        # counting the whole table and hand the web a wrong page count.
+        target_cond = Task.target.ilike(
+            _like_contains(target_query), escape=_LIKE_ESCAPE
+        )
+        base = base.where(target_cond)
+        count_q = count_q.where(target_cond)
 
     total = int((await session.execute(count_q)).scalar_one())
     rows = await session.execute(

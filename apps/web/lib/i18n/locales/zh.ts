@@ -106,6 +106,10 @@ const zh = {
     empty: "暂无任务",
     total: "共计",
     pageSize: "每页",
+    searchTarget: "搜索目标名",
+    scheduleFilter: "调度",
+    clearFilter: "清除筛选",
+    loadFailed: "加载任务列表失败",
   },
   templates: {
     title: "执行模板",
@@ -156,6 +160,7 @@ const zh = {
     interval: "间隔（秒）",
     cron: "Cron",
     actions: "操作",
+    viewTasks: "任务记录",
     triggerNow: "立即触发",
     delete: "删除",
     confirmDelete: "删除调度 “{{name}}”？后续将不再触发，且此操作不可撤销。",

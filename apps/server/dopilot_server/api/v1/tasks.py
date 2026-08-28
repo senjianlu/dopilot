@@ -81,6 +81,13 @@ _SSE_HEADERS = {
 _SSE_HEARTBEAT_SECONDS = 15.0
 _SSE_MAX_LIFETIME_SECONDS = 1800.0  # 30 min connection cap
 
+# Upper bound on the ``q`` target search term. The web mirrors this as the
+# search input's ``maxLength`` (see apps/web/app/(app)/tasks/page.tsx), so a UI
+# user cannot produce a rejected request; the check here is the second line of
+# defence for callers hitting the API directly. ``%x%`` cannot use an index, so
+# the cap also bounds how much work one query can ask of the database.
+MAX_TARGET_QUERY_LEN = 100
+
 
 @router.get("/tasks", response_model=TasksResponse)
 async def list_tasks(
@@ -89,6 +96,8 @@ async def list_tasks(
     build_artifact_id: str | None = Query(default=None),
     spider: str | None = Query(default=None),
     status: str | None = Query(default=None),
+    schedule_id: str | None = Query(default=None),
+    q: str | None = Query(default=None),
     _admin: AdminContext = Depends(get_current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> TasksResponse:
@@ -100,6 +109,12 @@ async def list_tasks(
     :data:`states.TASK_STATUSES`. ``page_size`` must be one of
     :data:`svc.ALLOWED_PAGE_SIZES`; child execution counts for the page are
     fetched in ONE aggregate query (no per-row N+1).
+
+    ``schedule_id`` narrows to one schedule's runs. An unknown id is NOT a 404:
+    it returns an empty page, which is the right answer for "the schedule was
+    deleted but its historical tasks are still here". ``q`` is a
+    case-insensitive substring search on the task target, capped at
+    :data:`MAX_TARGET_QUERY_LEN` characters; blank input means no filter.
     """
     if page_size not in svc.ALLOWED_PAGE_SIZES:
         raise ApiError(
@@ -115,6 +130,14 @@ async def list_tasks(
             "errors.invalidStatus",
             {"status": status, "allowed": sorted(states.TASK_STATUSES)},
         )
+    target_query = (q or "").strip()
+    if len(target_query) > MAX_TARGET_QUERY_LEN:
+        raise ApiError(
+            400,
+            "task.invalid_query",
+            "errors.invalidQuery",
+            {"max_length": MAX_TARGET_QUERY_LEN, "length": len(target_query)},
+        )
     tasks, total = await svc.list_tasks_page(
         session,
         page=page,
@@ -122,6 +145,8 @@ async def list_tasks(
         build_artifact_id=build_artifact_id or None,
         spider=spider or None,
         status=status or None,
+        schedule_id=schedule_id or None,
+        target_query=target_query or None,
     )
     counts = await svc.child_execution_counts(session, [t.id for t in tasks])
     summaries = [
