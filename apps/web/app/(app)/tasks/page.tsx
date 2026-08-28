@@ -2,7 +2,10 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
+import { X } from "lucide-react";
 import {
   Card,
   CardAction,
@@ -18,7 +21,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -73,6 +78,14 @@ const STATUS_OPTIONS: TaskStatus[] = [
   "no_target",
 ];
 
+// Mirrors MAX_TARGET_QUERY_LEN in apps/server/dopilot_server/api/v1/tasks.py.
+// Capping the input means the UI can never build a request the backend would
+// reject; the server-side check stays as the defence for direct API callers.
+const MAX_TARGET_QUERY_LEN = 100;
+
+// How long typing settles before the search term is committed to the filters.
+const SEARCH_DEBOUNCE_MS = 300;
+
 // A build artifact's display text in the row/dropdown (label, then name, id).
 function buildArtifactText(art: BuildArtifactOption): string {
   return art.label || art.name || art.id;
@@ -93,71 +106,128 @@ function pickPageSizeFromHeight(): TaskPageSize {
   return best;
 }
 
-export default function TasksPage() {
+// Every filter lives in ONE object so that a debounced update can never ship a
+// stale partial snapshot: callers always merge through setFilters(prev => ...),
+// and a single effect turns the current object into the request.
+interface TaskFilters {
+  page: number;
+  pageSize: TaskPageSize;
+  build: string; // BUILD_ALL or a build_artifact_id
+  status: string; // STATUS_ALL or a concrete task status
+  scheduleId: string | null; // read from the URL on mount only
+  q: string; // the committed (post-debounce) search term
+}
+
+function TasksPageInner() {
   const { t } = useTranslation();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // The schedules page links here as /tasks?schedule_id=...&schedule_name=...
+  // The id drives the query; the name is display-only chip text and is never
+  // sent back to the API, so a tampered value can at worst mislabel the chip.
+  const initialScheduleId = searchParams.get("schedule_id");
+  const scheduleLabel = searchParams.get("schedule_name") ?? initialScheduleId;
+
+  const [filters, setFilters] = React.useState<TaskFilters>(() => ({
+    page: 1,
+    // Computed in the initializer rather than in a mount effect, so the first
+    // render already requests the right page size (no throwaway request).
+    pageSize: pickPageSizeFromHeight(),
+    build: BUILD_ALL,
+    status: STATUS_ALL,
+    scheduleId: initialScheduleId,
+    q: "",
+  }));
+  const [searchInput, setSearchInput] = React.useState("");
+  const [reloadNonce, setReloadNonce] = React.useState(0);
+
   const [tasks, setTasks] = React.useState<TaskSummary[]>([]);
   const [loading, setLoading] = React.useState(false);
-  const [page, setPage] = React.useState(1);
-  const [pageSize, setPageSize] = React.useState<TaskPageSize>(20);
   const [total, setTotal] = React.useState(0);
   const [builds, setBuilds] = React.useState<BuildArtifactOption[]>([]);
-  const [buildFilter, setBuildFilter] = React.useState(BUILD_ALL);
-  const [statusFilter, setStatusFilter] = React.useState(STATUS_ALL);
 
-  const load = React.useCallback(
-    async (
-      nextPage: number,
-      size: TaskPageSize,
-      buildFilterValue: string,
-      statusFilterValue: string,
-    ) => {
-      setLoading(true);
-      try {
-        const res = await listTasks({
-          page: nextPage,
-          pageSize: size,
-          buildArtifactId:
-            buildFilterValue === BUILD_ALL ? null : buildFilterValue,
-          status:
-            statusFilterValue === STATUS_ALL
-              ? null
-              : (statusFilterValue as TaskStatus),
-        });
+  // Monotonic request id: effects fire in order but responses do not arrive in
+  // order, so a slow earlier request must not overwrite a newer result.
+  const reqSeq = React.useRef(0);
+
+  // Debounce commits the typed value INTO the filters; it never issues the
+  // request itself. That is what keeps a pending timer from resurrecting the
+  // dropdown/chip values that were current when the keystroke happened.
+  React.useEffect(() => {
+    if (searchInput === filters.q) return;
+    const timer = setTimeout(() => {
+      setFilters((prev) => ({ ...prev, q: searchInput, page: 1 }));
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput, filters.q]);
+
+  // The one and only place a request is made. It reads the whole current
+  // filter object, so a request is never assembled from mixed-age values.
+  React.useEffect(() => {
+    const seq = ++reqSeq.current;
+    let alive = true;
+    setLoading(true);
+    listTasks({
+      page: filters.page,
+      pageSize: filters.pageSize,
+      buildArtifactId: filters.build === BUILD_ALL ? null : filters.build,
+      status:
+        filters.status === STATUS_ALL ? null : (filters.status as TaskStatus),
+      scheduleId: filters.scheduleId,
+      q: filters.q || null,
+    })
+      .then((res) => {
+        if (!alive || seq !== reqSeq.current) return;
         setTasks(res.tasks);
         setTotal(res.total);
-        setPage(res.page);
-        setPageSize(res.page_size as TaskPageSize);
         setBuilds(res.build_artifacts);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
+      })
+      .catch(() => {
+        if (!alive || seq !== reqSeq.current) return;
+        toast.error(t("tasks.loadFailed"));
+      })
+      .finally(() => {
+        if (alive && seq === reqSeq.current) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [filters, reloadNonce, t]);
 
-  React.useEffect(() => {
-    const size = pickPageSizeFromHeight();
-    setPageSize(size);
-    void load(1, size, BUILD_ALL, STATUS_ALL);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const totalPages = Math.max(1, Math.ceil(total / filters.pageSize));
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
-  // Changing either filter resets to page 1; pagination/size/refresh keep both.
+  // Changing a filter resets to page 1; paging/size keep every other filter,
+  // which falls out of merging into the previous object instead of rebuilding.
   function onBuildChange(value: string) {
-    setBuildFilter(value);
-    void load(1, pageSize, value, statusFilter);
+    setFilters((prev) => ({ ...prev, build: value, page: 1 }));
   }
 
   function onStatusChange(value: string) {
-    setStatusFilter(value);
-    void load(1, pageSize, buildFilter, value);
+    setFilters((prev) => ({ ...prev, status: value, page: 1 }));
   }
 
   function onSizeChange(value: string) {
     const size = Number(value) as TaskPageSize;
-    void load(1, size, buildFilter, statusFilter);
+    setFilters((prev) => ({ ...prev, pageSize: size, page: 1 }));
+  }
+
+  function goToPage(page: number) {
+    setFilters((prev) => ({ ...prev, page }));
+  }
+
+  function onSearchKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") return;
+    // Commit immediately. The debounce effect's guard (searchInput === q) then
+    // short-circuits, and its cleanup already cleared the pending timer, so
+    // this cannot be followed by a second shot 300ms later.
+    setFilters((prev) => ({ ...prev, q: searchInput, page: 1 }));
+  }
+
+  function clearScheduleFilter() {
+    setFilters((prev) => ({ ...prev, scheduleId: null, page: 1 }));
+    // Drop the query string too, otherwise a reload would bring the filter back.
+    router.replace("/tasks");
   }
 
   return (
@@ -165,8 +235,38 @@ export default function TasksPage() {
       <CardHeader>
         <CardTitle>{t("tasks.title")}</CardTitle>
         <CardAction>
-          <div className="flex items-center gap-2">
-            <Select value={statusFilter} onValueChange={onStatusChange}>
+          <div className="flex flex-wrap items-center gap-2">
+            {filters.scheduleId && (
+              <Badge
+                variant="secondary"
+                className="gap-1"
+                data-testid="tasks-schedule-filter"
+              >
+                {t("tasks.scheduleFilter")}: {scheduleLabel}
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t("tasks.clearFilter")}
+                  data-testid="tasks-schedule-filter-clear"
+                  onClick={clearScheduleFilter}
+                  className="-mr-1"
+                >
+                  {/* icon-xs already sizes the svg; no explicit size class. */}
+                  <X />
+                </Button>
+              </Badge>
+            )}
+            <Input
+              className="w-48"
+              value={searchInput}
+              maxLength={MAX_TARGET_QUERY_LEN}
+              placeholder={t("tasks.searchTarget")}
+              aria-label={t("tasks.searchTarget")}
+              data-testid="tasks-target-search"
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={onSearchKeyDown}
+            />
+            <Select value={filters.status} onValueChange={onStatusChange}>
               <SelectTrigger
                 className="min-w-36"
                 data-testid="tasks-status-filter"
@@ -186,7 +286,7 @@ export default function TasksPage() {
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <Select value={buildFilter} onValueChange={onBuildChange}>
+            <Select value={filters.build} onValueChange={onBuildChange}>
               <SelectTrigger
                 className="min-w-40"
                 data-testid="tasks-build-filter"
@@ -206,9 +306,7 @@ export default function TasksPage() {
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <Button
-              onClick={() => load(page, pageSize, buildFilter, statusFilter)}
-            >
+            <Button onClick={() => setReloadNonce((n) => n + 1)}>
               {t("tasks.refresh")}
             </Button>
           </div>
@@ -279,8 +377,15 @@ export default function TasksPage() {
           <span className="text-muted-foreground text-sm">
             {t("tasks.total")}: {total}
           </span>
-          <Select value={String(pageSize)} onValueChange={onSizeChange}>
-            <SelectTrigger size="sm" className="w-28" data-testid="tasks-page-size">
+          <Select
+            value={String(filters.pageSize)}
+            onValueChange={onSizeChange}
+          >
+            <SelectTrigger
+              size="sm"
+              className="w-28"
+              data-testid="tasks-page-size"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -300,17 +405,18 @@ export default function TasksPage() {
                   variant="outline"
                   size="sm"
                   data-testid="tasks-prev"
-                  disabled={page <= 1 || loading}
-                  onClick={() =>
-                    load(page - 1, pageSize, buildFilter, statusFilter)
-                  }
+                  disabled={filters.page <= 1 || loading}
+                  onClick={() => goToPage(filters.page - 1)}
                 >
                   ‹
                 </Button>
               </PaginationItem>
               <PaginationItem>
-                <span className="px-2 text-sm" data-testid="tasks-page-indicator">
-                  {page} / {totalPages}
+                <span
+                  className="px-2 text-sm"
+                  data-testid="tasks-page-indicator"
+                >
+                  {filters.page} / {totalPages}
                 </span>
               </PaginationItem>
               <PaginationItem>
@@ -318,10 +424,8 @@ export default function TasksPage() {
                   variant="outline"
                   size="sm"
                   data-testid="tasks-next"
-                  disabled={page >= totalPages || loading}
-                  onClick={() =>
-                    load(page + 1, pageSize, buildFilter, statusFilter)
-                  }
+                  disabled={filters.page >= totalPages || loading}
+                  onClick={() => goToPage(filters.page + 1)}
                 >
                   ›
                 </Button>
@@ -331,5 +435,14 @@ export default function TasksPage() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+export default function TasksPage() {
+  // Static export prerenders this route; useSearchParams must sit under Suspense.
+  return (
+    <React.Suspense fallback={<div data-testid="tasks-table" />}>
+      <TasksPageInner />
+    </React.Suspense>
   );
 }

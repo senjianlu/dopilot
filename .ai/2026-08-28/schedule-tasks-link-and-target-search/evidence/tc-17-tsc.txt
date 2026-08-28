@@ -1,0 +1,3 @@
+$ corepack pnpm --filter web run typecheck
+[2m$ tsc --noEmit[22m
+EXIT=0

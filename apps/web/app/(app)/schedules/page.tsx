@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -516,6 +517,23 @@ export default function SchedulesPage() {
                   <TableCell>{triggerTimeText(schedule)}</TableCell>
                   <TableCell>{formatDateTime(schedule.next_run_at)}</TableCell>
                   <TableCell className="text-right">
+                    {/* Drill-down into this schedule's task history. The id
+                        drives the filter; the name only labels the chip. */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      asChild
+                      data-testid={`schedule-tasks-${schedule.name}`}
+                    >
+                      <Link
+                        href={
+                          `/tasks?schedule_id=${encodeURIComponent(schedule.id)}` +
+                          `&schedule_name=${encodeURIComponent(schedule.name)}`
+                        }
+                      >
+                        {t("schedules.viewTasks")}
+                      </Link>
+                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"

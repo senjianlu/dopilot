@@ -1,0 +1,37 @@
+$ corepack pnpm --filter web run build
+[2m$ next build[22m
+[33m[1m⚠[22m[39m `eslint` configuration in next.config.mjs is no longer supported. See more info here: https://nextjs.org/docs/app/api-reference/cli/next#next-lint-options
+[33m[1m⚠[22m[39m Invalid next.config.mjs options detected: 
+[33m[1m⚠[22m[39m     Unrecognized key(s) in object: 'eslint'
+[33m[1m⚠[22m[39m See more info here: https://nextjs.org/docs/messages/invalid-next-config
+[1m[38;2;173;127;168m▲ Next.js 16.2.6[39m[22m (Turbopack)
+
+[37m[1m [22m[39m Creating an optimized production build ...
+[32m[1m✓[22m[39m Compiled successfully in 12.0s
+[37m[1m [22m[39m Running TypeScript ...
+[37m[1m [22m[39m Finished TypeScript in 9.4s ...
+[37m[1m [22m[39m Collecting page data using 3 workers ...
+[37m[1m [22m[39m Generating static pages using 3 workers (0/12) ...
+[37m[1m [22m[39m Generating static pages using 3 workers (3/12) 
+[37m[1m [22m[39m Generating static pages using 3 workers (6/12) 
+[37m[1m [22m[39m Generating static pages using 3 workers (9/12) 
+[32m[1m✓[22m[39m Generating static pages using 3 workers (12/12) in 706ms
+[37m[1m [22m[39m Finalizing page optimization ...
+
+[4mRoute (app)[24m
+┌ ○ /
+├ ○ /_not-found
+├ ○ /artifacts
+├ ○ /dashboard
+├ ○ /login
+├ ○ /maintenance
+├ ○ /nodes
+├ ○ /schedules
+├ ○ /tasks
+├ ○ /tasks/detail
+└ ○ /templates
+
+
+○  (Static)  prerendered as static content
+
+EXIT=0

@@ -108,6 +108,10 @@ const en = {
     empty: "No tasks yet",
     total: "Total",
     pageSize: "Per page",
+    searchTarget: "Search target",
+    scheduleFilter: "Schedule",
+    clearFilter: "Clear filter",
+    loadFailed: "Failed to load tasks",
   },
   templates: {
     title: "Execution templates",
@@ -158,6 +162,7 @@ const en = {
     interval: "Interval (s)",
     cron: "Cron",
     actions: "Actions",
+    viewTasks: "Tasks",
     triggerNow: "Trigger now",
     delete: "Delete",
     confirmDelete:
