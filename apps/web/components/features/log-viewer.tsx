@@ -2,7 +2,9 @@
 
 import * as React from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { buildStreamUrl, fetchStreamToken } from "@/lib/api/tasks";
 import { getToken } from "@/lib/api/token";
 import { ToneBadge } from "@/components/features/status-badge";
@@ -97,12 +99,49 @@ export function LogViewer({ taskId, executionId, stream }: LogViewerProps) {
     };
   }, [taskId, executionId, stream]);
 
+  // Copies the CURRENT VIEW buffer — the SSE first screen only replays a tail
+  // (logs.first_screen_max_*), so this is deliberately not "the whole log file";
+  // the button carries a description saying so.
+  async function onCopy() {
+    if (!content) return;
+    try {
+      const write = navigator.clipboard?.writeText;
+      if (!write) {
+        // No clipboard API at all: an http:// (non-secure context) deployment.
+        toast.error(t("logs.copyUnavailable"));
+        return;
+      }
+      await navigator.clipboard.writeText(content);
+      toast.success(t("logs.copied"));
+    } catch {
+      // Permission denied / user gesture lost: surface it, never leave an
+      // unhandled rejection behind.
+      toast.error(t("logs.copyFailed"));
+    }
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <span className="text-sm font-medium">{t("logs.title")}</span>
         {completed && <ToneBadge tone="green">{t("logs.complete")}</ToneBadge>}
         {errored && <Badge variant="destructive">{t("logs.error")}</Badge>}
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto"
+          data-testid="log-copy"
+          disabled={!content}
+          title={t("logs.copyHint")}
+          aria-label={t("logs.copy")}
+          aria-describedby="log-copy-hint"
+          onClick={onCopy}
+        >
+          {t("logs.copy")}
+        </Button>
+        <span id="log-copy-hint" className="sr-only">
+          {t("logs.copyHint")}
+        </span>
       </div>
       <pre
         ref={bodyRef}

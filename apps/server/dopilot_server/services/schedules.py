@@ -22,6 +22,8 @@ the global ``[scheduler].enabled``).
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -30,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config.settings import Settings
 from ..errors import ApiError
+from ..models.execution import Task
 from ..models.scheduling import Schedule
 from ..redis.dispatcher import CommandDispatcher
 from . import resolve, states, templates
@@ -37,7 +40,39 @@ from .dispatch import run_execution_template
 from .executions import _iso, new_id
 from .outbox import has_undispatched_backlog_for_schedule
 
+logger = logging.getLogger(__name__)
+
 VALID_TRIGGER_TYPES = frozenset({"interval", "cron"})
+
+# Concurrency gate (decision 0022) --------------------------------------------
+# ``max_concurrency`` lives in a signed 32-bit Integer column; validating the
+# upper bound here turns "2147483648" into a structured 400 instead of a
+# DataError/500 at COMMIT time.
+MAX_CONCURRENCY_CEILING = 2147483647
+
+# Why a firing was NOT admitted. Four distinct reasons: the caller needs to tell
+# them apart (only the concurrency one may be logged as "over the limit", and
+# only it carries active/limit counts).
+SKIP_MISSING = "missing"
+SKIP_DISABLED = "disabled"
+SKIP_BACKLOG = "backlog"
+SKIP_CONCURRENCY = "concurrency"
+
+
+@dataclass(frozen=True)
+class FiringSlot:
+    """Admission decision for one schedule firing.
+
+    ``granted`` true means ``schedule`` is the row AS READ UNDER THE LOCK — the
+    caller must use that instance (its ``overrides`` / ``outcome_generation``
+    are the authoritative values, a pre-lock copy may be stale).
+    """
+
+    granted: bool
+    schedule: Schedule | None = None
+    skip_reason: str | None = None
+    active: int | None = None
+    limit: int | None = None
 
 
 def _validate_trigger(data: dict[str, Any]) -> None:
@@ -75,6 +110,31 @@ def _validate_trigger(data: dict[str, Any]) -> None:
                 "errors.invalidCron",
                 {"cron": data.get("cron")},
             ) from None
+
+
+def _validate_max_concurrency(value: Any) -> int:
+    """Return ``value`` as a valid concurrency limit, or raise a 400.
+
+    Rejects bools explicitly. ``isinstance(True, int)`` is True, and Pydantic's
+    lax mode already coerces JSON ``false`` to ``0`` — which is precisely the
+    "unlimited" sentinel. A mistyped ``false`` must never silently switch the
+    whole gate off, so both this layer and the request schema refuse bools.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ApiError(
+            400,
+            "schedule.invalid_max_concurrency",
+            "errors.invalidMaxConcurrency",
+            {"max_concurrency": value},
+        )
+    if value < 0 or value > MAX_CONCURRENCY_CEILING:
+        raise ApiError(
+            400,
+            "schedule.invalid_max_concurrency",
+            "errors.invalidMaxConcurrency",
+            {"max_concurrency": value, "max": MAX_CONCURRENCY_CEILING},
+        )
+    return value
 
 
 async def _ensure_unique_name(
@@ -116,10 +176,14 @@ async def create_schedule(
     artifact_type = await templates.artifact_type_for_template(session, template)
     _validate_trigger(data)
     trigger_type = data.get("trigger_type") or "interval"
+    max_concurrency = _validate_max_concurrency(
+        data["max_concurrency"] if "max_concurrency" in data else 1
+    )
     schedule = Schedule(
         id=new_id(),
         name=str(data["name"]).strip(),
         description=data.get("description"),
+        max_concurrency=max_concurrency,
         # Phase 2.2: default disabled when omitted; only an explicit true enables
         # timer firing. trigger-now works regardless.
         enabled=bool(data.get("enabled", False)),
@@ -151,6 +215,10 @@ async def update_schedule(
         schedule.name = new_name
     if "description" in data:
         schedule.description = data["description"]
+    if "max_concurrency" in data:
+        schedule.max_concurrency = _validate_max_concurrency(
+            data["max_concurrency"]
+        )
     if "enabled" in data:
         enabling = bool(data["enabled"]) and not schedule.enabled
         schedule.enabled = bool(data["enabled"])
@@ -273,6 +341,104 @@ async def delete_schedule(session: AsyncSession, schedule: Schedule) -> None:
     await session.delete(schedule)
 
 
+async def count_active_tasks_for_schedule(
+    session: AsyncSession, schedule_id: str
+) -> int:
+    """Count this schedule's ACTIVE tasks (the concurrency gate's numerator).
+
+    ``states.TASK_ACTIVE`` (queued/running/finalizing) is referenced directly so
+    the set can never drift from the state machine. Counted per TASK, not per
+    execution: one task that fans out to N nodes still occupies ONE slot. No
+    ``source`` filter — timer firings and manual trigger-now deliberately share
+    one quota (that is what "manual triggers count too" means).
+    """
+    result = await session.execute(
+        select(func.count())
+        .select_from(Task)
+        .where(
+            Task.schedule_id == schedule_id,
+            Task.status.in_(states.TASK_ACTIVE),
+        )
+    )
+    return int(result.scalar_one())
+
+
+async def acquire_firing_slot(
+    session: AsyncSession,
+    schedule_id: str,
+    *,
+    raise_on_full: bool,
+    require_enabled: bool,
+    coalesce_backlog: bool,
+) -> FiringSlot:
+    """The single admission gate for one schedule firing (decision 0022).
+
+    Everything is decided INSIDE one ``FOR UPDATE`` serialized region: exists ->
+    enabled -> backlog coalesce -> concurrency. Two reasons it must be this way:
+
+    - the caller's ``Schedule`` may predate the lock, and ``max_concurrency``
+      can be changed by a concurrent PUT; deciding on a pre-lock value (the
+      ``== 0`` fast path included) lets a firing slip past a limit that was
+      already tightened and committed. ``populate_existing=True`` overwrites the
+      stale identity-map copy with the row as it is under the lock;
+    - the backlog query only sees COMMITTED rows. Run before the lock, a timer
+      would read "no backlog", then block on the lock while trigger-now commits
+      a task with an unresolved outbox, then create a second one anyway.
+
+    The lock is released by the executor's atomic create commit, which happens
+    BEFORE the XADD (``executors/scrapyd.py``), so it never spans Redis I/O.
+    Only this one row is locked and no task/execution lock is taken while
+    holding it, so it cannot form a cycle with the
+    ``task -> executions -> log files -> schedule`` order used by terminal
+    writers.
+    """
+    stmt = (
+        select(Schedule)
+        .where(Schedule.id == schedule_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    schedule = (await session.execute(stmt)).scalar_one_or_none()
+    if schedule is None:
+        if raise_on_full:
+            raise ApiError(
+                404,
+                "schedule.not_found",
+                "errors.scheduleNotFound",
+                {"schedule_id": schedule_id},
+            )
+        return FiringSlot(granted=False, skip_reason=SKIP_MISSING)
+
+    if require_enabled and not schedule.enabled:
+        return FiringSlot(granted=False, skip_reason=SKIP_DISABLED)
+
+    if coalesce_backlog and await has_undispatched_backlog_for_schedule(
+        session, schedule_id
+    ):
+        return FiringSlot(granted=False, skip_reason=SKIP_BACKLOG)
+
+    limit = int(schedule.max_concurrency or 0)
+    if limit == 0:  # 0 = unlimited (pre-0022 behaviour, kept as escape hatch)
+        return FiringSlot(granted=True, schedule=schedule)
+
+    active = await count_active_tasks_for_schedule(session, schedule_id)
+    if active >= limit:
+        if raise_on_full:
+            raise ApiError(
+                409,
+                "schedule.concurrency_limit",
+                "errors.scheduleConcurrencyLimit",
+                {"active": active, "limit": limit},
+            )
+        return FiringSlot(
+            granted=False,
+            skip_reason=SKIP_CONCURRENCY,
+            active=active,
+            limit=limit,
+        )
+    return FiringSlot(granted=True, schedule=schedule)
+
+
 async def trigger_now(
     session: AsyncSession,
     settings: Settings,
@@ -281,11 +447,22 @@ async def trigger_now(
 ):
     """Immediate trigger: create+dispatch a task from the template snapshot.
 
-    NEVER coalesced — an explicit user trigger always produces a new task, even
-    while an earlier task from the same schedule is still active.
+    NEVER coalesced — an explicit user trigger always produces a new task even
+    while an earlier one is still active. It IS however subject to the
+    concurrency gate (decision 0022): manual triggers draw on the same quota as
+    timer firings, so an over-limit trigger raises 409 and creates nothing.
+    Still allowed for a DISABLED schedule (disabled only pauses the timer).
     """
+    slot = await acquire_firing_slot(
+        session,
+        schedule.id,
+        raise_on_full=True,
+        require_enabled=False,
+        coalesce_backlog=False,
+    )
+    locked = slot.schedule or schedule
     template = await templates.get_template_or_404(
-        session, schedule.execution_template_id
+        session, locked.execution_template_id
     )
     return await run_execution_template(
         session,
@@ -293,9 +470,9 @@ async def trigger_now(
         dispatcher,
         template,
         source=states.TASK_SOURCE_TRIGGER_NOW,
-        schedule_id=schedule.id,
-        overrides=schedule.overrides,
-        schedule_generation=int(schedule.outcome_generation or 0),
+        schedule_id=locked.id,
+        overrides=locked.overrides,
+        schedule_generation=int(locked.outcome_generation or 0),
     )
 
 
@@ -305,19 +482,39 @@ async def fire_timer(
     dispatcher: CommandDispatcher,
     schedule: Schedule,
 ):
-    """Timer firing: create+dispatch a task UNLESS undispatched backlog exists.
+    """Timer firing: create+dispatch a task unless the admission gate says no.
 
-    Returns the run response, or ``None`` when the firing was coalesced away
-    because the schedule still has an undispatched backlog task (Redis outage),
-    or when the schedule is disabled (defensive: the runner only registers
-    enabled schedules, but a schedule may be disabled between reload and tick).
+    Returns the run response, or ``None`` when the firing was skipped. All three
+    historical skip conditions (schedule disabled, undispatched backlog) plus the
+    new concurrency limit are decided inside ``acquire_firing_slot``'s locked
+    region — same outcomes as before, now serializable against a concurrent
+    trigger-now.
+
+    Only an over-the-limit skip is logged: reporting a disabled schedule or a
+    routine backlog coalesce as "concurrency" would make the log lie. Skips are
+    otherwise silent by design — no notification, and ``consecutive_error_count``
+    is untouched (a skipped run is not a failed run, so it must never feed
+    auto-disable).
     """
-    if not schedule.enabled:
+    slot = await acquire_firing_slot(
+        session,
+        schedule.id,
+        raise_on_full=False,
+        require_enabled=True,
+        coalesce_backlog=True,
+    )
+    if not slot.granted:
+        if slot.skip_reason == SKIP_CONCURRENCY:
+            logger.info(
+                "schedule %s timer firing skipped: concurrency %d/%d",
+                schedule.id,
+                slot.active,
+                slot.limit,
+            )
         return None
-    if await has_undispatched_backlog_for_schedule(session, schedule.id):
-        return None
+    locked = slot.schedule or schedule
     template = await templates.get_template_or_404(
-        session, schedule.execution_template_id
+        session, locked.execution_template_id
     )
     return await run_execution_template(
         session,
@@ -325,9 +522,9 @@ async def fire_timer(
         dispatcher,
         template,
         source=states.TASK_SOURCE_TIMER,
-        schedule_id=schedule.id,
-        overrides=schedule.overrides,
-        schedule_generation=int(schedule.outcome_generation or 0),
+        schedule_id=locked.id,
+        overrides=locked.overrides,
+        schedule_generation=int(locked.outcome_generation or 0),
     )
 
 
@@ -391,6 +588,7 @@ def schedule_view(
         "name": schedule.name,
         "description": schedule.description,
         "enabled": schedule.enabled,
+        "max_concurrency": int(schedule.max_concurrency or 0),
         "execution_template_id": schedule.execution_template_id,
         "trigger_type": schedule.trigger_type,
         "interval_seconds": schedule.interval_seconds,

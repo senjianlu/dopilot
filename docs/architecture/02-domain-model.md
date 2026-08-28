@@ -29,6 +29,7 @@
 | `tasks` | `schedule_generation`(创建时固化)、`outcome_recorded_at`、`outcome_erroneous` | 结果记录器的幂等戳与判定结果;`lost` 被硬终态覆盖时清空以重评 |
 | `execution_log_files` | `truncation_reason`(`size-cap` / `dir-budget` / `maintenance`) | 只有前两种计入"出错";维护截断不改变已记录结果 |
 | `schedules` | `consecutive_error_count`(派生)、`auto_disabled_at` / `auto_disabled_reason`、`outcome_generation` | 连续出错计数由账本重算;手动重启用递增代际并清零 |
+| `schedules` | `max_concurrency`(默认 1,`0`=不限) | 并发闸([0022](../decisions/0022-schedule-concurrency-limit.md)):该调度同时处于 `TASK_ACTIVE` 的 task 数上限,**按 task 计不按 execution**;定时与手动 trigger-now **共用同一额度池**。判定在 `acquire_firing_slot` 的 schedule 行锁内完成(存在→启用→未下发积压→并发),超限时手动触发 409、定时触发静默跳过且不计入连续出错。配套 `tasks` 索引 `ix_tasks_schedule_id_status` |
 | `schedule_outcome_ledger`(新) | `schedule_id`(CASCADE)、`task_id`(唯一)、`generation`、`finished_at`、`erroneous` | 独立于 Task 保留期的结果账本,按条数自修剪 |
 | `notifications`(新) | `type`、`severity`、`payload`、`dedupe_key`、`count`、`read_at`… | 消息中心;部分唯一索引 `(type, dedupe_key) WHERE read_at IS NULL` 让并发写折叠为一行 |
 

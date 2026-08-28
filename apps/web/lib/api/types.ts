@@ -298,6 +298,10 @@ export interface Schedule {
   // Phase 2.2: row-level timer gate. Disabled schedules stay editable and
   // remain manually runnable via trigger-now.
   enabled: boolean;
+  // Concurrency gate (decision 0022): how many of this schedule's tasks may be
+  // active at once. Timer firings and manual triggers share the quota; 0 = no
+  // limit.
+  max_concurrency: number;
   execution_template_id: string;
   trigger_type: TriggerType;
   interval_seconds: number | null;
@@ -341,6 +345,10 @@ export interface CreateScheduleRequest {
   description?: string | null;
   // Phase 2.2: new schedules default disabled; pass true to enable timer firing.
   enabled?: boolean;
+  // Concurrency gate (decision 0022). Omitted = the server default of 1;
+  // 0 means unlimited. `updateSchedule` takes Partial<this>, so the same field
+  // covers the PUT path.
+  max_concurrency?: number;
   execution_template_id: string;
   trigger_type?: TriggerType;
   interval_seconds?: number | null;

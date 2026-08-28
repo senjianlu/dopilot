@@ -1,0 +1,274 @@
+########################################################################
+# TC-16..TC-20 (log-viewer copy) + TC-21..TC-24 (schedules concurrency UI)
+# command: corepack pnpm exec vitest run --reporter=tap log-viewer schedules
+########################################################################
+TAP version 13
+1..2
+ok 1 - components/features/__tests__/log-viewer.test.tsx # time=359.80ms {
+    1..1
+    ok 1 - LogViewer # time=358.54ms {
+        1..8
+        ok 1 - appends streamed log content and shows the complete badge # time=108.01ms
+        ok 2 - passes execution_id into the stream URL when given # time=12.30ms
+        ok 3 - fetches a short-lived stream token when web auth is on # time=13.30ms
+        ok 4 - copies the current buffer # time=128.51ms
+        ok 5 - disables copy when the buffer is empty # time=9.77ms
+        ok 6 - warns when clipboard is unavailable # time=35.09ms
+        ok 7 - warns when clipboard write is rejected # time=31.55ms
+        ok 8 - explains the copy scope # time=18.43ms
+    }
+}
+ok 2 - app/(app)/schedules/__tests__/schedules.test.tsx # time=3824.05ms {
+    1..2
+    ok 1 - SchedulesPage # time=3626.92ms {
+        1..19
+        ok 1 - renders schedules with the resolved template name and trigger time # time=143.83ms
+        ok 2 - triggers a schedule and navigates to the created task # time=192.47ms
+        ok 3 - edits a schedule: pre-fills the dialog and calls updateSchedule # time=343.94ms
+        ok 4 - creates a schedule with enabled true when the modal switch is on # time=559.47ms
+        ok 5 - pre-fills the edit dialog switch from an enabled schedule # time=209.31ms
+        ok 6 - quick-toggles a row through updateSchedule and reloads # time=68.20ms
+        ok 7 - shows the archived indicator when the resolved template is archived # time=40.80ms
+        ok 8 - shows no archived indicator when the resolved template is not archived # time=31.18ms
+        ok 9 - filters schedules by name prefix (trim, case-insensitive, startsWith) # time=219.20ms
+        ok 10 - deletes a schedule only after confirmation # time=88.30ms
+        ok 11 - disables all schedules after confirmation and reloads # time=83.54ms
+        ok 12 - does not disable anything when the confirm dialog is cancelled # time=64.31ms
+        ok 13 - disables the disable-all button when nothing is enabled globally # time=29.68ms
+        ok 14 - blocks a second click while the bulk disable is in flight # time=110.40ms
+        ok 15 - keeps disable-all clickable when only unloaded rows are enabled # time=81.46ms
+        ok 16 - submits max_concurrency on create # time=502.87ms
+        ok 17 - prefills and updates max_concurrency on edit # time=190.78ms
+        ok 18 - supports zero as unlimited # time=628.36ms
+        ok 19 - shows a toast when the concurrency limit is hit # time=36.47ms
+    }
+    ok 2 - SchedulesPage auto-disable badge (TC-29) # time=195.89ms {
+        1..1
+        ok 1 - shows the auto-disabled badge with the consecutive-error tooltip # time=195.73ms
+    }
+}
+EXIT_CODE=0
+
+########################################################################
+# full web suite (regression)
+# command: corepack pnpm --filter web test
+########################################################################
+[2m$ vitest run[22m
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90m/home/rabbir/Projects/dopilot/apps/web[39m
+
+ [32m✓[39m app/(app)/templates/__tests__/templates.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 2368[2mms[22m[39m
+   [33m[2m✓[22m[39m TemplatesPage[2m > [22mdefaults the command from the artifact's first spider on open [33m357[2mms[22m[39m
+   [33m[2m✓[22m[39m TemplatesPage[2m > [22medits a template: pre-fills the dialog and calls updateTemplate [33m356[2mms[22m[39m
+   [33m[2m✓[22m[39m TemplatesPage[2m > [22medit form keeps an archived current binding visible but not a fresh option [33m364[2mms[22m[39m
+   [33m[2m✓[22m[39m TemplatesPage[2m > [22mfilters templates by name prefix (trim, case-insensitive, startsWith) [33m393[2mms[22m[39m
+   [33m[2m✓[22m[39m TemplatesPage[2m > [22mdeletes a template only after confirmation [33m314[2mms[22m[39m
+[90mstderr[2m | app/(app)/maintenance/__tests__/maintenance.test.tsx[2m > [22m[2mMaintenancePage — polling[2m > [22m[2mpolls every 10s and stops after unmount
+[22m[39mAn update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ [32m✓[39m app/(app)/maintenance/__tests__/maintenance.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 2151[2mms[22m[39m
+   [33m[2m✓[22m[39m MaintenancePage — actions[2m > [22mruns sweep-now only after confirmation [33m517[2mms[22m[39m
+ [32m✓[39m components/features/__tests__/log-viewer.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 556[2mms[22m[39m
+ [32m✓[39m app/(app)/schedules/__tests__/schedules.test.tsx [2m([22m[2m20 tests[22m[2m)[22m[33m 6521[2mms[22m[39m
+   [33m[2m✓[22m[39m SchedulesPage[2m > [22medits a schedule: pre-fills the dialog and calls updateSchedule [33m618[2mms[22m[39m
+   [33m[2m✓[22m[39m SchedulesPage[2m > [22mcreates a schedule with enabled true when the modal switch is on [33m888[2mms[22m[39m
+   [33m[2m✓[22m[39m SchedulesPage[2m > [22mpre-fills the edit dialog switch from an enabled schedule [33m316[2mms[22m[39m
+   [33m[2m✓[22m[39m SchedulesPage[2m > [22mfilters schedules by name prefix (trim, case-insensitive, startsWith) [33m361[2mms[22m[39m
+   [33m[2m✓[22m[39m SchedulesPage[2m > [22msubmits max_concurrency on create [33m874[2mms[22m[39m
+   [33m[2m✓[22m[39m SchedulesPage[2m > [22mprefills and updates max_concurrency on edit [33m318[2mms[22m[39m
+   [33m[2m✓[22m[39m SchedulesPage[2m > [22msupports zero as unlimited [33m1039[2mms[22m[39m
+   [33m[2m✓[22m[39m SchedulesPage auto-disable badge (TC-29)[2m > [22mshows the auto-disabled badge with the consecutive-error tooltip [33m426[2mms[22m[39m
+ [32m✓[39m app/(app)/tasks/__tests__/task-detail.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1231[2mms[22m[39m
+   [33m[2m✓[22m[39m TaskDetailPage[2m > [22mcancels an active task after confirmation [33m348[2mms[22m[39m
+[90mstderr[2m | components/layout/__tests__/notification-bell.test.tsx[2m > [22m[2mNotificationBell (TC-28)[2m > [22m[2mshows the unread badge, lists items via i18n, navigates and marks read
+[22m[39mAn update to NotificationBell inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to LocaleSwitch inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ThemeToggle inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to TopControls inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+[90mstderr[2m | components/layout/__tests__/notification-bell.test.tsx[2m > [22m[2mNotificationBell (TC-28)[2m > [22m[2mrenders English copy for every type without missing keys
+[22m[39mAn update to NotificationBell inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to LocaleSwitch inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ThemeToggle inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to TopControls inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ [32m✓[39m components/layout/__tests__/notification-bell.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 1222[2mms[22m[39m
+   [33m[2m✓[22m[39m NotificationBell (TC-28)[2m > [22mshows the unread badge, lists items via i18n, navigates and marks read [33m1017[2mms[22m[39m
+[90mstderr[2m | components/layout/__tests__/notification-bell.test.tsx[2m > [22m[2mNotificationBell (TC-28)[2m > [22m[2mcaps the badge at 99+
+[22m[39mAn update to NotificationBell inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to LocaleSwitch inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ThemeToggle inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to TopControls inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ [32m✓[39m app/(app)/artifacts/__tests__/artifacts.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1077[2mms[22m[39m
+   [33m[2m✓[22m[39m BuildArtifactsPage[2m > [22muploads a selected egg file [33m344[2mms[22m[39m
+ [32m✓[39m app/(app)/tasks/__tests__/tasks.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 3644[2mms[22m[39m
+   [33m[2m✓[22m[39m TasksPage build-artifact filter[2m > [22mshows the build artifact label in the table column (not the spider) [33m776[2mms[22m[39m
+   [33m[2m✓[22m[39m TasksPage build-artifact filter[2m > [22mselecting a build artifact calls listTasks with buildArtifactId [33m801[2mms[22m[39m
+   [33m[2m✓[22m[39m TasksPage build-artifact filter[2m > [22moffers a distinct build-artifact option per known artifact [33m565[2mms[22m[39m
+   [33m[2m✓[22m[39m TasksPage status filter[2m > [22msends status null on the first load (all statuses) [33m332[2mms[22m[39m
+   [33m[2m✓[22m[39m TasksPage status filter[2m > [22mselecting a status calls listTasks with status and resets to page 1 [33m430[2mms[22m[39m
+   [33m[2m✓[22m[39m TasksPage status filter[2m > [22mpreserves status across refresh, pagination, and page-size changes [33m733[2mms[22m[39m
+ [32m✓[39m lib/api/__tests__/client.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 19[2mms[22m[39m
+ [32m✓[39m app/(app)/nodes/__tests__/nodes.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 937[2mms[22m[39m
+   [33m[2m✓[22m[39m NodesPage[2m > [22mrenders a node with a healthy badge and active capability tags [33m401[2mms[22m[39m
+   [33m[2m✓[22m[39m NodesPage[2m > [22mofflines a node only after confirmation [33m317[2mms[22m[39m
+ [32m✓[39m lib/__tests__/nodeSelection.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 28[2mms[22m[39m
+ [32m✓[39m lib/__tests__/format.test.ts [2m([22m[2m8 tests[22m[2m)[22m[90m 31[2mms[22m[39m
+ [32m✓[39m lib/__tests__/scrapyCommand.test.ts [2m([22m[2m9 tests[22m[2m)[22m[90m 11[2mms[22m[39m
+ [32m✓[39m lib/__tests__/templateCommand.test.ts [2m([22m[2m5 tests[22m[2m)[22m[90m 8[2mms[22m[39m
+ [32m✓[39m components/features/__tests__/archived-indicator.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[90m 132[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m15 passed[39m[22m[90m (15)[39m
+[2m      Tests [22m [1m[32m107 passed[39m[22m[90m (107)[39m
+[2m   Start at [22m 20:04:21
+[2m   Duration [22m 23.88s[2m (transform 2.24s, setup 8.89s, collect 11.78s, tests 19.94s, environment 17.24s, prepare 4.11s)[22m
+
+EXIT_CODE=0

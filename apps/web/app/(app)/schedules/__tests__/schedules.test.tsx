@@ -30,6 +30,10 @@ const listTemplates = vi.fn();
 vi.mock("@/lib/api/templates", () => ({ listTemplates: () => listTemplates() }));
 const listNodes = vi.fn();
 vi.mock("@/lib/api/nodes", () => ({ listNodes: () => listNodes() }));
+const toastError = vi.fn();
+vi.mock("sonner", () => ({
+  toast: { error: (m: string) => toastError(m), success: vi.fn() },
+}));
 
 import SchedulesPage from "@/app/(app)/schedules/page";
 
@@ -55,6 +59,7 @@ const schedule: Schedule = {
   name: "demo-schedule",
   description: null,
   enabled: false,
+  max_concurrency: 1,
   execution_template_id: "tpl-1",
   trigger_type: "interval",
   interval_seconds: 60,
@@ -89,6 +94,7 @@ beforeEach(() => {
   updateSchedule.mockReset().mockResolvedValue(schedule);
   listTemplates.mockReset().mockResolvedValue([template]);
   listNodes.mockReset().mockResolvedValue([]);
+  toastError.mockReset();
 });
 
 afterEach(() => vi.clearAllMocks());
@@ -139,6 +145,7 @@ describe("SchedulesPage", () => {
       expect(updateSchedule).toHaveBeenCalledWith("sch-1", {
         name: "demo-schedule",
         enabled: false,
+        max_concurrency: 1,
         execution_template_id: "tpl-1",
         trigger_type: "interval",
         interval_seconds: 60,
@@ -386,6 +393,110 @@ describe("SchedulesPage", () => {
     await user.click(screen.getByTestId("schedule-disable-all"));
     await user.click(screen.getByTestId("confirm-accept"));
     await waitFor(() => expect(disableAllSchedules).toHaveBeenCalledTimes(1));
+  });
+
+  it("submits max_concurrency on create", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("schedule-create")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId("schedule-create"));
+    const input = await screen.findByTestId("schedule-max-concurrency-input");
+    await user.clear(input);
+    await user.type(input, "2");
+    await user.type(screen.getByTestId("schedule-name-input"), "new-schedule");
+    await user.click(screen.getByTestId("schedule-submit"));
+    await waitFor(() =>
+      expect(createSchedule).toHaveBeenCalledWith(
+        expect.objectContaining({ max_concurrency: 2 }),
+      ),
+    );
+  });
+
+  it("prefills and updates max_concurrency on edit", async () => {
+    const user = userEvent.setup();
+    listSchedules.mockResolvedValue(
+      schedulesResponse([{ ...schedule, max_concurrency: 4 }]),
+    );
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("schedule-concurrency-demo-schedule"),
+      ).toHaveTextContent("4"),
+    );
+    await user.click(screen.getByTestId("schedule-edit-demo-schedule"));
+    const input = await screen.findByTestId("schedule-max-concurrency-input");
+    // Pre-filled with the row's own value, not the create-dialog default of 1.
+    expect(input).toHaveValue(4);
+    await user.clear(input);
+    await user.type(input, "3");
+    await user.click(screen.getByTestId("schedule-submit"));
+    await waitFor(() =>
+      expect(updateSchedule).toHaveBeenCalledWith(
+        "sch-1",
+        expect.objectContaining({ max_concurrency: 3 }),
+      ),
+    );
+  });
+
+  it("supports zero as unlimited", async () => {
+    const user = userEvent.setup();
+    listSchedules.mockResolvedValue(
+      schedulesResponse([{ ...schedule, max_concurrency: 0 }]),
+    );
+    renderWithProviders(<SchedulesPage />);
+    // The list must not print a bare 0 for the escape hatch.
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("schedule-concurrency-demo-schedule"),
+      ).toHaveTextContent("Unlimited"),
+    );
+
+    // Editing that row pre-fills 0 rather than coercing it to 1.
+    await user.click(screen.getByTestId("schedule-edit-demo-schedule"));
+    const editInput = await screen.findByTestId(
+      "schedule-max-concurrency-input",
+    );
+    expect(editInput).toHaveValue(0);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // And 0 survives a create submit (a `Number(v) || 1` would send 1).
+    await user.click(screen.getByTestId("schedule-create"));
+    const input = await screen.findByTestId("schedule-max-concurrency-input");
+    await user.clear(input);
+    await user.type(input, "0");
+    await user.type(screen.getByTestId("schedule-name-input"), "unlimited-one");
+    await user.click(screen.getByTestId("schedule-submit"));
+    await waitFor(() =>
+      expect(createSchedule).toHaveBeenCalledWith(
+        expect.objectContaining({ max_concurrency: 0 }),
+      ),
+    );
+  });
+
+  it("shows a toast when the concurrency limit is hit", async () => {
+    const user = userEvent.setup();
+    triggerSchedule.mockRejectedValue({
+      response: {
+        data: {
+          code: "schedule.concurrency_limit",
+          message_key: "errors.scheduleConcurrencyLimit",
+          detail: { active: 1, limit: 1 },
+        },
+      },
+    });
+    renderWithProviders(<SchedulesPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("schedule-trigger-demo-schedule"),
+      ).toBeInTheDocument(),
+    );
+    await user.click(screen.getByTestId("schedule-trigger-demo-schedule"));
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(toastError.mock.calls[0][0]).toContain("1");
+    // Nothing was created, so the page must stay put.
+    expect(push).not.toHaveBeenCalled();
   });
 });
 

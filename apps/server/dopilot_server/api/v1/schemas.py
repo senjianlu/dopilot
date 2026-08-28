@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -276,6 +276,19 @@ class ExecutionTemplatesResponse(BaseModel):
     templates: list[ExecutionTemplateView]
 
 
+def _reject_bool_concurrency(value: Any) -> Any:
+    """Refuse bools for ``max_concurrency`` BEFORE Pydantic coerces them.
+
+    Pydantic's lax mode turns JSON ``true``/``false`` into ``1``/``0``, and ``0``
+    is the "unlimited" sentinel — a mistyped ``false`` would silently disable the
+    concurrency gate. Rejecting here yields the framework's 422; out-of-range
+    integers stay the service layer's structured 400.
+    """
+    if isinstance(value, bool):
+        raise ValueError("max_concurrency must be an integer, not a boolean")
+    return value
+
+
 class ScheduleView(BaseModel):
     """A timer referencing one execution template (interval or cron)."""
 
@@ -285,6 +298,8 @@ class ScheduleView(BaseModel):
     # Phase 2.2: row-level timer gate (default false). Disabled schedules stay
     # listable/editable and remain manually runnable via trigger-now.
     enabled: bool = False
+    # Concurrency gate (decision 0022): max ACTIVE tasks; 0 = unlimited.
+    max_concurrency: int = 1
     execution_template_id: str
     trigger_type: str = "interval"  # interval | cron
     interval_seconds: int | None = None
@@ -308,11 +323,18 @@ class ScheduleCreateRequest(BaseModel):
     description: str | None = None
     # Phase 2.2: new schedules default disabled; pass true to enable timer firing.
     enabled: bool = False
+    # Concurrency gate (decision 0022). Range is validated in the service layer
+    # (structured 400) so API and direct-service callers share one contract.
+    max_concurrency: int = 1
     execution_template_id: str
     trigger_type: str = "interval"
     interval_seconds: int | None = None
     cron: str | None = None
     overrides: RunOverrides | None = None
+
+    _no_bool_concurrency = field_validator("max_concurrency", mode="before")(
+        _reject_bool_concurrency
+    )
 
 
 class ScheduleUpdateRequest(BaseModel):
@@ -320,11 +342,16 @@ class ScheduleUpdateRequest(BaseModel):
     description: str | None = None
     # Phase 2.2: patched only when provided (PUT carries exclude_unset).
     enabled: bool | None = None
+    max_concurrency: int | None = None
     execution_template_id: str | None = None
     trigger_type: str | None = None
     interval_seconds: int | None = None
     cron: str | None = None
     overrides: RunOverrides | None = None
+
+    _no_bool_concurrency = field_validator("max_concurrency", mode="before")(
+        _reject_bool_concurrency
+    )
 
 
 class SchedulesResponse(BaseModel):

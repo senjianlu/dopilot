@@ -175,6 +175,12 @@ const en = {
     cancel: "Cancel",
     createError: "Create failed",
     triggerError: "Trigger failed",
+    maxConcurrency: "Max concurrency",
+    maxConcurrencyHint:
+      "How many tasks this schedule may run at once; manual triggers count too. 0 means unlimited.",
+    unlimited: "Unlimited",
+    concurrencyLimitHit:
+      "Concurrency limit reached ({{active}} running / limit {{limit}}); nothing was triggered.",
     invalidCommand: "Invalid command override",
     intervalType: "Interval",
     cronType: "Cron",
@@ -265,6 +271,14 @@ const en = {
     waiting: "Waiting for logs…",
     complete: "Complete",
     error: "Log stream connection failed",
+    copy: "Copy",
+    // Scope matters: the live stream replays only a tail on first paint, so this
+    // copies what the window currently holds, not the whole log file.
+    copyHint: "Copy the log content currently loaded in this view",
+    copied: "Copied to clipboard",
+    copyFailed: "Copy failed",
+    copyUnavailable:
+      "Clipboard is unavailable in this context (needs HTTPS or localhost)",
   },
   maintenance: {
     title: "Maintenance",
@@ -420,6 +434,10 @@ const en = {
     invalidCutoff: "Invalid cutoff timestamp",
     cutoffRequired: "A cutoff (older_than_days or before) is required",
     redisUnavailable: "Redis is unavailable",
+    invalidMaxConcurrency:
+      "Invalid max concurrency (must be an integer between 0 and 2147483647)",
+    scheduleConcurrencyLimit: "This schedule is at its concurrency limit",
+    scheduleNotFound: "Schedule not found",
   },
 } as const;
 

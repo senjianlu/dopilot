@@ -123,6 +123,17 @@ class Schedule(Base):
     enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
+    # Concurrency gate (decision 0022): how many of this schedule's tasks may be
+    # ACTIVE (queued/running/finalizing) at once. Timer firings AND manual
+    # trigger-now share this one quota. 0 disables the gate (unlimited — the
+    # pre-0022 behaviour, kept as an escape hatch). Server default 1 in
+    # migration 0014, so existing rows are backfilled to 1. The upper bound is
+    # the signed 32-bit Integer column max; service-level validation rejects
+    # anything outside 0..2147483647 with a structured 400 rather than letting
+    # the INSERT blow up.
+    max_concurrency: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1
+    )
     execution_template_id: Mapped[str] = mapped_column(
         String(32),
         ForeignKey("execution_templates.id"),
