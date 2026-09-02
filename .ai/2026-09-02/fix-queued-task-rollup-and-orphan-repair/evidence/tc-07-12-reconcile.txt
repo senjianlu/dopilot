@@ -1,0 +1,19 @@
+$ .venv/bin/python -m pytest apps/server/tests/test_reconcile_redis.py -v --color=no -k "test_orphan_all_terminal_rolls_up_with_execution_timeline or test_orphan_rollup_precedence_failed_over_finished or test_orphan_not_selected_while_an_execution_is_active or test_orphan_zero_execution_respects_observation_window or test_orphan_terminal_tasks_untouched_and_repair_is_idempotent or test_orphan_repair_and_outcome_recorded_in_same_tick"
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 12 items / 6 deselected / 6 selected
+
+apps/server/tests/test_reconcile_redis.py::test_orphan_all_terminal_rolls_up_with_execution_timeline PASSED [ 16%]
+apps/server/tests/test_reconcile_redis.py::test_orphan_rollup_precedence_failed_over_finished PASSED [ 33%]
+apps/server/tests/test_reconcile_redis.py::test_orphan_not_selected_while_an_execution_is_active PASSED [ 50%]
+apps/server/tests/test_reconcile_redis.py::test_orphan_zero_execution_respects_observation_window PASSED [ 66%]
+apps/server/tests/test_reconcile_redis.py::test_orphan_terminal_tasks_untouched_and_repair_is_idempotent PASSED [ 83%]
+apps/server/tests/test_reconcile_redis.py::test_orphan_repair_and_outcome_recorded_in_same_tick PASSED [100%]
+
+======================= 6 passed, 6 deselected in 0.45s ========================
+exit=0

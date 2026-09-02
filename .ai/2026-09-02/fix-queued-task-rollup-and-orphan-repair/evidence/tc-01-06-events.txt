@@ -1,0 +1,21 @@
+$ .venv/bin/python -m pytest apps/server/tests/test_event_consumer.py -v --color=no -k "test_finished_without_running_rolls_queued_task_to_complete or test_failed_without_running_rolls_queued_task_to_failed or test_canceled_without_running_rolls_queued_task_to_canceled or test_lost_without_running_then_override_rerolls_complete or test_running_then_finished_keeps_started_at_from_running or test_fan_out_converges_on_first_terminal_completes_on_last or test_running_converges_task_and_is_idempotent or test_running_then_finished_rolls_up_complete"
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 20 items / 12 deselected / 8 selected
+
+apps/server/tests/test_event_consumer.py::test_running_converges_task_and_is_idempotent PASSED [ 12%]
+apps/server/tests/test_event_consumer.py::test_running_then_finished_rolls_up_complete PASSED [ 25%]
+apps/server/tests/test_event_consumer.py::test_finished_without_running_rolls_queued_task_to_complete PASSED [ 37%]
+apps/server/tests/test_event_consumer.py::test_failed_without_running_rolls_queued_task_to_failed PASSED [ 50%]
+apps/server/tests/test_event_consumer.py::test_canceled_without_running_rolls_queued_task_to_canceled PASSED [ 62%]
+apps/server/tests/test_event_consumer.py::test_lost_without_running_then_override_rerolls_complete PASSED [ 75%]
+apps/server/tests/test_event_consumer.py::test_running_then_finished_keeps_started_at_from_running PASSED [ 87%]
+apps/server/tests/test_event_consumer.py::test_fan_out_converges_on_first_terminal_completes_on_last PASSED [100%]
+
+======================= 8 passed, 12 deselected in 0.50s =======================
+exit=0

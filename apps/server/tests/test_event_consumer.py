@@ -82,6 +82,11 @@ async def _reload(session, execution):
     ).scalar_one()
 
 
+def _utc(value):
+    """Normalise a (possibly naive, SQLite-reloaded) datetime to aware UTC."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 async def _reload_task(session, task_id):
     return (
         await session.execute(select(Task).where(Task.id == task_id))
@@ -349,3 +354,101 @@ async def test_event_consumer_drains_stream(db_session, fake_redis, test_session
         assert (await _reload(s, execution)).status == FINISHED
         assert (await _reload_task(s, task.id)).status == states.TASK_COMPLETE
     assert await fake.pending_count(EVENT_STREAM, EVENT_GROUP) == 0
+
+
+# ---- task convergence on a terminal that arrives without a running event ----
+# (rawf 2026-09-02/fix-queued-task-rollup-and-orphan-repair, TC-01 .. TC-06)
+
+
+async def test_finished_without_running_rolls_queued_task_to_complete(db_session):
+    # TC-01: the running event was lost (2026-08-26 incident shape): the FIRST
+    # event applied to a pending execution is ``finished``. The task must
+    # converge queued -> running -> complete instead of sticking in queued.
+    task, execution = await _seed(db_session)
+    out = await _apply(db_session, AgentEventType.finished, execution, "m1", exit_code=0)
+    assert out == OUTCOME_APPLIED
+    e = await _reload(db_session, execution)
+    assert e.status == FINISHED and e.started_at is not None
+    t = await _reload_task(db_session, task.id)
+    assert t.status == states.TASK_COMPLETE
+    assert t.started_at is not None and t.started_at == e.started_at
+    assert t.finished_at is not None
+
+
+async def test_failed_without_running_rolls_queued_task_to_failed(db_session):
+    # TC-02
+    task, execution = await _seed(db_session)
+    await _apply(
+        db_session, AgentEventType.failed, execution, "m1", error_code="spawn_aborted"
+    )
+    assert (await _reload(db_session, execution)).status == states.EXEC_FAILED
+    t = await _reload_task(db_session, task.id)
+    assert t.status == states.TASK_FAILED and t.started_at is not None
+
+
+async def test_canceled_without_running_rolls_queued_task_to_canceled(db_session):
+    # TC-03
+    task, execution = await _seed(db_session)
+    await _apply(db_session, AgentEventType.canceled, execution, "m1")
+    assert (await _reload(db_session, execution)).status == states.EXEC_CANCELED
+    t = await _reload_task(db_session, task.id)
+    assert t.status == states.TASK_CANCELED and t.started_at is not None
+
+
+async def test_lost_without_running_then_override_rerolls_complete(db_session):
+    # TC-04: agent-reported lost straight from pending -> task lost; the later
+    # authoritative finished overrides it -> task re-rolls to complete (the
+    # convergence change must not disturb the lost re-roll path).
+    task, execution = await _seed(db_session)
+    out1 = await _apply(
+        db_session, AgentEventType.lost, execution, "m1",
+        lost_reason=LostReason.state_missing,
+    )
+    assert out1 == OUTCOME_APPLIED
+    assert (await _reload(db_session, execution)).status == LOST
+    assert (await _reload_task(db_session, task.id)).status == states.TASK_LOST
+
+    out2 = await _apply(db_session, AgentEventType.finished, execution, "m2", exit_code=0)
+    assert out2 == OUTCOME_OVERRIDE_LOST
+    e = await _reload(db_session, execution)
+    assert e.status == FINISHED and e.reconciled_from == "lost"
+    assert (await _reload_task(db_session, task.id)).status == states.TASK_COMPLETE
+
+
+async def test_running_then_finished_keeps_started_at_from_running(db_session):
+    # TC-05: the ordinary path — started_at is set by the running event and is
+    # NOT overwritten by the later terminal.
+    task, execution = await _seed(db_session)
+    await _apply(db_session, AgentEventType.running, execution, "m1", remote_job_id="job-1")
+    t1 = await _reload_task(db_session, task.id)
+    assert t1.status == states.TASK_RUNNING and t1.started_at is not None
+    started_at = t1.started_at
+
+    await _apply(db_session, AgentEventType.finished, execution, "m2", exit_code=0)
+    t2 = await _reload_task(db_session, task.id)
+    assert t2.status == states.TASK_COMPLETE
+    # SQLite hands back naive datetimes on reload; compare on the UTC wall clock.
+    assert _utc(t2.started_at) == _utc(started_at)
+    assert t2.finished_at is not None and _utc(t2.finished_at) >= _utc(started_at)
+
+
+async def test_fan_out_converges_on_first_terminal_completes_on_last(db_session):
+    # TC-06: two pending executions (fan-out). The first terminal converges the
+    # task to running (the other is still pending -> no roll-up); the second
+    # terminal completes it.
+    task, e1 = await _seed(db_session)
+    e2 = Execution(
+        id=new_id(), task_id=task.id, agent_id="agent-2",
+        status=states.EXEC_PENDING, error_detail={},
+    )
+    db_session.add(e2)
+    await db_session.commit()
+
+    await _apply(db_session, AgentEventType.finished, e1, "m1", exit_code=0)
+    t = await _reload_task(db_session, task.id)
+    assert t.status == states.TASK_RUNNING and t.started_at is not None
+    assert t.finished_at is None
+
+    await _apply(db_session, AgentEventType.finished, e2, "m2", exit_code=0)
+    t = await _reload_task(db_session, task.id)
+    assert t.status == states.TASK_COMPLETE and t.finished_at is not None

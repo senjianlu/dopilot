@@ -1,0 +1,15 @@
+$ DOPILOT_TEST_DATABASE_URL='postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot' .venv/bin/python -m pytest apps/server/tests/test_reconcile_orphans_pg.py -v --color=no
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 2 items
+
+apps/server/tests/test_reconcile_orphans_pg.py::test_orphan_repair_on_postgres PASSED [ 50%]
+apps/server/tests/test_reconcile_orphans_pg.py::test_orphan_repair_yields_to_concurrent_terminal_writer PASSED [100%]
+
+============================== 2 passed in 1.21s ===============================
+exit=0

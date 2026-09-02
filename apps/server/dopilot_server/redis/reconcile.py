@@ -47,6 +47,11 @@ logger = logging.getLogger(__name__)
 
 LOST_HEARTBEAT_TIMEOUT = "heartbeat_timeout"
 LOST_EVENT_STALL = "event_stall"
+# Task-level repair (orphaned active tasks, see ``repair_orphaned_tasks``):
+# ``status_reason`` of a zero-execution task forced to ``lost``, and the
+# ``status_detail`` sub-key that records any repair for audit.
+ORPHAN_NO_EXECUTION = "no_execution"
+REPAIR_KEY = "reconcile_repair"
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -62,6 +67,10 @@ class ReconcileReport:
     stalled: int = 0
     reclaim_stops: int = 0
     lost_execution_ids: list[str] = field(default_factory=list)
+    # Task-level repair counters (``repair_orphaned_tasks``).
+    orphan_rolled_up: int = 0
+    orphan_lost: int = 0
+    repaired_task_ids: list[str] = field(default_factory=list)
 
 
 async def _rollup(session: AsyncSession, task_id: str, now: datetime) -> None:
@@ -188,6 +197,111 @@ async def reconcile_once(
             execution.stalled_at = now  # one-shot operator-visible alert
             report.stalled += 1
 
+    await repair_orphaned_tasks(session, settings, now=now, report=report)
+    return report
+
+
+async def repair_orphaned_tasks(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    now: datetime | None = None,
+    report: ReconcileReport | None = None,
+) -> ReconcileReport:
+    """Task-level repair: an ACTIVE task with NO active execution is an orphan.
+
+    The execution-driven pass above only ever sees active executions, so a
+    task whose executions are all terminal but which never rolled up (the
+    2026-08-26 incident: a ``finished`` event applied to a still-``queued``
+    task, whose state machine has no ``queued -> complete`` edge) was invisible
+    to every existing safety net — it stayed active forever and, since decision
+    0022, held a concurrency slot of its schedule. Two shapes, both repaired
+    under the terminal-writer protocol (lock the task row, re-read under it):
+
+    - executions present and all terminal -> ``converge_task`` (queued ->
+      running) then the ordinary roll-up (``rollup_task_status`` precedence);
+      ``started_at`` / ``finished_at`` mirror the executions' own timeline;
+    - zero executions (a legacy / anomalous row: today creation writes task +
+      executions in one transaction or sets ``no_target`` up front) -> after an
+      observation window of ``agents.lost_after_stalled_seconds`` force
+      ``lost(no_execution)`` — the same disposition ``mark_task_lost`` applies.
+
+    The candidate query is SQL-side (``status IN active AND NOT EXISTS active
+    execution``), so the per-tick cost is bounded by the handful of active
+    tasks. Each repair is audited in ``status_detail[REPAIR_KEY]`` and logged
+    at warning level. Idempotent: a repaired task is terminal and never
+    selected again. The caller commits.
+    """
+    now = now or datetime.now(UTC)
+    report = report if report is not None else ReconcileReport()
+    threshold = timedelta(seconds=settings.agents.lost_after_stalled_seconds)
+    active_execution = (
+        select(Execution.id)
+        .where(
+            Execution.task_id == Task.id,
+            Execution.status.in_(tuple(states.EXEC_ACTIVE)),
+        )
+        .exists()
+    )
+    candidate_ids = (
+        (
+            await session.execute(
+                select(Task.id)
+                .where(Task.status.in_(tuple(states.TASK_ACTIVE)), ~active_execution)
+                .order_by(Task.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for task_id in candidate_ids:
+        # Terminal-writer protocol: lock the task row and re-check under the
+        # lock — a concurrent terminal writer (event consumer / mark_lost /
+        # dispatch timeout / cancel) that committed first wins and we skip.
+        task = await svc.get_task(session, task_id, for_update=True)
+        if task is None or task.status not in states.TASK_ACTIVE:
+            continue
+        executions = await svc.list_executions(session, task_id)
+        if any(e.status in states.EXEC_ACTIVE for e in executions):
+            continue  # became active meanwhile: the execution pass owns it
+        before = task.status
+        if executions:
+            svc.converge_task(task, executions, now)
+            rolled = states.rollup_task_status([e.status for e in executions])
+            if rolled is None or not states.is_valid_task_transition(
+                task.status, rolled
+            ):
+                continue  # defensive: unreachable once converged
+            task.status = rolled
+            finished = [e.finished_at for e in executions if e.finished_at is not None]
+            task.finished_at = max(finished) if finished else now
+            report.orphan_rolled_up += 1
+        else:
+            created = _aware(task.created_at)
+            if created is None or (now - created) < threshold:
+                continue  # young zero-execution row: leave it alone
+            task.status = states.TASK_LOST
+            task.status_reason = ORPHAN_NO_EXECUTION
+            task.finished_at = now
+            report.orphan_lost += 1
+        task.status_detail = {
+            **(task.status_detail or {}),
+            REPAIR_KEY: {
+                "from": before,
+                "to": task.status,
+                "reason": "no_active_execution",
+                "executions": len(executions),
+                "repaired_at": now.isoformat(),
+            },
+        }
+        report.repaired_task_ids.append(task_id)
+        logger.warning(
+            "task %s repaired by reconcile: %s -> %s (no active execution, %d execution(s))",
+            task_id,
+            before,
+            task.status,
+            len(executions),
+        )
     return report
 
 

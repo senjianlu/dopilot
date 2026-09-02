@@ -200,6 +200,33 @@ def mark_no_target(
     return task
 
 
+def converge_task(task: Task, executions: list[Execution], now: datetime) -> bool:
+    """``queued`` task -> ``running`` once ANY execution has left ``pending``.
+
+    Covers the ``dispatch_unknown`` convergence path (a ``running`` event) AND a
+    terminal that arrives WITHOUT a preceding ``running`` (the running event was
+    lost — 2026-08-26 incident): the task state machine has no
+    ``queued -> complete`` edge, so a task must pass through ``running`` before
+    any roll-up to ``complete`` can apply. Without this a queued task whose only
+    execution went ``pending -> finished`` stayed ``queued`` forever.
+
+    ``started_at`` = the earliest ``started_at`` among the executions that left
+    pending (falls back to ``now``), so the task timeline mirrors the real run
+    rather than the moment the server noticed. Pure in-memory: the caller holds
+    the task row lock and commits. Returns True iff the task was converged.
+    """
+    if task.status != states.TASK_QUEUED:
+        return False
+    started = [e for e in executions if e.status != states.EXEC_PENDING]
+    if not started:
+        return False
+    task.status = states.TASK_RUNNING
+    if task.started_at is None:
+        known = [e.started_at for e in started if e.started_at is not None]
+        task.started_at = min(known) if known else now
+    return True
+
+
 def create_execution(
     session: AsyncSession, task: Task, node: Node
 ) -> Execution:
