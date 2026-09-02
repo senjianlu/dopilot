@@ -50,8 +50,6 @@ from .states import (
     EXEC_RUNNING,
     EXEC_TERMINAL,
     TASK_LOST,
-    TASK_QUEUED,
-    TASK_RUNNING,
     TASK_TERMINAL,
 )
 
@@ -152,14 +150,13 @@ async def _update_task(
     task = await svc.get_task(session, execution.task_id, for_update=True)
     if task is None:
         return
-    # convergence: a running execution moves a still-queued task to running.
-    if execution.status == EXEC_RUNNING and task.status == TASK_QUEUED:
-        task.status = TASK_RUNNING
-        if task.started_at is None:
-            task.started_at = now
+    executions = await svc.list_executions(session, task.id)
+    # convergence: any execution that left ``pending`` (running OR a terminal
+    # that arrived without a preceding running event) moves a still-queued task
+    # to running — the state machine requires it before a roll-up to complete.
+    svc.converge_task(task, executions, now)
     # rollup: all executions terminal -> task terminal. A `lost` task is a soft
     # terminal: re-roll it when its execution is overridden to a hard terminal.
-    executions = await svc.list_executions(session, task.id)
     rolled = states.rollup_task_status([e.status for e in executions])
     rerollable = task.status not in TASK_TERMINAL or task.status == TASK_LOST
     if (

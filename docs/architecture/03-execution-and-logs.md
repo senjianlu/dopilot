@@ -53,6 +53,23 @@ coalesce 抑制同源堆积。取消先 CAS 置未 sent outbox 为 `canceled`，
   收敛为「agent 在线但持续无法确认该 attempt 存活」——
   `lost_after_stalled_seconds`（默认 3600）**不再是任务运行时长上限**,
   健康长任务可运行任意时长。
+- **task 收敛与 roll-up**:event consumer 应用事件后,只要该 task 名下**任一
+  execution 离开了 `pending`**(收到 `running`,或 `running` 事件丢失后直接
+  收到终态),仍为 `queued` 的 task 先收敛到 `running`(`started_at` 取
+  executions 最早的 `started_at`),再按 executions 全终态 roll-up。task 状态机
+  不放宽:`queued` 没有到 `complete` 的边,必须经 `running`——2026-08-26 事故
+  中 `running` 事件丢失、终态直达时,旧的"仅 running 事件收敛"逻辑让 roll-up
+  被状态机拒绝,task 永久停在 `queued`。
+- **task 级孤儿修复**:reconcile loop 每 tick 在 execution 对账之后,再扫一遍
+  「活动态 task 且名下**没有任何活动 execution**」(`status IN active AND NOT
+  EXISTS`,候选只有个位数量级的活动态行),在 task 行锁下复核后修复:executions
+  全终态 → 收敛 + roll-up 到真实终态(时间线取自 executions);零 execution 且
+  创建超过 `lost_after_stalled_seconds` → `lost(no_execution)`(与维护页
+  「标记 lost」对零 execution 的处置一致)。修复写入
+  `status_detail.reconcile_repair`(from/to/原因/时间)并记一行 warning 日志,
+  不发通知;修复后的终态 task 在同一 tick 进入结果记录。这是 execution 驱动
+  对账之外唯一的 task 级一致性出口,也是 0022 并发闸不被卡死任务永久占额度的
+  保证。
 - agent 恢复后先 reconcile（进程仍在 → 重发 `attempt.running`，server 先
   stop 再清理;有真实终态 → outbox 补发;无法判定 → 上报 lost），避免删掉
   仍活跃 attempt 的日志/状态文件。心跳到达 server 侧已标 `lost` 的
