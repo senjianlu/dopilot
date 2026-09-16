@@ -1,0 +1,66 @@
+# Twisted 线程池:工作线程非守护、stop() 无超时 join(卡住的工作线程会让 reactor 停机时一直等,进程退不出)
+$ python -c 'import twisted; print(twisted.__version__)'   # 生产 job 日志同为 Twisted 26.4.0
+26.4.0
+$ sed -n '60,66p;92,101p;290,301p' twisted/python/threadpool.py
+    max = 20
+    joined = False
+    started = False
+    name = None
+
+    threadFactory = Thread
+    currentThread = staticmethod(
+        self.max = maxthreads
+        self.name = name
+        self.threads: list[Thread] = []
+
+        def trackingThreadFactory(*a: Any, **kw: Any) -> Thread:
+            thread = self.threadFactory(  # type: ignore[misc]
+                *a, name=self._generateName(), **kw
+            )
+            self.threads.append(thread)
+            return thread
+        self._team.do(inContext)
+
+    def stop(self) -> None:
+        """
+        Shutdown the threads in the threadpool.
+        """
+        self.joined = True
+        self.started = False
+        self._team.quit()
+        for thread in self.threads:
+            thread.join()
+
+$ sed -n '1143,1173p' twisted/internet/base.py
+        def _initThreadPool(self) -> None:
+            """
+            Create the threadpool accessible with callFromThread.
+            """
+            self.threadpool = ThreadPool(0, 10, "twisted.internet.reactor")
+            self._threadpoolStartupID = self.callWhenRunning(self.threadpool.start)
+            self.threadpoolShutdownID = self.addSystemEventTrigger(
+                "during", "shutdown", self._stopThreadPool
+            )
+
+        def _uninstallHandler(self) -> None:
+            self._signals.uninstall()
+
+        def _stopThreadPool(self) -> None:
+            """
+            Stop the reactor threadpool.  This method is only valid if there
+            is currently a threadpool (created by L{_initThreadPool}).  It
+            is not intended to be called directly; instead, it will be
+            called by a shutdown trigger created in L{_initThreadPool}.
+            """
+            triggers = [self._threadpoolStartupID, self.threadpoolShutdownID]
+            for trigger in filter(None, triggers):
+                try:
+                    self.removeSystemEventTrigger(trigger)
+                except ValueError:
+                    pass
+            self._threadpoolStartupID = None
+            self.threadpoolShutdownID = None
+            assert self.threadpool is not None
+            self.threadpool.stop()
+            self.threadpool = None
+exit=0
