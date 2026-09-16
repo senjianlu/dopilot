@@ -1,0 +1,11 @@
+$ .venv/bin/ruff check apps packages
+[1;32mAll checks passed![0m
+exit=0
+
+$ corepack pnpm -C apps/web lint
+[2m$ eslint .[22m
+exit=0
+
+$ corepack pnpm -C apps/web typecheck
+[2m$ tsc --noEmit[22m
+exit=0

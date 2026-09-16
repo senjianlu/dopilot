@@ -36,6 +36,7 @@ SEVERITY_RANK = {SEVERITY_INFO: 0, SEVERITY_WARNING: 1, SEVERITY_ERROR: 2}
 TYPE_SCHEDULE_AUTO_DISABLED = "schedule_auto_disabled"
 TYPE_LOG_TRUNCATED = "log_truncated"
 TYPE_LOG_FLOOD = "log_flood"
+TYPE_ATTEMPT_NO_PROGRESS = "attempt_no_progress"
 TYPE_REDIS_STREAM_OVER_BUDGET = "redis_stream_over_budget"
 TYPE_LOGS_DIR_OVER_BUDGET = "logs_dir_over_budget"
 TYPE_STALE_COMMAND_STREAMS_DELETED = "stale_command_streams_deleted"

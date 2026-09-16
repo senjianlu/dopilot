@@ -107,6 +107,27 @@ stalled_attempt_seconds = 300
 # a task runtime cap. Keep it well above the agent's
 # attempt_heartbeat_interval_seconds.
 lost_after_stalled_seconds = 3600
+# No-progress detection. Answers the question the heartbeat cannot: scrapyd
+# keeps listing a spider wedged in its shutdown, so an attempt can look alive
+# for hours while doing nothing -- and hold its schedule's concurrency slot the
+# whole time. Here the signal is the job log's size: alive but not growing.
+#
+# Alert-only by default. It never marks an attempt lost and never touches the
+# reclaim path above, so a false positive costs you one notification.
+#
+# no_progress_stall_seconds: idle time before alerting. 0 disables the feature.
+#   Set it FAR above your slowest healthy run -- a run cut short for being quiet
+#   is indistinguishable from a real failure, and repeated failures auto-disable
+#   the schedule.
+no_progress_stall_seconds = 1800
+# no_progress_sample_max_age_seconds: how recent the agent's last log-size
+#   reading must be for a verdict to mean anything. Once readings stop arriving
+#   we are blind rather than watching a stall, and blind must stay silent.
+no_progress_sample_max_age_seconds = 300
+# auto_stop_on_no_progress: opt-in. false only notifies you; true actually
+#   cancels the task (TERM, then KILL, then confirmation). Run it in
+#   alert-only mode for a while first and check what it would have killed.
+auto_stop_on_no_progress = false
 # The single server<->agent machine token (phase 2.2.3). It MUST match the
 # agent's [agent].agent_token. The agent presents it on its outbound calls
 # (agent -> server heartbeat + artifact/wheel fetch) and the server validates

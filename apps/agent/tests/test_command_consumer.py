@@ -448,6 +448,10 @@ async def test_stop_cancel_clears_heartbeat_stamp(workdir, fake_redis):
     await fake.xadd(STREAM, to_stream_entry(_stop_cmd(StopIntent.cancel)))
     await consumer.drain_once()
     assert consumer._last_attempt_heartbeat == {}
+    # The stop only records its intent and fires TERM; the terminal comes from
+    # the tick loop once the job is confirmed gone (waiting inline would block
+    # every other execution's heartbeat for the whole confirmation window).
+    await consumer.reconcile_started_attempts()
     assert (await _event_types(fake))[-1] == AgentEventType.canceled
 
 
@@ -561,6 +565,7 @@ async def test_stop_cancel_after_running_emits_canceled(workdir, fake_redis):
     await consumer.drain_once()
     await fake.xadd(STREAM, to_stream_entry(_stop_cmd(StopIntent.cancel)))
     await consumer.drain_once(claim_pending=False)
+    await consumer.reconcile_started_attempts()  # confirms the exit, then reports
 
     assert AgentEventType.canceled in await _event_types(fake)
     assert store.read("a1").result == "canceled"
@@ -578,6 +583,7 @@ async def test_stop_reclaim_running_kills_stays_lost(workdir, fake_redis):
 
     await fake.xadd(STREAM, to_stream_entry(_stop_cmd(StopIntent.reclaim)))
     await consumer.drain_once(claim_pending=False)
+    await consumer.reconcile_started_attempts()  # confirms the exit, then reports
 
     # process killed, attempt stays lost (NO canceled event emitted by reclaim)
     assert len(scrapyd.running) == 0

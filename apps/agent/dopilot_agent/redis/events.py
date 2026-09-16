@@ -248,7 +248,13 @@ class EventPublisher:
             )
         )
 
-    async def emit_heartbeat(self, task_id: str, execution_id: str) -> bool:
+    async def emit_heartbeat(
+        self,
+        task_id: str,
+        execution_id: str,
+        *,
+        log_bytes: int | None = None,
+    ) -> bool:
         """Publish a liveness heartbeat; returns True iff the XADD succeeded.
 
         Deliberately NOT durable (no on-disk outbox): a heartbeat is a
@@ -256,11 +262,19 @@ class EventPublisher:
         would replay stale liveness later and crowd real state events out of
         the capped outbox (C5). On failure it is dropped and the caller's next
         reconcile pass retries.
+
+        ``log_bytes`` carries this tick's job.log size so the server can tell
+        "the process is alive" from "the process is doing something": a
+        heartbeat only proves scrapyd still lists the job, which stays true for
+        a spider wedged in its close phase. ``None`` means we could not sample
+        (no readable log / wheel runner) and the server must then not judge
+        progress at all.
         """
         event = self._event(
             task_id=task_id,
             execution_id=execution_id,
             type=AgentEventType.heartbeat,
+            log_bytes=log_bytes,
         )
         try:
             await self._redis.xadd(
@@ -323,6 +337,16 @@ class EventPublisher:
                 task_id, execution_id, AgentEventType.failed,
                 error_code="spawn_aborted", lost_reason=LostReason.spawn_aborted,
             )
+            return
+        if state.phase == "started" and state.stop_requested_at:
+            # A stop is mid-flight and the tick loop owns this execution's
+            # terminal. Emitting anything here would race that single exit:
+            # once TERM lands and the job leaves scrapyd's lists, the runner
+            # reports ``canceled`` (its own ``mark_canceled``, not an
+            # authoritative terminal), so a re-delivered run would publish
+            # ``canceled`` and overwrite a reclaim's ``lost``. Staying silent is
+            # safe because the stop machine has a hard deadline and always
+            # produces a terminal.
             return
         if state.phase == "done" and state.result in _RESULT_TO_EVENT:
             lost_reason = (

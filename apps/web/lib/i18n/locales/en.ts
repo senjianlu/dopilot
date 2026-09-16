@@ -216,6 +216,11 @@ const en = {
         title: "Schedule \"{{schedule_name}}\" was disabled automatically",
         body: "{{consecutive_errors}} consecutive erroneous runs reached the threshold ({{threshold}}). Fix the spider, then re-enable the schedule.",
       },
+      attempt_no_progress: {
+        title: "Execution made no progress",
+        body: "Execution {{execution_id}} has written no log for {{idle_seconds}}s (threshold {{threshold}}s); the log is stuck at {{log_bytes}} bytes. The process is still running on {{agent_id}} and still holds its schedule's concurrency slot.",
+        body_stopped: "Execution {{execution_id}} has written no log for {{idle_seconds}}s (threshold {{threshold}}s); the log is stuck at {{log_bytes}} bytes, so the task was cancelled automatically as configured.",
+      },
       log_flood: {
         title: "Log flood: execution stopped",
         body: "Execution {{execution_id}} on {{agent_id}} wrote {{log_bytes}} bytes (cap {{cap}}) and was cancelled.",

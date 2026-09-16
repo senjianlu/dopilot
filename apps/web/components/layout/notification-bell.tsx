@@ -46,6 +46,7 @@ export function notificationHref(item: NotificationItem): string | null {
       const id = typeof p.schedule_id === "string" ? p.schedule_id : "";
       return id ? `/schedules?highlight=${encodeURIComponent(id)}` : "/schedules";
     }
+    case "attempt_no_progress":
     case "log_flood":
     case "log_truncated": {
       const id = typeof p.task_id === "string" ? p.task_id : "";
@@ -148,6 +149,13 @@ export function NotificationBell() {
       count: item.count,
       defaultValue: "",
     } as Record<string, unknown>;
+    // i18next context suffix: a notification whose payload says the task was
+    // stopped for the user reads as a different sentence than one that only
+    // reports the condition, and `<key>.body_stopped` keeps both in the locale
+    // file instead of assembling them here.
+    if (item.payload?.auto_stopped === true) {
+      vars.context = "stopped";
+    }
     const title = t(`${key}.title`, { ...vars, defaultValue: item.type });
     const body = t(`${key}.body`, { ...vars, defaultValue: "" });
     return { title, body };

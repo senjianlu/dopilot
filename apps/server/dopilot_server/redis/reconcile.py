@@ -31,9 +31,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..config.settings import Settings
 from ..models.execution import Execution, ExecutionLogFile, Task
 from ..models.node import Node
+from ..models.notification import (
+    SEVERITY_WARNING,
+    TYPE_ATTEMPT_NO_PROGRESS,
+)
 from ..services import executions as svc
 from ..services import outbox as outbox_svc
 from ..services import states
+from ..services.notifications import notify
 from ..services.outcomes import record_task_outcomes
 
 # Agent-authoritative terminals — safe to clean up (the process is known done).
@@ -65,6 +70,7 @@ class ReconcileReport:
     heartbeat_lost: int = 0
     event_stall_lost: int = 0
     stalled: int = 0
+    no_progress: int = 0
     reclaim_stops: int = 0
     lost_execution_ids: list[str] = field(default_factory=list)
     # Task-level repair counters (``repair_orphaned_tasks``).
@@ -143,6 +149,9 @@ async def reconcile_once(
     hb_timeout = settings.agents.heartbeat_timeout_seconds
     stall = settings.agents.stalled_attempt_seconds
     lost_after = settings.agents.lost_after_stalled_seconds
+    no_progress_after = settings.agents.no_progress_stall_seconds
+    sample_max_age = settings.agents.no_progress_sample_max_age_seconds
+    auto_stop_no_progress = settings.agents.auto_stop_on_no_progress
     report = ReconcileReport()
 
     executions = (
@@ -193,12 +202,116 @@ async def reconcile_once(
                     intent=StopIntent.reclaim,
                 )
                 report.reclaim_stops += 1
+            # Judged lost and already reclaimed: the no-progress check below is
+            # for attempts we believe are ALIVE. Falling through would let one
+            # pass enqueue a reclaim and a cancel for the same execution (easy
+            # to hit whenever lost_after_stalled_seconds is shorter than the
+            # sample window), and the cancel's terminal would then overwrite the
+            # lost verdict.
+            continue
         elif idle >= stall and execution.stalled_at is None:
             execution.stalled_at = now  # one-shot operator-visible alert
             report.stalled += 1
 
+        # 3) no progress (heartbeat fresh, NOT lost -> the process is confirmed
+        # alive): the log has stopped growing even though we can still see it.
+        # Alert-only by default; this never marks anything lost.
+        await _check_no_progress(
+            session,
+            execution,
+            now=now,
+            stall_after=no_progress_after,
+            sample_max_age=sample_max_age,
+            auto_stop=auto_stop_no_progress,
+            report=report,
+        )
+
     await repair_orphaned_tasks(session, settings, now=now, report=report)
     return report
+
+
+async def _check_no_progress(
+    session: AsyncSession,
+    execution: Execution,
+    *,
+    now: datetime,
+    stall_after: int,
+    sample_max_age: int,
+    auto_stop: bool,
+    report: ReconcileReport,
+) -> None:
+    """One-shot alert for an alive-but-idle attempt. Never judges it lost.
+
+    Three guards, all necessary:
+
+    * ``stall_after <= 0`` turns the whole feature off.
+    * The agent's last log-size reading must still be fresh. A reading from an
+      hour ago says nothing about now -- an execution whose samples dried up
+      (unreadable log, older agent) is one we cannot see, not one we have
+      caught stalling. Judging it would eventually kill healthy work once
+      ``auto_stop`` is on.
+    * ``no_progress_at`` must be unset. It is the one-shot latch: unlike
+      ``stalled_at`` no heartbeat clears it, only real progress does, so the
+      notification and the optional stop each happen exactly once per stall.
+      A ``dedupe_key`` alone could not do this -- the notification table's
+      uniqueness is scoped to unread rows, so reading the alert would let the
+      next pass insert another one.
+    """
+    if stall_after <= 0 or execution.no_progress_at is not None:
+        return
+    if execution.status not in states.EXEC_ACTIVE:
+        # Belt and braces next to the caller's ``continue``: a terminal (or
+        # lost) execution is not something to alert about, let alone cancel.
+        return
+    sampled_at = _aware(execution.last_progress_sample_at)
+    if sampled_at is None or (now - sampled_at).total_seconds() > sample_max_age:
+        return
+    baseline = (
+        _aware(execution.last_progress_at)
+        or _aware(execution.started_at)
+        or _aware(execution.created_at)
+    )
+    if baseline is None:
+        return
+    idle = (now - baseline).total_seconds()
+    if idle < stall_after:
+        return
+
+    execution.no_progress_at = now
+    report.no_progress += 1
+    logger.warning(
+        "execution %s made no progress for %.0fs (log stuck at %s bytes)",
+        execution.id, idle, execution.log_bytes,
+    )
+    stopped = False
+    if auto_stop:
+        # Exactly once, on the latch transition: the outbox dispatcher owns
+        # redelivery from here, so re-enqueueing on later passes would only pile
+        # up duplicate cancels while the first one is still being confirmed.
+        outbox_svc.create_stop_outbox(
+            session,
+            task_id=execution.task_id,
+            execution_id=execution.id,
+            agent_id=execution.agent_id or "",
+            intent=StopIntent.cancel,
+        )
+        stopped = True
+    await notify(
+        session,
+        type=TYPE_ATTEMPT_NO_PROGRESS,
+        severity=SEVERITY_WARNING,
+        payload={
+            "task_id": execution.task_id,
+            "execution_id": execution.id,
+            "agent_id": execution.agent_id or "",
+            "log_bytes": execution.log_bytes,
+            "idle_seconds": int(idle),
+            "threshold": stall_after,
+            "auto_stopped": stopped,
+        },
+        dedupe_key=f"no_progress:{execution.id}",
+    )
+
 
 
 async def repair_orphaned_tasks(
