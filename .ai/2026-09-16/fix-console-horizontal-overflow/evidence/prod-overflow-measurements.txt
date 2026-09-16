@@ -1,0 +1,392 @@
+
+########## viewport 1440 · 未过滤 ##########
+{
+ "vw": 1440,
+ "docScrollW": 1696,
+ "pageOverflow": 256,
+ "wrapper": {
+  "w": 1440,
+  "left": 0,
+  "right": 1440,
+  "scrollW": 1696,
+  "clientW": 1440,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "gap": {
+  "w": 256,
+  "left": 0,
+  "right": 256,
+  "scrollW": 256,
+  "clientW": 256,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "inset": {
+  "w": 1440,
+  "left": 256,
+  "right": 1696,
+  "scrollW": 1440,
+  "clientW": 1440,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "1 1 0%"
+ },
+ "content": {
+  "w": 1440,
+  "left": 256,
+  "right": 1696,
+  "scrollW": 1440,
+  "clientW": 1440,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "1 1 0%"
+ },
+ "card": {
+  "w": 1408,
+  "left": 272,
+  "right": 1680,
+  "scrollW": 1406,
+  "clientW": 1406,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "0 1 auto"
+ },
+ "tableContainer": {
+  "w": 1358,
+  "left": 297,
+  "right": 1655,
+  "scrollW": 1856,
+  "clientW": 1358,
+  "ovx": "auto",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "table": {
+  "w": 1856,
+  "left": 297,
+  "right": 2153,
+  "scrollW": 1856,
+  "clientW": 1856,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "rows": 51
+}
+
+########## viewport 1280 · 未过滤 ##########
+{
+ "vw": 1280,
+ "docScrollW": 1536,
+ "pageOverflow": 256,
+ "wrapper": {
+  "w": 1280,
+  "left": 0,
+  "right": 1280,
+  "scrollW": 1536,
+  "clientW": 1280,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "gap": {
+  "w": 256,
+  "left": 0,
+  "right": 256,
+  "scrollW": 256,
+  "clientW": 256,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "inset": {
+  "w": 1280,
+  "left": 256,
+  "right": 1536,
+  "scrollW": 1280,
+  "clientW": 1280,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "1 1 0%"
+ },
+ "content": {
+  "w": 1280,
+  "left": 256,
+  "right": 1536,
+  "scrollW": 1280,
+  "clientW": 1280,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "1 1 0%"
+ },
+ "card": {
+  "w": 1248,
+  "left": 272,
+  "right": 1520,
+  "scrollW": 1246,
+  "clientW": 1246,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "0 1 auto"
+ },
+ "tableContainer": {
+  "w": 1198,
+  "left": 297,
+  "right": 1495,
+  "scrollW": 1856,
+  "clientW": 1198,
+  "ovx": "auto",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "table": {
+  "w": 1856,
+  "left": 297,
+  "right": 2153,
+  "scrollW": 1856,
+  "clientW": 1856,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "rows": 51
+}
+
+########## viewport 1920 · 未过滤 ##########
+{
+ "vw": 1920,
+ "docScrollW": 2176,
+ "pageOverflow": 256,
+ "wrapper": {
+  "w": 1920,
+  "left": 0,
+  "right": 1920,
+  "scrollW": 2176,
+  "clientW": 1920,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "gap": {
+  "w": 256,
+  "left": 0,
+  "right": 256,
+  "scrollW": 256,
+  "clientW": 256,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "inset": {
+  "w": 1920,
+  "left": 256,
+  "right": 2176,
+  "scrollW": 1920,
+  "clientW": 1920,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "1 1 0%"
+ },
+ "content": {
+  "w": 1920,
+  "left": 256,
+  "right": 2176,
+  "scrollW": 1920,
+  "clientW": 1920,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "1 1 0%"
+ },
+ "card": {
+  "w": 1888,
+  "left": 272,
+  "right": 2160,
+  "scrollW": 1886,
+  "clientW": 1886,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "0 1 auto"
+ },
+ "tableContainer": {
+  "w": 1838,
+  "left": 297,
+  "right": 2135,
+  "scrollW": 1856,
+  "clientW": 1838,
+  "ovx": "auto",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "table": {
+  "w": 1856,
+  "left": 297,
+  "right": 2153,
+  "scrollW": 1856,
+  "clientW": 1856,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "rows": 51
+}
+
+########## viewport 1440 · 过滤为 COINBASE(短名) ##########
+{
+ "vw": 1440,
+ "docScrollW": 1440,
+ "pageOverflow": 0,
+ "wrapper": {
+  "w": 1440,
+  "left": 0,
+  "right": 1440,
+  "scrollW": 1440,
+  "clientW": 1440,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "gap": {
+  "w": 256,
+  "left": 0,
+  "right": 256,
+  "scrollW": 256,
+  "clientW": 256,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "inset": {
+  "w": 1184,
+  "left": 256,
+  "right": 1440,
+  "scrollW": 1184,
+  "clientW": 1184,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "1 1 0%"
+ },
+ "content": {
+  "w": 1184,
+  "left": 256,
+  "right": 1440,
+  "scrollW": 1184,
+  "clientW": 1184,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "1 1 0%"
+ },
+ "card": {
+  "w": 1152,
+  "left": 272,
+  "right": 1424,
+  "scrollW": 1150,
+  "clientW": 1150,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "0 1 auto"
+ },
+ "tableContainer": {
+  "w": 1102,
+  "left": 297,
+  "right": 1399,
+  "scrollW": 1102,
+  "clientW": 1102,
+  "ovx": "auto",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "table": {
+  "w": 1102,
+  "left": 297,
+  "right": 1399,
+  "scrollW": 1102,
+  "clientW": 1102,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "rows": 0
+}
+
+########## viewport 1440 · 过滤为 JUSTONEAPI(长名) ##########
+{
+ "vw": 1440,
+ "docScrollW": 1440,
+ "pageOverflow": 0,
+ "wrapper": {
+  "w": 1440,
+  "left": 0,
+  "right": 1440,
+  "scrollW": 1440,
+  "clientW": 1440,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "gap": {
+  "w": 256,
+  "left": 0,
+  "right": 256,
+  "scrollW": 256,
+  "clientW": 256,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "inset": {
+  "w": 1184,
+  "left": 256,
+  "right": 1440,
+  "scrollW": 1184,
+  "clientW": 1184,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "1 1 0%"
+ },
+ "content": {
+  "w": 1184,
+  "left": 256,
+  "right": 1440,
+  "scrollW": 1184,
+  "clientW": 1184,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "1 1 0%"
+ },
+ "card": {
+  "w": 1152,
+  "left": 272,
+  "right": 1424,
+  "scrollW": 1150,
+  "clientW": 1150,
+  "ovx": "visible",
+  "minW": "auto",
+  "flex": "0 1 auto"
+ },
+ "tableContainer": {
+  "w": 1102,
+  "left": 297,
+  "right": 1399,
+  "scrollW": 1102,
+  "clientW": 1102,
+  "ovx": "auto",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "table": {
+  "w": 1102,
+  "left": 297,
+  "right": 1399,
+  "scrollW": 1102,
+  "clientW": 1102,
+  "ovx": "visible",
+  "minW": "0px",
+  "flex": "0 1 auto"
+ },
+ "rows": 0
+}
+
+长名行各列宽度: null

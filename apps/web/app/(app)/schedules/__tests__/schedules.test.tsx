@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/lib/test/render";
 import type { ExecutionTemplate, Schedule } from "@/lib/api/types";
@@ -99,6 +99,16 @@ beforeEach(() => {
 
 afterEach(() => vi.clearAllMocks());
 
+// The per-row actions (tasks / trigger / edit / delete) now live behind a "⋯"
+// menu, and Radix mounts menu content only while the menu is open — so every
+// action assertion has to open that row's menu first.
+async function openRowActions(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+) {
+  await user.click(await screen.findByTestId(`schedule-actions-${name}`));
+}
+
 describe("SchedulesPage", () => {
   it("renders schedules with the resolved template name and trigger time", async () => {
     renderWithProviders(<SchedulesPage />);
@@ -114,11 +124,7 @@ describe("SchedulesPage", () => {
   it("triggers a schedule and navigates to the created task", async () => {
     const user = userEvent.setup();
     renderWithProviders(<SchedulesPage />);
-    await waitFor(() =>
-      expect(
-        screen.getByTestId("schedule-trigger-demo-schedule"),
-      ).toBeInTheDocument(),
-    );
+    await openRowActions(user, "demo-schedule");
     await user.click(screen.getByTestId("schedule-trigger-demo-schedule"));
     await waitFor(() => expect(triggerSchedule).toHaveBeenCalledWith("sch-1"));
     expect(push).toHaveBeenCalledWith("/tasks/detail?id=task-7");
@@ -127,11 +133,7 @@ describe("SchedulesPage", () => {
   it("edits a schedule: pre-fills the dialog and calls updateSchedule", async () => {
     const user = userEvent.setup();
     renderWithProviders(<SchedulesPage />);
-    await waitFor(() =>
-      expect(
-        screen.getByTestId("schedule-edit-demo-schedule"),
-      ).toBeInTheDocument(),
-    );
+    await openRowActions(user, "demo-schedule");
     await user.click(screen.getByTestId("schedule-edit-demo-schedule"));
     await waitFor(() =>
       expect(screen.getByTestId("schedule-dialog")).toBeInTheDocument(),
@@ -184,11 +186,7 @@ describe("SchedulesPage", () => {
       schedulesResponse([{ ...schedule, enabled: true }]),
     );
     renderWithProviders(<SchedulesPage />);
-    await waitFor(() =>
-      expect(
-        screen.getByTestId("schedule-edit-demo-schedule"),
-      ).toBeInTheDocument(),
-    );
+    await openRowActions(user, "demo-schedule");
     await user.click(screen.getByTestId("schedule-edit-demo-schedule"));
     await waitFor(() =>
       expect(screen.getByTestId("schedule-enabled-input")).toBeChecked(),
@@ -298,7 +296,8 @@ describe("SchedulesPage", () => {
         screen.getByTestId("schedule-name-demo-schedule"),
       ).toBeInTheDocument(),
     );
-    await user.click(screen.getByText("Delete"));
+    await openRowActions(user, "demo-schedule");
+    await user.click(screen.getByTestId("schedule-delete-demo-schedule"));
     await user.click(screen.getByTestId("confirm-accept"));
     await waitFor(() => expect(deleteSchedule).toHaveBeenCalledWith("sch-1"));
   });
@@ -425,6 +424,7 @@ describe("SchedulesPage", () => {
         screen.getByTestId("schedule-concurrency-demo-schedule"),
       ).toHaveTextContent("4"),
     );
+    await openRowActions(user, "demo-schedule");
     await user.click(screen.getByTestId("schedule-edit-demo-schedule"));
     const input = await screen.findByTestId("schedule-max-concurrency-input");
     // Pre-filled with the row's own value, not the create-dialog default of 1.
@@ -454,6 +454,7 @@ describe("SchedulesPage", () => {
     );
 
     // Editing that row pre-fills 0 rather than coercing it to 1.
+    await openRowActions(user, "demo-schedule");
     await user.click(screen.getByTestId("schedule-edit-demo-schedule"));
     const editInput = await screen.findByTestId(
       "schedule-max-concurrency-input",
@@ -487,11 +488,7 @@ describe("SchedulesPage", () => {
       },
     });
     renderWithProviders(<SchedulesPage />);
-    await waitFor(() =>
-      expect(
-        screen.getByTestId("schedule-trigger-demo-schedule"),
-      ).toBeInTheDocument(),
-    );
+    await openRowActions(user, "demo-schedule");
     await user.click(screen.getByTestId("schedule-trigger-demo-schedule"));
     await waitFor(() => expect(toastError).toHaveBeenCalled());
     expect(toastError.mock.calls[0][0]).toContain("1");
@@ -548,8 +545,10 @@ describe("SchedulesPage auto-disable badge (TC-29)", () => {
 describe("SchedulesPage task drill-down", () => {
   it("links each row to the tasks page filtered by that schedule", async () => {
     // TC-15
+    const user = userEvent.setup();
     renderWithProviders(<SchedulesPage />);
-    const link = await screen.findByTestId("schedule-tasks-demo-schedule");
+    await openRowActions(user, "demo-schedule");
+    const link = screen.getByTestId("schedule-tasks-demo-schedule");
     expect(link).toHaveAttribute(
       "href",
       "/tasks?schedule_id=sch-1&schedule_name=demo-schedule",
@@ -563,11 +562,159 @@ describe("SchedulesPage task drill-down", () => {
         { ...schedule, id: "sch 2&x", name: "nightly run & more" },
       ]),
     );
+    const user = userEvent.setup();
     renderWithProviders(<SchedulesPage />);
-    const link = await screen.findByTestId("schedule-tasks-nightly run & more");
+    await openRowActions(user, "nightly run & more");
+    const link = screen.getByTestId("schedule-tasks-nightly run & more");
     expect(link).toHaveAttribute(
       "href",
       "/tasks?schedule_id=sch%202%26x&schedule_name=nightly%20run%20%26%20more",
     );
+  });
+});
+
+// Long schedule/template names are what pushed this table past the card and,
+// before min-w-0 on SidebarInset, the whole page past the viewport. These cover
+// the truncation contract and the actions menu that replaced the inline buttons.
+describe("SchedulesPage long names and the row actions menu", () => {
+  const LONG_NAME =
+    "steammarket-spider | JUSTONEAPI STEAM_GIFT_CARD_USD_100_TAOBAO_CNY";
+  const LONG_TEMPLATE = `${LONG_NAME} | template`;
+
+  function longRow(extra: Partial<Schedule> = {}): Schedule {
+    return { ...schedule, name: LONG_NAME, ...extra };
+  }
+
+  beforeEach(() => {
+    listTemplates.mockResolvedValue([{ ...template, name: LONG_TEMPLATE }]);
+    listSchedules.mockResolvedValue(schedulesResponse([longRow()]));
+  });
+
+  it("truncates the long schedule and template names", async () => {
+    // TC-02
+    renderWithProviders(<SchedulesPage />);
+    const name = await screen.findByTestId(`schedule-name-text-${LONG_NAME}`);
+    const tpl = screen.getByTestId(`schedule-template-text-${LONG_NAME}`);
+    for (const el of [name, tpl]) {
+      expect(el).toHaveClass("truncate");
+      expect(el).toHaveClass("max-w-[15rem]");
+    }
+    // the DOM keeps the whole string; only the paint is clipped
+    expect(name).toHaveTextContent(LONG_NAME);
+    expect(tpl).toHaveTextContent(LONG_TEMPLATE);
+  });
+
+  it("surfaces the full name by hover and by keyboard focus", async () => {
+    // TC-02b: the truncating span IS the tooltip trigger, so the full text is
+    // reachable both ways — `title` alone would leave keyboard users out.
+    const user = userEvent.setup();
+    renderWithProviders(<SchedulesPage />);
+    const name = await screen.findByTestId(`schedule-name-text-${LONG_NAME}`);
+    const tpl = screen.getByTestId(`schedule-template-text-${LONG_NAME}`);
+
+    for (const [el, full] of [
+      [name, LONG_NAME],
+      [tpl, LONG_TEMPLATE],
+    ] as const) {
+      expect(el).toHaveAttribute("tabindex", "0");
+      // baseline: the text exists once (the cell itself), no tooltip yet
+      expect(screen.getAllByText(full)).toHaveLength(1);
+
+      await user.hover(el);
+      await waitFor(() =>
+        expect(screen.getAllByText(full).length).toBeGreaterThan(1),
+      );
+      // Radix keeps a hoverable tooltip open on pointerleave alone (there is no
+      // real pointer geometry in jsdom); Escape is the deterministic dismiss,
+      // same as the auto-disabled badge test above.
+      await user.unhover(el);
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.getAllByText(full)).toHaveLength(1));
+
+      // focus()/blur() drive Radix state from outside React's event system,
+      // so wrap them in act(...) to keep the update inside a test-owned batch.
+      await act(async () => {
+        el.focus();
+      });
+      expect(el).toHaveFocus();
+      await waitFor(() =>
+        expect(screen.getAllByText(full).length).toBeGreaterThan(1),
+      );
+      await act(async () => {
+        el.blur();
+      });
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.getAllByText(full)).toHaveLength(1));
+    }
+  });
+
+  it("keeps the four row actions behind the menu", async () => {
+    // TC-03
+    const user = userEvent.setup();
+    renderWithProviders(<SchedulesPage />);
+    await screen.findByTestId(`schedule-actions-${LONG_NAME}`);
+    const actions = ["tasks", "trigger", "edit", "delete"];
+
+    for (const act of actions) {
+      expect(
+        screen.queryByTestId(`schedule-${act}-${LONG_NAME}`),
+      ).not.toBeInTheDocument();
+    }
+
+    await openRowActions(user, LONG_NAME);
+
+    for (const act of actions) {
+      expect(screen.getByTestId(`schedule-${act}-${LONG_NAME}`)).toBeVisible();
+    }
+  });
+
+  it("does not delete from the menu when the confirm is cancelled", async () => {
+    // TC-05: destructive path, both branches.
+    const user = userEvent.setup();
+    renderWithProviders(<SchedulesPage />);
+    await openRowActions(user, LONG_NAME);
+    await user.click(screen.getByTestId(`schedule-delete-${LONG_NAME}`));
+    await user.click(screen.getByTestId("confirm-cancel"));
+    expect(deleteSchedule).not.toHaveBeenCalled();
+
+    await openRowActions(user, LONG_NAME);
+    await user.click(screen.getByTestId(`schedule-delete-${LONG_NAME}`));
+    await user.click(screen.getByTestId("confirm-accept"));
+    await waitFor(() => expect(deleteSchedule).toHaveBeenCalledWith("sch-1"));
+  });
+
+  it("keeps the auto-disabled badge and archived mark outside the truncation", async () => {
+    // TC-06: structural guard. jsdom computes no layout, so this asserts the
+    // badges are NOT descendants of the clipping span — real clipping is
+    // verified in the browser run (TC-07).
+    listSchedules.mockResolvedValue(
+      schedulesResponse([
+        longRow({
+          auto_disabled_at: "2026-09-15T03:30:00+00:00",
+          consecutive_error_count: 5,
+          auto_disabled_reason: {
+            consecutive_errors: 5,
+            threshold: 5,
+            task_ids: [],
+          },
+        }),
+      ]),
+    );
+    listTemplates.mockResolvedValue([
+      { ...template, name: LONG_TEMPLATE, build_artifact_archived: true },
+    ]);
+    renderWithProviders(<SchedulesPage />);
+
+    const badge = await screen.findByTestId(
+      `schedule-auto-disabled-${LONG_NAME}`,
+    );
+    const archived = screen.getByTestId("archived-indicator");
+    const nameSpan = screen.getByTestId(`schedule-name-text-${LONG_NAME}`);
+    const tplSpan = screen.getByTestId(`schedule-template-text-${LONG_NAME}`);
+
+    expect(nameSpan.contains(badge)).toBe(false);
+    expect(tplSpan.contains(archived)).toBe(false);
+    expect(badge).toBeVisible();
+    expect(archived).toBeVisible();
   });
 });

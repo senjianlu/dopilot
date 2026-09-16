@@ -309,7 +309,15 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
     <main
       data-slot="sidebar-inset"
       className={cn(
-        "relative flex w-full flex-1 flex-col bg-background",
+        // min-w-0 is load-bearing, NOT redundant with flex-1: as a flex item
+        // this defaults to min-width:auto, whose automatic minimum size is the
+        // SMALLER of the specified-size suggestion (w-full -> the whole
+        // viewport) and the content-size suggestion. A wide table pushes the
+        // latter up, so the minimum lands on the viewport width while the inset
+        // starts at x=sidebar-width -> the page overflows by exactly the
+        // sidebar width at every viewport. min-w-0 zeroes that minimum, lets
+        // the inset shrink, and hands overflow to Table's own overflow-x-auto.
+        "relative flex w-full min-w-0 flex-1 flex-col bg-background",
         "md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2",
         className
       )}

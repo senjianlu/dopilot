@@ -162,6 +162,7 @@ const en = {
     interval: "Interval (s)",
     cron: "Cron",
     actions: "Actions",
+    moreActions: "More actions",
     viewTasks: "Tasks",
     triggerNow: "Trigger now",
     delete: "Delete",

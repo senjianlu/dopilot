@@ -309,7 +309,9 @@ test("schedules page creates an interval schedule and trigger-now lands on a tas
     page.getByTestId(`schedule-name-${SCHEDULE_NAME}`),
   ).toBeVisible();
 
-  // Trigger-now creates a task and navigates to its detail page.
+  // Trigger-now creates a task and navigates to its detail page. The row
+  // actions live behind a "⋯" menu, so open that first.
+  await page.getByTestId(`schedule-actions-${SCHEDULE_NAME}`).click();
   await page.getByTestId(`schedule-trigger-${SCHEDULE_NAME}`).click();
   await expect(page).toHaveURL(/\/tasks\/detail\/?\?id=/, { timeout: 30_000 });
   await expect(page.getByTestId("task-detail")).toBeVisible();

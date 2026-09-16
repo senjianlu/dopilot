@@ -14,6 +14,16 @@
   `dopilot-server` 同源托管（`DOPILOT_WEB_DIST=/app/web`）;`/api/*` 永不
   被改写为 HTML。无独立 Web 容器、无 `next start`。
 - 开发:`next dev` 经 `NEXT_PUBLIC_API_BASE` 指向 server。
+- **全局布局:宽表格不许撑破页面(`components/ui/sidebar.tsx`)**:`SidebarInset`
+  上的 `min-w-0` 是**承重类,不是冗余**。它是侧边栏那个 flex 行的子项,默认
+  `min-width:auto`,自动最小尺寸取「`w-full` 换算值(= 整个视口宽)」与「内容
+  min-content」中的**较小者**;表格一宽,内容那侧被撑大,最小尺寸就落在视口宽,
+  而 inset 左边缘在侧边栏之后,于是**整页恒定溢出一个侧边栏宽度**,与视口多宽
+  无关(2026-09-16 实测 1280/1440/1920 三档均溢出 256px,`/schedules`
+  `/templates` `/tasks` `/artifacts` 全中)。`min-w-0` 把这个最小尺寸归零,inset
+  得以收缩,超宽表格改由 `Table` 自带的 `overflow-x-auto` 容器在卡片内滚动——
+  这本就是 shadcn 的设计意图。删掉它,所有含宽表的页面会立刻重新长出整页横向
+  滚动条。
 - **日志查看器(`components/features/log-viewer.tsx`)**:SSE 收流 + 一个
   **复制**按钮,把**当前视图缓冲**写进剪贴板(不发请求)。范围刻意不是"整个
   日志文件"——首屏只回放尾部(`logs.first_screen_max_lines` /
@@ -25,7 +35,16 @@
   [0022](../decisions/0022-schedule-concurrency-limit.md) 的逃生舱,解析时
   不得用 `Number(v) || 1` 一类写法把它吞成 1。手动触发命中上限时后端返回
   409 `schedule.concurrency_limit`,页面弹 toast 且**不跳转**。
-- **任务下钻与目标名搜索(`/tasks`)**:`/schedules` 每行的「任务记录」链接跳到
+- **调度页行操作与长名截断(`/schedules`)**:每行的四个操作(任务记录 / 立即触发 /
+  编辑 / 删除)收在行尾的「⋯」`DropdownMenu` 里(触发器 `schedule-actions-<name>`,
+  菜单项沿用 `schedule-{tasks,trigger,edit,delete}-<name>` 这组 testid);名称列与
+  执行模板列的文本为 `max-w-[15rem] truncate`,**截断的 span 自身就是 tooltip
+  触发器**并带 `tabIndex={0}`——hover 与键盘聚焦两条路径都能看到完整原文,原生
+  `title` 只作无 JS 兜底。「已自动禁用」徽标与归档标是截断 span 的**兄弟节点**
+  (外层 flex 不截断),不会随文本一起被裁。这套收窄是为了让
+  `steammarket-spider | JUSTONEAPI STEAM_GIFT_CARD_USD_100_TAOBAO_CNY` 这类超长
+  命名在 1440 宽下连卡片内滚动都不需要,操作入口也不被挤出视野。
+- **任务下钻与目标名搜索(`/tasks`)**:`/schedules` 每行「⋯」菜单里的「任务记录」链接跳到
   `/tasks?schedule_id=<id>&schedule_name=<name>`,任务页据此初始化筛选并渲染一个
   可清除的调度芯片(`schedule_name` 纯展示,不参与请求;清除时同时
   `router.replace("/tasks")` 抹掉 query,免得刷新后筛选复活)。搜索框对

@@ -1,0 +1,51 @@
+TC-07 复现步骤(三档视口全量检查;第 02 轮补齐 1280/1920 的徽标与菜单验收)
+
+$ corepack pnpm -C apps/web build      # 生产静态导出 -> apps/web/out
+$ corepack pnpm -C apps/web build
+├ ○ /tasks/detail
+└ ○ /templates
+
+
+○  (Static)  prerendered as static content
+
+build exit=0
+
+$ (cd apps/web/out && python3 -m http.server 3101 --bind 127.0.0.1 &)
+
+$ BASE=http://127.0.0.1:3101 node .ai/2026-09-16/fix-console-horizontal-overflow/evidence/layout-probe.mjs
+fixture: 4 rows, longest name 66 chars
+         template 77 chars, auto-disabled badge + archived mark on row 1
+
+PASS  [1] viewport 1280: page has no horizontal scrollbar — scrollWidth=1280 clientWidth=1280 overflow=0px
+INFO  [2] viewport 1280: inner scroll not asserted at this width — scrollWidth=1084 clientWidth=942 overflow=142px
+PASS  [3] viewport 1280: autoDisabled badge rendered and fully inside its cell — visible=true width=78 badge=[553,631] cell=[297,639]
+PASS  [3] viewport 1280: archived badge rendered and fully inside its cell — visible=true width=16 badge=[1007,1023] cell=[755,1031]
+PASS  [4] viewport 1280: actions trigger is visible
+PASS  [4] viewport 1280: menu item "tasks" is visible
+PASS  [4] viewport 1280: menu item "trigger" is visible
+PASS  [4] viewport 1280: menu item "edit" is visible
+PASS  [4] viewport 1280: menu item "delete" is visible
+
+PASS  [1] viewport 1440: page has no horizontal scrollbar — scrollWidth=1440 clientWidth=1440 overflow=0px
+PASS  [2] viewport 1440: table needs no inner horizontal scroll — scrollWidth=1102 clientWidth=1102 overflow=0px
+PASS  [3] viewport 1440: autoDisabled badge rendered and fully inside its cell — visible=true width=78 badge=[553,631] cell=[297,645]
+PASS  [3] viewport 1440: archived badge rendered and fully inside its cell — visible=true width=16 badge=[1015,1031] cell=[763,1043]
+PASS  [4] viewport 1440: actions trigger is visible
+PASS  [4] viewport 1440: menu item "tasks" is visible
+PASS  [4] viewport 1440: menu item "trigger" is visible
+PASS  [4] viewport 1440: menu item "edit" is visible
+PASS  [4] viewport 1440: menu item "delete" is visible
+
+PASS  [1] viewport 1920: page has no horizontal scrollbar — scrollWidth=1920 clientWidth=1920 overflow=0px
+INFO  [2] viewport 1920: inner scroll not asserted at this width — scrollWidth=1582 clientWidth=1582 overflow=0px
+PASS  [3] viewport 1920: autoDisabled badge rendered and fully inside its cell — visible=true width=78 badge=[553,631] cell=[297,796]
+PASS  [3] viewport 1920: archived badge rendered and fully inside its cell — visible=true width=16 badge=[1218,1234] cell=[966,1368]
+PASS  [4] viewport 1920: actions trigger is visible
+PASS  [4] viewport 1920: menu item "tasks" is visible
+PASS  [4] viewport 1920: menu item "trigger" is visible
+PASS  [4] viewport 1920: menu item "edit" is visible
+PASS  [4] viewport 1920: menu item "delete" is visible
+
+
+ALL CHECKS PASSED
+exit=0

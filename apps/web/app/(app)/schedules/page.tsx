@@ -20,7 +20,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -96,6 +103,36 @@ function autoDisabledCount(schedule: Schedule): number {
   const reason = schedule.auto_disabled_reason ?? {};
   const n = reason.consecutive_errors;
   return typeof n === "number" ? n : schedule.consecutive_error_count;
+}
+
+// Schedule and template names run long (e.g. "steammarket-spider | JUSTONEAPI
+// STEAM_GIFT_CARD_USD_100_TAOBAO_CNY", and the template repeats it with a
+// " | template" suffix), which used to widen the table far past the card. The
+// truncating span IS the tooltip trigger and carries tabIndex={0}, so the full
+// text is reachable both by hover and by keyboard focus; `title` is an extra
+// no-JS fallback, not the accessibility story. Callers keep badges OUTSIDE this
+// span so they are never clipped along with the text.
+//
+// Bundles its own TooltipProvider for the same reason ArchivedIndicator does:
+// the page test harness provides none, and nesting Radix providers is safe.
+function TruncatedLabel({ text, testId }: { text: string; testId: string }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            tabIndex={0}
+            title={text}
+            data-testid={testId}
+            className="block max-w-[15rem] truncate rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {text}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{text}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 export default function SchedulesPage() {
@@ -460,15 +497,24 @@ export default function SchedulesPage() {
               visibleSchedules.map((schedule) => (
                 <TableRow key={schedule.id}>
                   <TableCell data-testid={`schedule-name-${schedule.name}`}>
-                    <span className="inline-flex items-center gap-2">
-                      {schedule.name}
+                    {/* outer flex never truncates: the badge must stay outside
+                        the truncating span or it gets clipped with the text */}
+                    <span className="flex items-center gap-2">
+                      <TruncatedLabel
+                        text={schedule.name}
+                        testId={`schedule-name-text-${schedule.name}`}
+                      />
                       {schedule.auto_disabled_at ? (
                         <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             {/* a focusable trigger: keyboard users reach the
                                 reason via Tab + focus, not just hover */}
-                            <Badge asChild variant="destructive">
+                            <Badge
+                              asChild
+                              variant="destructive"
+                              className="shrink-0"
+                            >
                               <button
                                 type="button"
                                 data-testid={`schedule-auto-disabled-${schedule.name}`}
@@ -506,10 +552,13 @@ export default function SchedulesPage() {
                       : schedule.max_concurrency}
                   </TableCell>
                   <TableCell>
-                    <span className="inline-flex items-center gap-1">
-                      {templateName(schedule.execution_template_id)}
+                    <span className="flex items-center gap-1">
+                      <TruncatedLabel
+                        text={templateName(schedule.execution_template_id)}
+                        testId={`schedule-template-text-${schedule.name}`}
+                      />
                       {templateArchived(schedule.execution_template_id) && (
-                        <ArchivedIndicator />
+                        <ArchivedIndicator className="shrink-0" />
                       )}
                     </span>
                   </TableCell>
@@ -517,51 +566,62 @@ export default function SchedulesPage() {
                   <TableCell>{triggerTimeText(schedule)}</TableCell>
                   <TableCell>{formatDateTime(schedule.next_run_at)}</TableCell>
                   <TableCell className="text-right">
-                    {/* Drill-down into this schedule's task history. The id
-                        drives the filter; the name only labels the chip. */}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      asChild
-                      data-testid={`schedule-tasks-${schedule.name}`}
-                    >
-                      <Link
-                        href={
-                          `/tasks?schedule_id=${encodeURIComponent(schedule.id)}` +
-                          `&schedule_name=${encodeURIComponent(schedule.name)}`
-                        }
-                      >
-                        {t("schedules.viewTasks")}
-                      </Link>
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      data-testid={`schedule-trigger-${schedule.name}`}
-                      disabled={triggeringId === schedule.id}
-                      onClick={() => onTrigger(schedule)}
-                    >
-                      {triggeringId === schedule.id && (
-                        <Spinner data-icon="inline-start" />
-                      )}
-                      {t("schedules.triggerNow")}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      data-testid={`schedule-edit-${schedule.name}`}
-                      onClick={() => openEdit(schedule)}
-                    >
-                      {t("schedules.edit")}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive"
-                      onClick={() => onDelete(schedule)}
-                    >
-                      {t("schedules.delete")}
-                    </Button>
+                    {/* Four inline buttons cost ~280px per row, which pushed
+                        this column out of view once names grew long. Collapsed
+                        into a menu; the item test ids are unchanged so callers
+                        only need the extra "open the menu" step. */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={t("schedules.moreActions")}
+                          data-testid={`schedule-actions-${schedule.name}`}
+                        >
+                          <MoreHorizontal />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {/* Drill-down into this schedule's task history. The id
+                            drives the filter; the name only labels the chip. */}
+                        <DropdownMenuItem
+                          asChild
+                          data-testid={`schedule-tasks-${schedule.name}`}
+                        >
+                          <Link
+                            href={
+                              `/tasks?schedule_id=${encodeURIComponent(schedule.id)}` +
+                              `&schedule_name=${encodeURIComponent(schedule.name)}`
+                            }
+                          >
+                            {t("schedules.viewTasks")}
+                          </Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          data-testid={`schedule-trigger-${schedule.name}`}
+                          disabled={triggeringId === schedule.id}
+                          onSelect={() => onTrigger(schedule)}
+                        >
+                          {triggeringId === schedule.id && (
+                            <Spinner data-icon="inline-start" />
+                          )}
+                          {t("schedules.triggerNow")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          data-testid={`schedule-edit-${schedule.name}`}
+                          onSelect={() => openEdit(schedule)}
+                        >
+                          {t("schedules.edit")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          data-testid={`schedule-delete-${schedule.name}`}
+                          onSelect={() => onDelete(schedule)}
+                        >
+                          {t("schedules.delete")}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TableCell>
                 </TableRow>
               ))

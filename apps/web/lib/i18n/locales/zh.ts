@@ -160,6 +160,7 @@ const zh = {
     interval: "间隔（秒）",
     cron: "Cron",
     actions: "操作",
+    moreActions: "更多操作",
     viewTasks: "任务记录",
     triggerNow: "立即触发",
     delete: "删除",

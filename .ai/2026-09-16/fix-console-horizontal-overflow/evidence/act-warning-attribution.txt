@@ -1,0 +1,28 @@
+act 告警归属核对(第 03 轮据实更正 R-01)
+
+$ python3 <统计脚本> evidence/tc08-lint-typecheck-test.txt   # 按 vitest 的 'stderr | <file> > ...' 块归属每处告警
+act 告警总数: 16
+   12  components/layout/__tests__/notification-bell.test.tsx
+    4  app/(app)/maintenance/__tests__/maintenance.test.tsx
+    0  app/(app)/schedules/__tests__/schedules.test.tsx   <- 本任务修改
+    0  components/ui/__tests__/sidebar.test.tsx           <- 本任务新增
+
+逐处行号(对应 evidence/tc08-lint-typecheck-test.txt):
+  maintenance.test.tsx      : line 23, 33, 43, 53
+  notification-bell.test.tsx: line 96, 106, 116, 126, 138, 148, 158, 168, 180, 190, 200, 210
+
+两个告警来源文件均不在本任务改动范围内:
+
+$ git diff --name-only HEAD -- apps/web
+apps/web/app/(app)/schedules/__tests__/schedules.test.tsx
+apps/web/app/(app)/schedules/page.tsx
+apps/web/components/ui/sidebar.tsx
+apps/web/e2e/specs/phase1-ui.spec.ts
+apps/web/lib/i18n/locales/en.ts
+apps/web/lib/i18n/locales/zh.ts
+
+$ git ls-files --others --exclude-standard -- apps/web
+apps/web/components/ui/__tests__/sidebar.test.tsx
+
+=> 改动清单中既无 notification-bell.test.tsx 也无 maintenance.test.tsx;
+   本任务触及的 schedules.test.tsx 与新增的 sidebar.test.tsx 各 0 处告警。
