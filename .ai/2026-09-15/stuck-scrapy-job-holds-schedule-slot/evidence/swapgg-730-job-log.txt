@@ -1,0 +1,184 @@
+# 来源:用户 2026-09-15 从 dopilot 取出并贴到 steammarket-spider 会话的 scrapyd job 日志(SWAPGG 730)
+# job 日志文件:/agent-data/scrapyd/logs/steammarket-spider/swapgg/bb521998b0b511f1b7dd36e28bd6996d.log
+# 唯一改动:Telnet Password 的值替换为 <redacted>;其余逐字保留。日志到最后一行为止(之后再无输出)。
+2026-09-15 03:30:08 [scrapy.utils.log] INFO: Scrapy 2.18.0 started (bot: steammarket-spider)
+2026-09-15 03:30:08 [scrapy.utils.log] INFO: Versions:
+{'lxml': '6.1.2',
+ 'libxml2': '2.14.6',
+ 'cssselect': '1.5.0',
+ 'parsel': '1.11.0',
+ 'w3lib': '2.4.1',
+ 'Twisted': '26.4.0',
+ 'Python': '3.12.14 (main, Aug 13 2026, 19:41:13) [GCC 14.2.0]',
+ 'pyOpenSSL': '26.4.0 (OpenSSL 4.0.1 9 Jun 2026)',
+ 'cryptography': '50.0.0',
+ 'Platform': 'Linux-5.15.0-60-generic-x86_64-with-glibc2.41'}
+2026-09-15 03:30:08 [scrapy.addons] INFO: Enabled addons:
+[]
+2026-09-15 03:30:08 [scrapy.extensions.telnet] INFO: Telnet Password: <redacted>
+2026-09-15 03:30:08 [scrapy.middleware] INFO: Enabled extensions:
+['scrapy.extensions.corestats.CoreStats',
+ 'scrapy.extensions.logcount.LogCount',
+ 'scrapy.extensions.telnet.TelnetConsole',
+ 'scrapy.extensions.memusage.MemoryUsage',
+ 'scrapy.extensions.feedexport.FeedExporter',
+ 'scrapy.extensions.logstats.LogStats',
+ 'scrapy.extensions.throttle.AutoThrottle',
+ 'app.extensions.resultMonitor.ResultMonitorExtension',
+ 'app.extensions.realtimeMonitor.RealtimeMonitorExtension',
+ 'app.extensions.profitAlert.ProfitAlertExtension']
+2026-09-15 03:30:08 [scrapy.crawler] INFO: Overridden settings:
+{'AUTOTHROTTLE_ENABLED': True,
+ 'AUTOTHROTTLE_MAX_DELAY': 30.0,
+ 'AUTOTHROTTLE_START_DELAY': 2.0,
+ 'BOT_NAME': 'steammarket-spider',
+ 'CONCURRENT_REQUESTS': 1,
+ 'CONCURRENT_REQUESTS_PER_DOMAIN': 1,
+ 'DOWNLOAD_DELAY': 2.0,
+ 'DOWNLOAD_TIMEOUT': 60,
+ 'FEED_EXPORT_ENCODING': 'utf-8',
+ 'LOG_FILE': '/agent-data/scrapyd/logs/steammarket-spider/swapgg/bb521998b0b511f1b7dd36e28bd6996d.log',
+ 'LOG_LEVEL': 'INFO',
+ 'NEWSPIDER_MODULE': 'app.spiders',
+ 'RETRY_HTTP_CODES': [429, 500, 502, 503, 504, 522, 524, 408],
+ 'RETRY_TIMES': 3,
+ 'SPIDER_MODULES': ['app.spiders'],
+ 'USER_AGENT': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+               'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 '
+               'Safari/537.36'}
+2026-09-15 03:30:09 [scrapy.middleware] INFO: Enabled downloader middlewares:
+['scrapy.downloadermiddlewares.offsite.OffsiteMiddleware',
+ 'scrapy.downloadermiddlewares.httpauth.HttpAuthMiddleware',
+ 'scrapy.downloadermiddlewares.downloadtimeout.DownloadTimeoutMiddleware',
+ 'scrapy.downloadermiddlewares.defaultheaders.DefaultHeadersMiddleware',
+ 'scrapy.downloadermiddlewares.useragent.UserAgentMiddleware',
+ 'scrapy.downloadermiddlewares.retry.RetryMiddleware',
+ 'app.middlewares.commonProxyPool.CommonProxyPoolMiddleware',
+ 'scrapy.downloadermiddlewares.redirect.MetaRefreshMiddleware',
+ 'scrapy.downloadermiddlewares.httpcompression.HttpCompressionMiddleware',
+ 'scrapy.downloadermiddlewares.redirect.RedirectMiddleware',
+ 'scrapy.downloadermiddlewares.cookies.CookiesMiddleware',
+ 'scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware',
+ 'scrapy.downloadermiddlewares.stats.DownloaderStats']
+2026-09-15 03:30:09 [scrapy.middleware] INFO: Enabled spider middlewares:
+['app.middlewares.commonPageBoundary.PageBoundaryMiddleware',
+ 'scrapy.spidermiddlewares.start.StartSpiderMiddleware',
+ 'scrapy.spidermiddlewares.httperror.HttpErrorMiddleware',
+ 'scrapy.spidermiddlewares.referer.RefererMiddleware',
+ 'scrapy.spidermiddlewares.urllength.UrlLengthMiddleware',
+ 'scrapy.spidermiddlewares.depth.DepthMiddleware',
+ 'scrapy.spidermiddlewares.metacopy.MetaCopyDetectionMiddleware']
+2026-09-15 03:30:09 [scrapy.middleware] INFO: Enabled item pipelines:
+['app.pipelines.commonHashNameCanon.CommonHashNameCanonPipeline',
+ 'app.pipelines.commonPriceFee.CommonPriceFeePipeline',
+ 'app.pipelines.commonPriceCopy.CommonPriceCopyPipeline']
+2026-09-15 03:30:09 [scrapy.core.engine] INFO: Spider opened
+2026-09-15 03:30:09 [py.warnings] WARNING: /usr/local/lib/python3.12/site-packages/scrapy/pipelines/__init__.py:118: ScrapyDeprecationWarning: app.pipelines.commonHashNameCanon.CommonHashNameCanonPipeline.open_spider returned a Deferred, this is deprecated. Please refactor this function to return a coroutine.
+  return ensure_awaitable(result, _warn=global_object_name(method))
+
+2026-09-15 03:30:09 [py.warnings] WARNING: /usr/local/lib/python3.12/site-packages/scrapy/pipelines/__init__.py:118: ScrapyDeprecationWarning: app.pipelines.commonPriceFee.CommonPriceFeePipeline.open_spider returned a Deferred, this is deprecated. Please refactor this function to return a coroutine.
+  return ensure_awaitable(result, _warn=global_object_name(method))
+
+2026-09-15 03:30:09 [app.pipelines.commonHashNameCanon] INFO: 🏷️ 饰品名字典就绪(app_id=730):标准名 39042 个,人工别名 1854 条。
+2026-09-15 03:30:09 [app.pipelines.commonPriceFee] INFO: 📥 已取到官方费率快照：1 个市场（SWAPGG），官方货币 646 种。
+2026-09-15 03:30:09 [swapgg] INFO: 🚚 任务开始 — task_id=70a7ff892d6d4a7a8b8bdcf089109b6c
+2026-09-15 03:30:09 [scrapy.extensions.logstats] INFO: Crawled 0 pages (at 0 pages/min), scraped 0 items (at 0 items/min)
+2026-09-15 03:30:09 [app.extensions.realtimeMonitor] INFO: 🧩 实时吞吐监控已启动（website_code=SWAPGG）。
+2026-09-15 03:30:09 [scrapy.extensions.telnet] INFO: Telnet console listening on 127.0.0.1:6026
+2026-09-15 03:30:09 [swapgg] INFO: 🚚 开始抓取 swap.gg 库存,游戏=CS2 / CS:GO(app_id=730,类目 CS),每页 500 条。
+2026-09-15 03:30:09 [app.utils.sub2proxy] INFO: ⚙️ sub2proxy 节点列表已拉取：共 390 个，其中结构合法且健康 362 个
+2026-09-15 03:30:09 [app.middlewares.commonProxyPool] INFO: 🔀 CommonProxyPoolMiddleware 节点表已更新：健康 362 个，其中本次运行内已封禁 0 个，可用 362 个
+2026-09-15 03:30:11 [swapgg] INFO: 🚚 swap.gg 第 1 页:500 堆,累计 341 个饰品。
+2026-09-15 03:30:13 [swapgg] INFO: 🚚 swap.gg 第 2 页:500 堆,累计 616 个饰品。
+2026-09-15 03:30:17 [swapgg] INFO: 🚚 swap.gg 第 3 页:500 堆,累计 868 个饰品。
+2026-09-15 03:30:20 [swapgg] INFO: 🚚 swap.gg 第 4 页:500 堆,累计 1084 个饰品。
+2026-09-15 03:30:24 [swapgg] INFO: 🚚 swap.gg 第 5 页:499 堆,累计 1307 个饰品。
+2026-09-15 03:30:27 [swapgg] INFO: 🚚 swap.gg 第 6 页:500 堆,累计 1534 个饰品。
+2026-09-15 03:30:29 [swapgg] INFO: 🚚 swap.gg 第 7 页:500 堆,累计 1720 个饰品。
+2026-09-15 03:30:32 [swapgg] INFO: 🚚 swap.gg 第 8 页:500 堆,累计 1915 个饰品。
+2026-09-15 03:30:34 [swapgg] INFO: 🚚 swap.gg 第 9 页:500 堆,累计 2091 个饰品。
+2026-09-15 03:30:37 [swapgg] INFO: 🚚 swap.gg 第 10 页:500 堆,累计 2262 个饰品。
+2026-09-15 03:30:40 [swapgg] INFO: 🚚 swap.gg 第 11 页:492 堆,累计 2430 个饰品。
+2026-09-15 03:30:43 [swapgg] INFO: 🚚 swap.gg 第 12 页:500 堆,累计 2595 个饰品。
+2026-09-15 03:30:47 [swapgg] INFO: 🚚 swap.gg 第 13 页:500 堆,累计 2724 个饰品。
+2026-09-15 03:30:49 [swapgg] INFO: 🚚 swap.gg 第 14 页:500 堆,累计 2836 个饰品。
+2026-09-15 03:30:52 [swapgg] INFO: 🚚 swap.gg 第 15 页:500 堆,累计 2974 个饰品。
+2026-09-15 03:30:53 [swapgg] INFO: 🚚 swap.gg 第 16 页:500 堆,累计 3091 个饰品。
+2026-09-15 03:30:58 [swapgg] INFO: 🚚 swap.gg 第 17 页:500 堆,累计 3254 个饰品。
+2026-09-15 03:31:00 [swapgg] INFO: 🚚 swap.gg 第 18 页:500 堆,累计 3403 个饰品。
+2026-09-15 03:31:05 [swapgg] INFO: 🚚 swap.gg 第 19 页:500 堆,累计 3553 个饰品。
+2026-09-15 03:31:09 [swapgg] INFO: 🚚 swap.gg 第 20 页:500 堆,累计 3676 个饰品。
+2026-09-15 03:31:09 [scrapy.extensions.logstats] INFO: Crawled 20 pages (at 20 pages/min), scraped 0 items (at 0 items/min)
+2026-09-15 03:31:11 [swapgg] INFO: 🚚 swap.gg 第 21 页:500 堆,累计 3783 个饰品。
+2026-09-15 03:31:16 [swapgg] INFO: 🚚 swap.gg 第 22 页:500 堆,累计 3957 个饰品。
+2026-09-15 03:31:18 [swapgg] INFO: 🚚 swap.gg 第 23 页:500 堆,累计 4102 个饰品。
+2026-09-15 03:31:23 [swapgg] INFO: 🚚 swap.gg 第 24 页:500 堆,累计 4240 个饰品。
+2026-09-15 03:31:25 [swapgg] INFO: 🚚 swap.gg 第 25 页:500 堆,累计 4354 个饰品。
+2026-09-15 03:31:27 [swapgg] INFO: 🚚 swap.gg 第 26 页:499 堆,累计 4510 个饰品。
+2026-09-15 03:31:33 [swapgg] INFO: 🚚 swap.gg 第 27 页:500 堆,累计 4652 个饰品。
+2026-09-15 03:31:37 [swapgg] INFO: 🚚 swap.gg 第 28 页:500 堆,累计 4767 个饰品。
+2026-09-15 03:31:38 [swapgg] INFO: 🚚 swap.gg 第 29 页:500 堆,累计 4860 个饰品。
+2026-09-15 03:31:42 [swapgg] INFO: 🚚 swap.gg 第 30 页:500 堆,累计 4981 个饰品。
+2026-09-15 03:31:45 [swapgg] INFO: 🚚 swap.gg 第 31 页:500 堆,累计 5074 个饰品。
+2026-09-15 03:31:49 [swapgg] INFO: 🚚 swap.gg 第 32 页:490 堆,累计 5181 个饰品。
+2026-09-15 03:32:09 [scrapy.extensions.logstats] INFO: Crawled 32 pages (at 12 pages/min), scraped 0 items (at 0 items/min)
+2026-09-15 03:32:29 [scrapy.core.downloader.handlers.http11] WARNING: Got data loss in https://swap.gg/api/inventory/site. If you want to process broken responses set the setting DOWNLOAD_FAIL_ON_DATALOSS = False -- This message won't be shown in further requests
+2026-09-15 03:32:29 [app.middlewares.commonProxyPool] WARNING: 🔀⚠️ 节点 id=405 本次运行内封禁（原因：ResponseDataLossError），剩余可用 361 个
+2026-09-15 03:32:31 [swapgg] INFO: 🚚 swap.gg 第 33 页:500 堆,累计 5260 个饰品。
+2026-09-15 03:32:35 [swapgg] INFO: 🚚 swap.gg 第 34 页:500 堆,累计 5383 个饰品。
+2026-09-15 03:32:37 [swapgg] INFO: 🚚 swap.gg 第 35 页:500 堆,累计 5476 个饰品。
+2026-09-15 03:32:40 [swapgg] INFO: 🚚 swap.gg 第 36 页:500 堆,累计 5593 个饰品。
+2026-09-15 03:32:44 [swapgg] INFO: 🚚 swap.gg 第 37 页:500 堆,累计 5674 个饰品。
+2026-09-15 03:32:47 [swapgg] INFO: 🚚 swap.gg 第 38 页:500 堆,累计 5750 个饰品。
+2026-09-15 03:32:51 [swapgg] INFO: 🚚 swap.gg 第 39 页:500 堆,累计 5850 个饰品。
+2026-09-15 03:32:55 [swapgg] INFO: 🚚 swap.gg 第 40 页:499 堆,累计 5951 个饰品。
+2026-09-15 03:32:57 [swapgg] INFO: 🚚 swap.gg 第 41 页:500 堆,累计 5978 个饰品。
+2026-09-15 03:33:01 [swapgg] INFO: 🚚 swap.gg 第 42 页:499 堆,累计 6066 个饰品。
+2026-09-15 03:33:05 [swapgg] INFO: 🚚 swap.gg 第 43 页:500 堆,累计 6094 个饰品。
+2026-09-15 03:33:07 [swapgg] INFO: 🚚 swap.gg 第 44 页:500 堆,累计 6197 个饰品。
+2026-09-15 03:33:09 [scrapy.extensions.logstats] INFO: Crawled 44 pages (at 12 pages/min), scraped 0 items (at 0 items/min)
+2026-09-15 03:33:10 [swapgg] INFO: 🚚 swap.gg 第 45 页:500 堆,累计 6273 个饰品。
+2026-09-15 03:33:12 [swapgg] INFO: 🚚 swap.gg 第 46 页:500 堆,累计 6327 个饰品。
+2026-09-15 03:33:25 [swapgg] INFO: 🚚 swap.gg 第 47 页:500 堆,累计 6387 个饰品。
+2026-09-15 03:33:26 [swapgg] INFO: 🚚 swap.gg 第 48 页:500 堆,累计 6472 个饰品。
+2026-09-15 03:33:41 [swapgg] INFO: 🚚 swap.gg 第 49 页:500 堆,累计 6554 个饰品。
+2026-09-15 03:33:51 [swapgg] INFO: 🚚 swap.gg 第 50 页:500 堆,累计 6571 个饰品。
+2026-09-15 03:34:02 [swapgg] INFO: 🚚 swap.gg 第 51 页:498 堆,累计 6668 个饰品。
+2026-09-15 03:34:04 [swapgg] INFO: 🚚 swap.gg 第 52 页:500 堆,累计 6692 个饰品。
+2026-09-15 03:34:09 [scrapy.extensions.logstats] INFO: Crawled 52 pages (at 8 pages/min), scraped 0 items (at 0 items/min)
+2026-09-15 03:34:11 [swapgg] INFO: 🚚 swap.gg 第 53 页:500 堆,累计 6794 个饰品。
+2026-09-15 03:34:25 [swapgg] INFO: 🚚 swap.gg 第 54 页:500 堆,累计 6810 个饰品。
+2026-09-15 03:34:27 [swapgg] INFO: 🚚 swap.gg 第 55 页:497 堆,累计 6939 个饰品。
+2026-09-15 03:34:44 [swapgg] INFO: 🚚 swap.gg 第 56 页:500 堆,累计 6972 个饰品。
+2026-09-15 03:34:45 [swapgg] INFO: 🚚 swap.gg 第 57 页:500 堆,累计 6986 个饰品。
+2026-09-15 03:34:53 [swapgg] INFO: 🚚 swap.gg 第 58 页:500 堆,累计 7114 个饰品。
+2026-09-15 03:34:58 [swapgg] INFO: 🚚 swap.gg 第 59 页:500 堆,累计 7150 个饰品。
+2026-09-15 03:35:08 [swapgg] INFO: 🚚 swap.gg 第 60 页:500 堆,累计 7163 个饰品。
+2026-09-15 03:35:09 [scrapy.extensions.logstats] INFO: Crawled 60 pages (at 8 pages/min), scraped 0 items (at 0 items/min)
+2026-09-15 03:35:26 [swapgg] INFO: 🚚 swap.gg 第 61 页:500 堆,累计 7172 个饰品。
+2026-09-15 03:35:27 [swapgg] INFO: 🚚 swap.gg 第 62 页:500 堆,累计 7212 个饰品。
+2026-09-15 03:35:39 [app.middlewares.commonProxyPool] WARNING: 🔀⚠️ 节点 id=254 本次运行内封禁（原因：DownloadFailedError），剩余可用 360 个
+2026-09-15 03:35:52 [swapgg] INFO: 🚚 swap.gg 第 63 页:500 堆,累计 7331 个饰品。
+2026-09-15 03:36:02 [swapgg] INFO: 🚚 swap.gg 第 64 页:500 堆,累计 7344 个饰品。
+2026-09-15 03:36:09 [scrapy.extensions.logstats] INFO: Crawled 64 pages (at 4 pages/min), scraped 0 items (at 0 items/min)
+2026-09-15 03:36:15 [swapgg] INFO: 🚚 swap.gg 第 65 页:500 堆,累计 7508 个饰品。
+2026-09-15 03:36:26 [swapgg] INFO: 🚚 swap.gg 第 66 页:500 堆,累计 7652 个饰品。
+2026-09-15 03:36:36 [swapgg] INFO: 🚚 swap.gg 第 67 页:500 堆,累计 8008 个饰品。
+2026-09-15 03:36:48 [swapgg] INFO: 🚚 swap.gg 第 68 页:99 堆,累计 8107 个饰品。
+2026-09-15 03:36:48 [swapgg] INFO: 🚚 swap.gg 价格抓取完成,app_id=730:68 页、33572 堆(计入:可立即交易 32377、带锁定时间 1193;不可交易 2),产出 8107 条记录。
+2026-09-15 03:36:48 [app.extensions.realtimeMonitor] INFO: 🧩 实时吞吐已写入 Valkey：1 个秒桶，共 800 条，key=steammarket:status:datasource:realtime:website:SWAPGG:total。
+2026-09-15 03:36:49 [app.extensions.realtimeMonitor] INFO: 🧩 实时吞吐已写入 Valkey：2 个秒桶，共 5800 条，key=steammarket:status:datasource:realtime:website:SWAPGG:total。
+2026-09-15 03:36:50 [scrapy.core.engine] INFO: Closing spider (finished)
+2026-09-15 03:36:50 [app.pipelines.commonPriceCopy] INFO: 📥 COPY 写入价格完成：8107 条。
+2026-09-15 03:36:50 [app.pipelines.commonPriceCopy] INFO: 📥 CommonPriceCopyPipeline 收尾：共写入 8107 条 / 1 批。
+2026-09-15 03:36:50 [app.pipelines.commonPriceFee] INFO: 📥 费用计算收尾：共 8107 条，买入 8107 / 卖出 8107 / 提现 8107 条算出。
+2026-09-15 03:36:50 [app.pipelines.commonHashNameCanon] INFO: 🏷️ 饰品名改名收尾：改名 0 条；解析计数 exact=8107；别名回写 0 行（失败 0 次）。
+2026-09-15 03:36:50 [py.warnings] WARNING: /usr/local/lib/python3.12/site-packages/scrapy/pipelines/__init__.py:118: ScrapyDeprecationWarning: app.pipelines.commonHashNameCanon.CommonHashNameCanonPipeline.close_spider returned a Deferred, this is deprecated. Please refactor this function to return a coroutine.
+  return ensure_awaitable(result, _warn=global_object_name(method))
+
+2026-09-15 03:36:50 [swapgg] INFO: 🚚 任务结束 — task_id=70a7ff892d6d4a7a8b8bdcf089109b6c  reason=finished
+2026-09-15 03:36:50 [py.warnings] WARNING: /usr/local/lib/python3.12/site-packages/scrapy/utils/signal.py:191: ScrapyDeprecationWarning: app.extensions.profitAlert.ProfitAlertExtension._on_spider_closed returned a Deferred, this is deprecated. Please refactor this function to return a coroutine.
+  result = await ensure_awaitable(
+
+2026-09-15 03:36:50 [scrapy.extensions.feedexport] INFO: Stored jsonlines feed (8107 items) in: file:///agent-data/scrapyd/items/steammarket-spider/swapgg/bb521998b0b511f1b7dd36e28bd6996d.jl
+2026-09-15 03:36:50 [app.extensions.realtimeMonitor] INFO: 🧩 实时吞吐已写入 Valkey：2 个秒桶，共 1507 条，key=steammarket:status:datasource:realtime:website:SWAPGG:total。

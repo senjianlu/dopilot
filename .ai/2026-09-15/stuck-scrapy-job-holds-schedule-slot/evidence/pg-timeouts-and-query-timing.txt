@@ -1,0 +1,12 @@
+$ .venv/bin/python pg_profit_load_timing.py   # 只读:连接串查询参数名、服务端默认超时 / 保活、ProfitAlert _load 那条查询的计时
+url scheme: postgresql+psycopg | query param names: ['sslmode']
+server default statement_timeout = 0
+server default lock_timeout = 0
+server default idle_in_transaction_session_timeout = 0
+server default idle_session_timeout = 0
+server default tcp_keepalives_idle = 7200
+server default tcp_keepalives_interval = 75
+server default tcp_keepalives_count = 9
+server default tcp_user_timeout = 0
+f_sell_reference_profile('default'): 14224 rows in 1.49s (本会话 SET LOCAL statement_timeout=60s 之后执行)
+exit=0
