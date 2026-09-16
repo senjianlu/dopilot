@@ -105,6 +105,12 @@ def _apply_status(
             execution.log_bytes = event.log_bytes
 
 
+def _mark_progress(execution: Execution, now: datetime) -> None:
+    """A real lifecycle event is progress by definition; clears any stall mark."""
+    execution.last_progress_at = now
+    execution.no_progress_at = None
+
+
 def _maybe_update_lost_reason(execution: Execution, event: AgentEvent) -> None:
     """lost->lost upsert: agent-sourced reason wins over a server-sourced one."""
     if event.lost_reason is None:
@@ -205,6 +211,18 @@ async def apply_event(
         now = datetime.now(UTC)
         execution.last_event_at = now
         execution.stalled_at = None
+        # Progress is judged separately from liveness. A heartbeat says "scrapyd
+        # still lists this job", which a spider stuck in its close phase keeps
+        # satisfying forever; only a GROWING log proves it is doing something.
+        # ``log_bytes is None`` means the agent could not sample at all, so we
+        # advance neither clock and never overwrite a known size with nothing --
+        # a missing reading must not read as "no progress".
+        if event.log_bytes is not None:
+            execution.last_progress_sample_at = now
+            if event.log_bytes > (execution.log_bytes or 0):
+                execution.log_bytes = event.log_bytes
+                execution.last_progress_at = now
+                execution.no_progress_at = None
         if execution.status == EXEC_LOST:
             # cleanup-reconcile guard: on a server-lost execution a heartbeat
             # proves the process is still alive -> reclaim it; it stays lost.
@@ -276,6 +294,9 @@ async def apply_event(
     # agent produced an event -> it is alive; reset the event-stall clock.
     execution.last_event_at = now
     execution.stalled_at = None
+    # A lifecycle event is real movement, unlike a bare heartbeat, so it counts
+    # as progress and clears any outstanding no-progress alert.
+    _mark_progress(execution, now)
     await _update_task(session, execution, now)
     if (
         outcome in (OUTCOME_APPLIED, OUTCOME_OVERRIDE_LOST)

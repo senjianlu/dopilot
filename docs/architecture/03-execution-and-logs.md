@@ -25,7 +25,9 @@ failed（`dispatch_unavailable`）返回 503;`XADD` 成功但 `sent` 标记失�
 返回 202 `dispatch_unknown`（不返回"未投递"语义），由后续事件收敛。定时
 触发进 queued + pending outbox，超限转 failed（`dispatch_timeout`），并做
 coalesce 抑制同源堆积。取消先 CAS 置未 sent outbox 为 `canceled`，同时投
-`stop(intent=cancel)`——agent 无论进程是否仍在都回 `attempt.canceled`。
+`stop(intent=cancel)`——agent 无论进程是否仍在都回 `attempt.canceled`，但
+**不再是即时回**:agent 先确认进程真的退出（见「停止状态机」），最迟在
+`stop_confirm_timeout_seconds`（默认 120s）后无条件上报。
 
 ## 状态事件与对账
 
@@ -44,7 +46,37 @@ coalesce 抑制同源堆积。取消先 CAS 置未 sent outbox 为 `canceled`，
   `last_event_at`、清 `stalled_at`——不进状态机、不写事件审计表;心跳
   **直接 XADD、不走 agent 持久 event outbox**（瞬时信号,断连期间落盘重放
   无意义且会挤占 outbox 容量上限）。scrapyd 不可达（status unknown）或
-  进程已退出时**不发**——心跳的语义是「我确认它还活着」。
+  进程已退出时**不发**——心跳的语义是「我确认它还活着」。心跳还**携带
+  `log_bytes`**（该 tick 读到的 job.log 大小;读不到则为 `None`），这是
+  server 唯一的「在干活」证据,见下条。
+- **「还活着」不等于「在干活」(无进度探测)**:scrapyd 会一直把卡在关闭阶段
+  的 spider 列为 running,心跳因此永远为真——2026-09-15 一个 SWAPGG job 就
+  这样占着调度唯一的并发槽两小时。故 server 把**进度**与**存活**分成两套时钟:
+  `last_progress_at`（日志真的变长,或来了真实生命周期事件）与
+  `last_progress_sample_at`（最近一次拿到**任何**日志大小读数）。仅当采样仍
+  新鲜（`no_progress_sample_max_age_seconds`，默认 300s）且空转超过
+  `no_progress_stall_seconds`（默认 1800s，0=关闭）时,才打一次性标记
+  `no_progress_at` 并发 `attempt_no_progress` 通知。
+  **这条链只告警、绝不判 lost**:`last_event_at` 与 reclaim 链一行未改,所以
+  长时间安静的正常任务最坏只收到一条通知。`auto_stop_on_no_progress`（默认
+  **false**）才会真的下发取消。`no_progress_at` 不被心跳清除（只有真实进度会
+  清），这是通知与自动取消各只发一次的依据——`notify` 的去重只作用于未读行,
+  用户读过就会再插一条。
+- **停止状态机(agent)**:`stop` 不在命令消费者里等待——那是串行的,一批取消
+  会冻结所有执行的心跳与刷屏检查。改为先把意图落盘（`_process` 即使处理器抛异常
+  也会 XACK,没落盘的意图就永远没人推进），再由 tick 循环推进
+  TERM → `stop_kill_after_seconds`(默认 10s) → `signal=KILL` → 确认退出。
+  确认用的是**只问死活的 `is_job_alive`**,不是 `status`:后者在 TERM 之后会把
+  离开列表的 job 报成 `canceled`（那是 agent 自己造的,不是权威终态,reclaim 若
+  据此上报就会把 lost 覆盖掉）,且对「已取消、无日志的 pending job」同样返回
+  `unknown`。收尾严格按 intent 分叉:`cancel` 报权威 `canceled`,`reclaim`
+  保持 lost 且不发任何事件。
+- **终态有界,回收不封顶**:硬期限只约束**终态上报**;到点进程仍活着时,终态照
+  报,但 `kill_pending` 与 scrapyd job 映射都保留,由回收看门狗按
+  `kill_retry_interval_seconds`（默认 60s）持续重发 KILL 并记 WARNING,直到确认
+  退出。**先删映射再谈回收就等于亲手制造一个没人看得见的残留进程**,那正是本机制
+  要消灭的东西。同理,停止/回收期间到达的 `cleanup_logs` 只记 `cleanup_pending`,
+  等进程确认退出、终态确认交付后才真正清理。
 - server reconcile loop 只做 heartbeat/event 对账（不访问 agent HTTP）:
   heartbeat 超时 → 相关 running attempt 标 `lost(heartbeat_timeout)`;
   事件停滞先出 operator 可见的 `stalled` 告警（非 terminal），持续超阈值

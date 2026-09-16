@@ -102,6 +102,9 @@ class CommandConsumer:
         attempt_heartbeat_interval_seconds: int = 60,
         max_job_log_bytes: int = 0,
         log_flood_kill_after_seconds: int = 30,
+        stop_kill_after_seconds: int = 10,
+        stop_confirm_timeout_seconds: int = 120,
+        kill_retry_interval_seconds: int = 60,
         scrapyd_pid: Callable[[], int | None] | None = None,
         proc_root: str | os.PathLike[str] = "/proc",
         now: Callable[[], datetime] | None = None,
@@ -149,6 +152,9 @@ class CommandConsumer:
         # wall clock (tests substitute a mock).
         self._log_cap = max(0, int(max_job_log_bytes))
         self._flood_kill_after = max(0, int(log_flood_kill_after_seconds))
+        self._stop_kill_after = max(0, int(stop_kill_after_seconds))
+        self._stop_confirm_timeout = max(0, int(stop_confirm_timeout_seconds))
+        self._kill_retry_interval = max(0, int(kill_retry_interval_seconds))
         self._scrapyd_pid = scrapyd_pid
         self._proc_root = Path(proc_root)
         self._now = now or (lambda: datetime.now(UTC))
@@ -304,7 +310,15 @@ class CommandConsumer:
         reconciled = 0
         for execution_id in self._store.list_execution_ids():
             state = self._store.read(execution_id)
-            if state is None or state.phase != "started":
+            if state is None:
+                continue
+            if state.phase != "started":
+                # A finished attempt can still owe work: a terminal that never
+                # reached ``emit``, a process that outlived its stop deadline, or
+                # a ``cleanup_logs`` deferred while either was outstanding. The
+                # cleanup command is long since XACKed, so this is the only
+                # place left that can finish those.
+                await self._reclaim_watchdog(state)
                 continue
             # Python-wheel terminals come from the in-process background wait
             # task (or boot orphan recovery); never poll Scrapy status for them.
@@ -318,7 +332,18 @@ class CommandConsumer:
                 ):
                     await self._maybe_emit_heartbeat(state.task_id, execution_id)
                 continue
-            state = await self._flood_watchdog(state) or state
+            # One sample per tick, taken INDEPENDENTLY of the flood cap: it
+            # feeds both the flood watchdog (when the cap is on) and the
+            # heartbeat's progress evidence (always). Sampling inside
+            # _flood_watchdog would silently disable no-progress detection for
+            # anyone running with max_job_log_bytes = 0.
+            size = await self._sample_log_size(state)
+            state = await self._flood_watchdog(state, size) or state
+            if state.stop_requested_at:
+                # A stop owns this execution's terminal now; skip the normal
+                # status/heartbeat path entirely.
+                await self._stop_watchdog(state)
+                continue
             resp = await self._runner.status(execution_id, state.task_id)
             terminal = _STATUS_TO_TERMINAL.get(resp.status)
             if terminal is None:
@@ -326,7 +351,9 @@ class CommandConsumer:
                 # confirmed alive -> rate-limited heartbeat. ``unknown`` (scrapyd
                 # unreachable / no state) is NOT confirmation; never heartbeat it.
                 if resp.status == AttemptStatus.running:
-                    await self._maybe_emit_heartbeat(state.task_id, execution_id)
+                    await self._maybe_emit_heartbeat(
+                        state.task_id, execution_id, log_bytes=size
+                    )
                 continue
             self._last_attempt_heartbeat.pop(execution_id, None)
             await self._finish_scrapy_attempt(state, terminal, exit_code=resp.exit_code)
@@ -423,14 +450,29 @@ class CommandConsumer:
             fh.write(marker)
             fh.flush()
 
-    async def _flood_watchdog(self, state: AttemptState) -> AttemptState | None:
+    async def _sample_log_size(self, state: AttemptState) -> int | None:
+        """This tick's job.log size, or None when it cannot be read.
+
+        Sampled independently of ``max_job_log_bytes``: the flood watchdog is an
+        optional guard, but the heartbeat's progress evidence is not. Reading it
+        inside the watchdog would make every heartbeat report ``None`` whenever
+        the cap is disabled, which silently turns no-progress detection off.
+        """
+        if not state.log_path:
+            return None
+        return await asyncio.to_thread(log_size, state.log_path)
+
+    async def _flood_watchdog(
+        self, state: AttemptState, size: int | None = None
+    ) -> AttemptState | None:
         """Per-tick log-flood check for one started scrapyd attempt.
 
         Returns the refreshed state when it changed, else None. Cap 0 = off.
+        ``size`` is this tick's sample from :meth:`_sample_log_size` (passing it
+        in keeps the read to one per execution per tick).
         """
         if self._log_cap <= 0 or not state.log_path:
             return None
-        size = await asyncio.to_thread(log_size, state.log_path)
         if size is None:
             return None
         execution_id = state.execution_id
@@ -573,8 +615,15 @@ class CommandConsumer:
             found.append(int(name))
         return found
 
-    async def _maybe_emit_heartbeat(self, task_id: str, execution_id: str) -> None:
-        """Rate-limited attempt-liveness heartbeat (caller confirmed alive)."""
+    async def _maybe_emit_heartbeat(
+        self, task_id: str, execution_id: str, *, log_bytes: int | None = None
+    ) -> None:
+        """Rate-limited attempt-liveness heartbeat (caller confirmed alive).
+
+        ``log_bytes`` is this tick's job.log size, the server's only evidence of
+        actual progress; ``None`` (wheel runner, unreadable log) tells it to
+        withhold judgement rather than assume a stall.
+        """
         if self._attempt_hb_interval <= 0:
             return
         now = time.monotonic()
@@ -583,7 +632,9 @@ class CommandConsumer:
             return
         # emit_heartbeat never raises; stamp only on success so a failed XADD
         # is retried on the next reconcile pass instead of a full interval later.
-        if await self._events.emit_heartbeat(task_id, execution_id):
+        if await self._events.emit_heartbeat(
+            task_id, execution_id, log_bytes=log_bytes
+        ):
             self._last_attempt_heartbeat[execution_id] = now
 
     # --- draining ----------------------------------------------------------
@@ -1007,12 +1058,20 @@ class CommandConsumer:
                     cmd.task_id, cmd.execution_id, AgentEventType.canceled
                 )
                 return
-            # scrapy (or missing state) -> authoritative canceled as before.
-            await self._runner.stop(cmd.execution_id, cmd.task_id)
-            self._store.mark_done(cmd.execution_id, result="canceled")
-            await self._events.emit_terminal(
-                cmd.task_id, cmd.execution_id, AgentEventType.canceled
-            )
+            if state is None or state.phase != "started":
+                # No local state (cancelled before it ever started), or already
+                # wrapped up locally. There is nothing to drive across ticks, and
+                # ``attempt.canceled`` is a must-deliver contract
+                # (docs/architecture/03-execution-and-logs.md): report it now,
+                # exactly as before. Never revive a finished attempt by pushing
+                # its phase back to ``started``.
+                await self._runner.stop(cmd.execution_id, cmd.task_id)
+                self._store.mark_done(cmd.execution_id, result="canceled")
+                await self._events.emit_terminal(
+                    cmd.task_id, cmd.execution_id, AgentEventType.canceled
+                )
+                return
+            await self._begin_stop(state, StopIntent.cancel)
             return
 
         # reclaim: kill if running, otherwise stay lost.
@@ -1023,18 +1082,272 @@ class CommandConsumer:
             await self._wheel_runner.terminate(cmd.execution_id)
             self._store.mark_done(cmd.execution_id, result="lost")
             return
+        if state.phase != "started":
+            # Already finished locally: re-emit whatever real terminal we hold
+            # (agent>server override) and stop there. No signal, no revival.
+            if state.result:
+                await self._events.republish_current(cmd.task_id, cmd.execution_id)
+            return
+        if state.stop_requested_at:
+            # A stop is already in flight and the watchdog owns this terminal.
+            # This check MUST come before the status read below: by now we have
+            # TERMed the job, so the runner's own ``mark_canceled`` makes a
+            # departed job resolve as ``canceled`` -- reporting that would
+            # overwrite the server's ``lost`` with a terminal we manufactured.
+            return
+        # Read the status BEFORE any signal goes out: once ``stop`` succeeds the
+        # runner sets ``canceled`` on the state, after which a departed job
+        # resolves as ``canceled`` -- our own doing, not an authoritative
+        # terminal. This is the only point where an override is trustworthy.
         resp = await self._runner.status(cmd.execution_id, cmd.task_id)
         terminal = _STATUS_TO_TERMINAL.get(resp.status)
         if terminal is not None:
             # a genuine terminal exists -> agent>server override (with stats).
             await self._finish_scrapy_attempt(state, terminal, exit_code=resp.exit_code)
+            return
+        await self._begin_stop(state, StopIntent.reclaim)
+
+    # --- stop state machine ------------------------------------------------
+    async def _begin_stop(self, state: AttemptState, intent: StopIntent) -> None:
+        """Record the stop intent, then make one best-effort TERM attempt.
+
+        The write comes first on purpose: ``_process`` XACKs a command even when
+        its handler raises, so an intent that never reached disk is gone for
+        good. Once it is recorded, :meth:`_stop_watchdog` owns the rest -- across
+        ticks, and across an agent restart.
+        """
+        execution_id = state.execution_id
+        if state.stop_requested_at:
+            return  # already stopping -> idempotent, do not re-signal
+        self._store.mark_stop_requested(
+            execution_id,
+            intent=intent.value,
+            requested_at=self._now().isoformat(),
+        )
+        # The tick loop owns this execution's terminal now; stop pacing liveness.
+        self._last_attempt_heartbeat.pop(execution_id, None)
+        await self._send_stop_signal(
+            execution_id, state.task_id, signal_name=None, escalation="term"
+        )
+
+    async def _send_stop_signal(
+        self,
+        execution_id: str,
+        task_id: str,
+        *,
+        signal_name: str | None,
+        escalation: str,
+    ) -> bool:
+        """Ask scrapyd to stop a job. Returns True iff it acknowledged.
+
+        ``stop_escalation`` advances ONLY on success, so a failed TERM/KILL is
+        simply retried by the next tick instead of being mistaken for progress.
+        """
+        try:
+            resp = await self._runner.stop(
+                execution_id, task_id, signal=signal_name
+            )
+        except Exception as exc:  # noqa: BLE001 - scrapyd/transport failure
+            logger.warning(
+                "stop signal %s failed for %s: %s",
+                signal_name or "TERM", execution_id, exc,
+            )
+            return False
+        if (resp.detail or {}).get("reason") == "cancel_failed":
+            logger.warning(
+                "stop signal %s rejected for %s: %s",
+                signal_name or "TERM", execution_id, resp.detail,
+            )
+            return False
+        self._store.mark_stop_escalation(execution_id, escalation=escalation)
+        return True
+
+    def _elapsed_since(self, stamp: str | None) -> float:
+        if not stamp:
+            return 0.0
+        try:
+            started = datetime.fromisoformat(stamp)
+        except ValueError:
+            return 0.0
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        return (self._now() - started).total_seconds()
+
+    async def _stop_watchdog(self, state: AttemptState) -> None:
+        """Drive one in-flight stop forward by a single tick.
+
+        Order matters: the deadline is checked FIRST so it covers every path
+        that would otherwise return early -- scrapyd unreachable, a signal that
+        will not send, or a process that simply refuses to die. Checking it last
+        would let a permanently unreachable scrapyd defer the terminal forever.
+        """
+        execution_id = state.execution_id
+        elapsed = self._elapsed_since(state.stop_requested_at)
+
+        if self._stop_confirm_timeout > 0 and elapsed >= self._stop_confirm_timeout:
+            logger.warning(
+                "stop for %s unconfirmed after %.0fs; reporting the terminal and "
+                "keeping the job mapping for reclamation",
+                execution_id, elapsed,
+            )
+            await self._finalize_stop(state, confirmed=False)
+            return
+
+        # Liveness first, so a job that already died is wrapped up instead of
+        # being shot again. Liveness only, never the resolved status: that
+        # reports a departed job as ``canceled`` once we have TERMed it, and
+        # reports ``unknown`` both for an unreachable scrapyd AND for a
+        # cancelled ``pending`` job that left no log -- which would strand the
+        # latter until the deadline.
+        alive = await self._runner.is_job_alive(execution_id)
+        if alive is False:
+            await self._finalize_stop(state, confirmed=True)
+            return
+        if alive is None:
+            return  # scrapyd unreachable: signalling is pointless, wait it out
+
+        if state.stop_escalation is None:
+            await self._send_stop_signal(
+                execution_id, state.task_id, signal_name=None, escalation="term"
+            )
+        elif state.stop_escalation == "term" and elapsed >= self._stop_kill_after:
+            await self._send_stop_signal(
+                execution_id, state.task_id, signal_name="KILL", escalation="kill"
+            )
+
+    async def _finalize_stop(
+        self, state: AttemptState, *, confirmed: bool
+    ) -> None:
+        """Report the terminal for a stop, per its intent.
+
+        ``confirmed`` says whether the process is known to be gone. When it is
+        not, the terminal is still reported (the contract is time-bounded) but
+        ``kill_pending`` keeps the state -- and with it the scrapyd job id --
+        alive so :meth:`_reclaim_watchdog` can keep trying. Dropping the mapping
+        here would leave a running process nothing can find.
+        """
+        execution_id = state.execution_id
+        if state.stop_intent == StopIntent.reclaim.value:
+            # Stays lost: emitting ``canceled`` here would overwrite the
+            # server's lost verdict with a terminal we manufactured.
+            self._store.mark_done(
+                execution_id,
+                result="lost",
+                kill_pending=not confirmed,
+                terminal_pending=False,
+            )
         else:
-            # still running -> kill to reclaim resources; execution stays lost.
-            await self._runner.stop(cmd.execution_id, cmd.task_id)
-            self._store.mark_done(cmd.execution_id, result="lost")
+            self._store.mark_done(
+                execution_id,
+                result="canceled",
+                kill_pending=not confirmed,
+                terminal_pending=True,
+            )
+            await self._events.emit_terminal(
+                state.task_id, execution_id, AgentEventType.canceled
+            )
+            self._store.clear_terminal_pending(execution_id)
+        if confirmed:
+            await self._run_deferred_cleanup(execution_id)
+
+    async def _reclaim_watchdog(self, state: AttemptState) -> None:
+        """Finish the work a wrapped-up attempt may still owe.
+
+        Covers three leftovers, in order of how badly they hurt: a terminal that
+        never reached ``emit`` (the server would eventually mis-judge it lost), a
+        process that outlived its stop deadline (an untracked orphan), and a
+        cleanup that had to wait for both. The ``cleanup_logs`` command was
+        XACKed long ago, so nothing else will come back for these.
+        """
+        execution_id = state.execution_id
+
+        if state.terminal_pending:
+            # mark_done landed but the process died before emit's own durable
+            # persist; nothing is queued anywhere, so re-publish from the state.
+            await self._events.republish_current(state.task_id, execution_id)
+            self._store.clear_terminal_pending(execution_id)
+            state = self._store.read(execution_id) or state
+
+        if state.kill_pending:
+            alive = await self._runner.is_job_alive(execution_id)
+            if alive is False:
+                self._store.clear_kill_pending(execution_id)
+                await self._run_deferred_cleanup(execution_id)
+                return
+            if alive is True and (
+                self._kill_retry_interval <= 0
+                or state.kill_last_attempt_at is None
+                or self._elapsed_since(state.kill_last_attempt_at)
+                >= self._kill_retry_interval
+            ):
+                logger.warning(
+                    "scrapyd job %s for execution %s is still running after its "
+                    "stop deadline; re-sending KILL",
+                    state.scrapyd_job_id, execution_id,
+                )
+                await self._send_stop_signal(
+                    execution_id, state.task_id,
+                    signal_name="KILL", escalation="kill",
+                )
+                self._store.mark_kill_attempt(
+                    execution_id, at=self._now().isoformat()
+                )
+            return  # never clean up while the process may still be alive
+
+        if state.cleanup_pending:
+            await self._run_deferred_cleanup(execution_id)
+
+    async def _run_deferred_cleanup(self, execution_id: str) -> None:
+        """Run a cleanup that was deferred, once it is finally safe.
+
+        All three conditions must hold: the process is gone (or we would drop
+        the job mapping we still need), the terminal is handed over (or we would
+        drop the result we still owe the server), and a cleanup was actually
+        requested.
+        """
+        state = self._store.read(execution_id)
+        if state is None or not state.cleanup_pending:
+            return
+        if state.kill_pending or state.terminal_pending:
+            return
+        try:
+            await self._do_cleanup(execution_id)
+        except OSError:
+            # Keep the flag and let the reclaim watchdog try again: the
+            # originating cleanup_logs command was XACKed long ago, so giving up
+            # here leaks the log and the workspace forever.
+            logger.warning(
+                "deferred cleanup for %s failed; will retry", execution_id,
+                exc_info=True,
+            )
 
     async def _handle_cleanup(self, cmd: AgentCommand) -> None:
         state = self._store.read(cmd.execution_id)
+        if state is not None and self._cleanup_must_wait(state):
+            # Deleting the state now would take the scrapyd job mapping (and the
+            # terminal we still owe) with it. Record the request instead -- the
+            # command is about to be XACKed either way, so an unpersisted
+            # deferral is a cleanup that never happens.
+            self._store.mark_cleanup_pending(cmd.execution_id)
+            return
+        await self._do_cleanup(cmd.execution_id)
+
+    @staticmethod
+    def _cleanup_must_wait(state: AttemptState) -> bool:
+        """True while a stop, a reclamation, or a terminal is still outstanding.
+
+        The reclaim case is not an edge case: for a cancel, ``cleanup_logs``
+        normally arrives AFTER the terminal (the server starts its drain window
+        from ``finished_at``), i.e. exactly when the state is ``done`` with
+        ``kill_pending`` still set.
+        """
+        if state.phase == "started" and state.stop_requested_at:
+            return True
+        return bool(state.kill_pending or state.terminal_pending)
+
+    async def _do_cleanup(self, execution_id: str) -> None:
+        """Drop an execution's artifacts and state. Idempotent."""
+        state = self._store.read(execution_id)
         if state is not None:
             if state.log_path:
                 try:
@@ -1045,7 +1358,7 @@ class CommandConsumer:
             # merged ``job.log`` + the job.pgid sidecar); remove it wholesale.
             if state.workspace_path:
                 shutil.rmtree(state.workspace_path, ignore_errors=True)
-        self._store.delete(cmd.execution_id)
+        self._store.delete(execution_id)
         # Resource caps (C1/C6): release per-execution bookkeeping now that the
         # execution is gone — the .logpos cursor (previously leaked forever), the
         # EOF dedup entry, and any residual runner state. The per-execution LOCK is
@@ -1053,7 +1366,7 @@ class CommandConsumer:
         # (R-02), which removes the entry only when no holder/waiter remains, so
         # cleanup can never orphan a held lock. Note: _handle_cleanup itself runs
         # inside that lock, so the entry is released when this handler exits.
-        self._release_execution(cmd.execution_id)
+        self._release_execution(execution_id)
 
     def _release_execution(self, execution_id: str) -> None:
         """Drop per-execution in-memory + on-disk artifacts for a gone id.

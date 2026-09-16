@@ -148,6 +148,23 @@ class AgentsSettings(BaseModel):
     # unconfirmable" before reclaim, so it errs toward not killing healthy work
     # (900 used to act as a hard task-runtime cap for pre-heartbeat agents).
     lost_after_stalled_seconds: int = 3600
+    # No-progress detection. Strictly an ALERTING path: it never marks an
+    # attempt lost and never touches the reclaim chain above, because a long
+    # quiet stretch is not proof of death -- killing on that signal is exactly
+    # what made a hard spider-side timeout unusable.
+    #
+    # ``no_progress_stall_seconds``: how long a confirmed-alive attempt may go
+    #   without its log growing before we alert. 0 disables the feature. The
+    #   default is deliberately far wider than any known healthy run.
+    # ``no_progress_sample_max_age_seconds``: how fresh the agent's last
+    #   log-size reading must be for the verdict to mean anything. Without a
+    #   current reading we are blind, not looking at a stalled job, so we say
+    #   nothing. ~5x the agent's 60s heartbeat leaves room for jitter.
+    # ``auto_stop_on_no_progress``: opt-in. False means dopilot only tells you;
+    #   turning it on makes a no-progress verdict actually cancel the task.
+    no_progress_stall_seconds: int = 1800
+    no_progress_sample_max_age_seconds: int = 300
+    auto_stop_on_no_progress: bool = False
     agent_token: str | None = None
 
     @property

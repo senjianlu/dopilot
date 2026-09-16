@@ -135,6 +135,12 @@ describe("NotificationBell (TC-28)", () => {
         payload: { agent_ids: ["ghost"], count: 1 } },
       { ...floodNote, id: "n-7", type: "sent_commands_requeued",
         payload: { count: 2 } },
+      { ...floodNote, id: "n-8", type: "attempt_no_progress",
+        payload: {
+          task_id: "task-42", execution_id: "exec-7", agent_id: "agent-1",
+          log_bytes: 4096, idle_seconds: 1800, threshold: 1800,
+          auto_stopped: false,
+        } },
     ];
     listNotifications.mockResolvedValue({ notifications: all, unread_count: 7 });
     const user = userEvent.setup();
@@ -165,5 +171,60 @@ describe("NotificationBell (TC-28)", () => {
       "/maintenance",
     );
     expect(notificationHref({ ...floodNote, type: "unknown_type" })).toBeNull();
+    // a stalled attempt drills into the task that is stuck
+    expect(
+      notificationHref({ ...floodNote, type: "attempt_no_progress" }),
+    ).toBe("/tasks/detail?id=task-42");
+  });
+
+  it("tells a stalled attempt apart from one it also stopped", async () => {
+    // TC-33: the payload's auto_stopped flag picks the sentence, so the alert
+    // never implies dopilot killed a task when it only watched one.
+    await i18n.changeLanguage("en");
+    const base = {
+      id: "n-9",
+      type: "attempt_no_progress",
+      severity: "warning",
+      count: 1,
+      created_at: "2026-09-16T00:00:00Z",
+      updated_at: "2026-09-16T00:00:00Z",
+      last_seen_at: "2026-09-16T00:00:00Z",
+      read_at: null,
+      payload: {
+        task_id: "task-42", execution_id: "exec-7", agent_id: "agent-1",
+        log_bytes: 4096, idle_seconds: 1800, threshold: 1800,
+        auto_stopped: false,
+      },
+    } as unknown as NotificationItem;
+    listNotifications.mockResolvedValue({
+      notifications: [base],
+      unread_count: 1,
+    });
+    const user = userEvent.setup();
+    const view = renderWithProviders(<TopControls />);
+    await user.click(await screen.findByTestId("notification-bell"));
+    let item = within(
+      await screen.findByTestId("notification-menu"),
+    ).getByTestId("notification-item-attempt_no_progress");
+    expect(item).toHaveTextContent("no log for 1800s");
+    expect(item).toHaveTextContent("still holds");
+    expect(item.textContent).not.toContain("notifications.types");
+    view.unmount();
+
+    listNotifications.mockResolvedValue({
+      notifications: [
+        {
+          ...base,
+          payload: { ...(base.payload as object), auto_stopped: true },
+        } as unknown as NotificationItem,
+      ],
+      unread_count: 1,
+    });
+    renderWithProviders(<TopControls />);
+    await user.click(await screen.findByTestId("notification-bell"));
+    item = within(
+      await screen.findByTestId("notification-menu"),
+    ).getByTestId("notification-item-attempt_no_progress");
+    expect(item).toHaveTextContent("cancelled automatically");
   });
 });

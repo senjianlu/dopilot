@@ -109,6 +109,9 @@ async def run_agent(settings: Settings, *, stop: asyncio.Event | None = None) ->
             # external mode -> that level is disabled).
             max_job_log_bytes=s.agent.max_job_log_bytes,
             log_flood_kill_after_seconds=s.agent.log_flood_kill_after_seconds,
+            stop_kill_after_seconds=s.agent.stop_kill_after_seconds,
+            stop_confirm_timeout_seconds=s.agent.stop_confirm_timeout_seconds,
+            kill_retry_interval_seconds=s.agent.kill_retry_interval_seconds,
             scrapyd_pid=(
                 (lambda: runtime.process.pid) if runtime.process is not None else None
             ),

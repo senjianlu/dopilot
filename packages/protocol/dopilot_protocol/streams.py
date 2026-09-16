@@ -123,6 +123,15 @@ class AgentEventType(str, Enum):
     for a still-running attempt it has just confirmed alive (scrapyd lists the
     job / the wheel child has no returncode), so the server's event-stall clock
     (``last_event_at``) measures liveness instead of time-since-last-transition.
+
+    A heartbeat MAY carry ``log_bytes`` -- the job log's size at that moment.
+    Liveness and progress are different questions: scrapyd keeps listing a
+    spider wedged in its close phase, so the heartbeat alone says "still
+    listed", and only a growing log says "still working". The server tracks the
+    two on separate clocks and uses progress purely for alerting, never to judge
+    an attempt lost. ``log_bytes`` omitted (wheel runner, unreadable log) means
+    "could not sample", which is NOT the same as "no progress" -- the server
+    must then withhold judgement rather than assume a stall.
     """
 
     accepted = "attempt.accepted"

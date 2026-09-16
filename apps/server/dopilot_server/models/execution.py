@@ -190,6 +190,33 @@ class Execution(Base):
     stalled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Progress clocks, deliberately separate from ``last_event_at``.
+    #
+    # A heartbeat only proves the agent still sees the job listed, which stays
+    # true for a spider wedged in its close phase -- that is how a stuck job
+    # held a schedule's only concurrency slot for hours. So progress is tracked
+    # apart from liveness, and NEVER feeds the lost/reclaim path: at worst a
+    # long-but-quiet run earns a notification, never a kill.
+    #
+    # ``last_progress_at``   -- last time the job actually advanced (its log
+    #   grew, or a real lifecycle event arrived).
+    # ``last_progress_sample_at`` -- last time we got ANY log-size reading. Its
+    #   own clock because a stale reading proves nothing: an execution that
+    #   reported a size once and has sent nothing since must not be judged
+    #   stalled, we simply cannot see it any more.
+    # ``no_progress_at`` -- one-shot marker for "already alerted on this
+    #   stall". Unlike ``stalled_at`` a heartbeat does NOT clear it (only real
+    #   progress does), which is what makes the alert and the optional stop
+    #   fire exactly once instead of on every reconcile pass.
+    last_progress_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_progress_sample_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    no_progress_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -88,6 +88,34 @@ class AttemptState(BaseModel):
     finish_reason: str | None = None
     log_bytes: int | None = None
 
+    # --- stop state machine: additive fields (defaults keep old state files
+    # loading unchanged). A stop is no longer handled inline -- waiting for the
+    # process to die inside the command consumer would block every other
+    # execution's heartbeat and flood check for the whole confirmation window.
+    # Instead the intent is persisted here FIRST (the command is XACKed even if
+    # the handler raises, so an unpersisted intent is simply lost) and the tick
+    # loop drives TERM -> KILL -> confirmation across ticks.
+    #
+    # ``stop_escalation``: None = TERM not yet sent successfully, "term" = TERM
+    # acknowledged, "kill" = KILL acknowledged.
+    #
+    # Terminal reporting is BOUNDED (``stop_confirm_timeout_seconds``) but
+    # process reclamation is NOT: when the deadline passes with the process
+    # still alive we report the terminal per contract and keep ``kill_pending``
+    # (plus the scrapyd job mapping!) so the reclaim watchdog can keep trying.
+    # Dropping the mapping to "finish" the stop would recreate exactly the
+    # invisible-orphan problem this machinery exists to remove.
+    stop_intent: str | None = None
+    stop_requested_at: str | None = None
+    stop_escalation: str | None = None
+    cleanup_pending: bool = False
+    kill_pending: bool = False
+    kill_last_attempt_at: str | None = None
+    # Terminal persisted but not yet handed to ``emit`` (whose own outbox makes
+    # it at-least-once). Crashing in that window would otherwise lose a
+    # ``canceled`` the server is contractually owed.
+    terminal_pending: bool = False
+
 
 class StateStore:
     """File-backed store of :class:`AttemptState` under a state directory."""
@@ -208,8 +236,18 @@ class StateStore:
         lost_reason: str | None = None,
         error_code: str | None = None,
         exit_code: int | None = None,
+        kill_pending: bool | None = None,
+        terminal_pending: bool | None = None,
     ) -> AttemptState | None:
-        """Record a reported terminal so a re-delivered command re-emits it."""
+        """Record a reported terminal so a re-delivered command re-emits it.
+
+        ``kill_pending`` / ``terminal_pending`` are written in the SAME atomic
+        write as the terminal itself. Splitting them into a second write opens a
+        crash window that loses the reclaim task (``done`` with
+        ``kill_pending`` still false means the reclaim watchdog walks past it,
+        and a pending cleanup would then delete the job mapping) or loses the
+        terminal the server is owed.
+        """
         state = self.read(execution_id)
         if state is None:
             return None
@@ -220,6 +258,73 @@ class StateStore:
         state.exit_code = exit_code
         if result == "canceled":
             state.canceled = True
+        if kill_pending is not None:
+            state.kill_pending = kill_pending
+        if terminal_pending is not None:
+            state.terminal_pending = terminal_pending
+        return self.write(state)
+
+    def mark_stop_requested(
+        self, execution_id: str, *, intent: str, requested_at: str
+    ) -> AttemptState | None:
+        """Persist the stop INTENT before any network call.
+
+        ``_process`` XACKs a command even when its handler raises, so an intent
+        that lives only in memory is gone for good; the watchdog recovers from
+        this record alone (including across an agent restart).
+        """
+        state = self.read(execution_id)
+        if state is None:
+            return None
+        state.stop_intent = intent
+        state.stop_requested_at = requested_at
+        state.stop_escalation = None
+        return self.write(state)
+
+    def mark_stop_escalation(
+        self, execution_id: str, *, escalation: str
+    ) -> AttemptState | None:
+        """Record that a stop signal was ACKNOWLEDGED by scrapyd.
+
+        Only ever called after a successful request: a failed TERM/KILL must
+        leave the previous value so the next tick retries it.
+        """
+        state = self.read(execution_id)
+        if state is None:
+            return None
+        state.stop_escalation = escalation
+        return self.write(state)
+
+    def mark_cleanup_pending(self, execution_id: str) -> AttemptState | None:
+        """Defer a ``cleanup_logs`` that arrived while the stop/reclaim runs."""
+        state = self.read(execution_id)
+        if state is None:
+            return None
+        state.cleanup_pending = True
+        return self.write(state)
+
+    def mark_kill_attempt(self, execution_id: str, *, at: str) -> AttemptState | None:
+        """Throttle stamp for the unbounded post-deadline KILL retries."""
+        state = self.read(execution_id)
+        if state is None:
+            return None
+        state.kill_last_attempt_at = at
+        return self.write(state)
+
+    def clear_kill_pending(self, execution_id: str) -> AttemptState | None:
+        """The process is confirmed gone: reclamation is done."""
+        state = self.read(execution_id)
+        if state is None:
+            return None
+        state.kill_pending = False
+        return self.write(state)
+
+    def clear_terminal_pending(self, execution_id: str) -> AttemptState | None:
+        """The terminal reached ``emit`` (and thus its durable outbox)."""
+        state = self.read(execution_id)
+        if state is None:
+            return None
+        state.terminal_pending = False
         return self.write(state)
 
     def mark_canceled(self, execution_id: str) -> AttemptState | None:

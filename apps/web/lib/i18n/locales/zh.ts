@@ -212,6 +212,11 @@ const zh = {
         title: "调度“{{schedule_name}}”已被自动禁用",
         body: "连续 {{consecutive_errors}} 次运行出错，达到阈值（{{threshold}}）。请修复爬虫后再重新启用该调度。",
       },
+      attempt_no_progress: {
+        title: "执行长时间无进度",
+        body: "执行 {{execution_id}} 已 {{idle_seconds}} 秒没有新日志（阈值 {{threshold}} 秒），日志停在 {{log_bytes}} 字节。进程仍在 {{agent_id}} 上运行，并持续占用该调度的并发槽。",
+        body_stopped: "执行 {{execution_id}} 已 {{idle_seconds}} 秒没有新日志（阈值 {{threshold}} 秒），日志停在 {{log_bytes}} 字节，已按配置自动取消该任务。",
+      },
       log_flood: {
         title: "日志洪泛：执行已被终止",
         body: "{{agent_id}} 上的执行 {{execution_id}} 写入了 {{log_bytes}} 字节（上限 {{cap}}），已被取消。",

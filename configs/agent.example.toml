@@ -60,6 +60,19 @@ max_job_log_bytes = 33554432
 # re-cancelling with signal=KILL; after twice this, SIGKILL the single crawler
 # PID provably owned by the managed scrapyd (never in external-scrapyd mode).
 log_flood_kill_after_seconds = 30
+# Stop state machine. A stop is driven across tick iterations rather than waited
+# on inline: the command consumer is serial, so blocking here would freeze every
+# other execution's heartbeat for the whole confirmation window.
+#
+# stop_confirm_timeout_seconds bounds the TERMINAL REPORT only. If the deadline
+# passes with the process still alive, dopilot reports the terminal anyway (the
+# contract says a cancel always converges) but KEEPS the scrapyd job mapping and
+# goes on sending KILL every kill_retry_interval_seconds. Dropping the mapping
+# to "finish" the stop would leave a running process nothing can find, which is
+# the exact failure this machinery exists to prevent.
+stop_kill_after_seconds = 10
+stop_confirm_timeout_seconds = 120
+kill_retry_interval_seconds = 60
 # Janitor: an oversized job.log with NO readable state is only truncated when
 # scrapyd does not list the job AND the file has been quiet for this long.
 janitor_quiet_seconds = 3600

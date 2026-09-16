@@ -187,6 +187,38 @@ class ScrapyRunner:
             exit_code=None,  # scrapyd 1.x does not expose exit codes.
         )
 
+    async def is_job_alive(self, execution_id: str) -> bool | None:
+        """Liveness ONLY, for stop confirmation. Never infers a terminal kind.
+
+        ``True``  -- scrapyd still lists the job as running or pending.
+        ``False`` -- listjobs SUCCEEDED and the job is in neither list, i.e. it
+                     is confirmed not running any more.
+        ``None``  -- scrapyd unreachable, so we cannot tell.
+
+        Deliberately NOT :meth:`_resolve_status`: that one answers "what was the
+        outcome", and returns ``unknown`` both when scrapyd is unreachable AND
+        when listjobs succeeded but the job is in no list with no log on disk --
+        exactly the shape a cancelled ``pending`` job leaves behind. Confirming
+        a stop with it would wait out the whole deadline on a job that is
+        demonstrably gone, then keep ``kill_pending`` set forever. It also
+        sidesteps ``mark_canceled``: after a successful TERM ``_resolve_status``
+        reports a departed job as ``canceled``, which is our own doing and must
+        never be mistaken for an authoritative terminal.
+        """
+        state = self._store.read(execution_id)
+        if state is None:
+            return None
+        try:
+            jobs = await self._client.listjobs(state.project)
+        except ScrapydError:
+            return None
+        job_id = state.scrapyd_job_id
+        if self._in_list(jobs.get("running"), job_id):
+            return True
+        if self._in_list(jobs.get("pending"), job_id):
+            return True
+        return False
+
     async def _resolve_status(self, state: AttemptState) -> AttemptStatus:
         """Map scrapyd job lists onto an :class:`AttemptStatus`."""
         try:

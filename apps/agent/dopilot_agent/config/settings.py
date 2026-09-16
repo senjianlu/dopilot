@@ -64,6 +64,22 @@ class AgentSettings(BaseModel):
     # the watchdog re-cancels with ``signal=KILL``; after twice this the agent
     # kills the single crawler PID it can prove belongs to the managed scrapyd.
     log_flood_kill_after_seconds: int = 30
+    # Stop state machine (cancel / reclaim). A stop is driven across tick
+    # iterations, never awaited inline: the command consumer is serial, so
+    # waiting here would freeze every other execution's heartbeat and flood
+    # check for the whole confirmation window.
+    #
+    # ``stop_kill_after_seconds``: how long the default TERM gets before the
+    # watchdog re-cancels with ``signal=KILL``.
+    # ``stop_confirm_timeout_seconds``: bound on TERMINAL REPORTING only. When
+    # it passes with the process still alive we report the terminal per
+    # contract, then keep the job mapping and go on trying to kill it.
+    # ``kill_retry_interval_seconds``: pacing for those post-deadline retries,
+    # which are deliberately unbounded -- a surviving process nobody tracks is
+    # exactly the failure this machinery exists to prevent.
+    stop_kill_after_seconds: int = 10
+    stop_confirm_timeout_seconds: int = 120
+    kill_retry_interval_seconds: int = 60
     # Janitor: an oversized job.log with NO readable state is only truncated when
     # scrapyd does not list the job AND the file has been quiet (mtime) for at
     # least this many seconds — never a possibly-running job's log.
