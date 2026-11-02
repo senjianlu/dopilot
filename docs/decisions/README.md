@@ -45,4 +45,4 @@
 | [0021](0021-log-flood-guard-and-auto-disable.md) | 日志洪泛防护:进程内日志上限 + 字节预算 + 目录准入硬界;连续出错自动禁用调度 + 消息中心 |
 | [0022](0022-schedule-concurrency-limit.md) | 定时调度并发上限（默认 1，0=不限）；手动触发与定时共用同一额度池 |
 | [0023](0023-task-target-search-without-trigram-index.md) | 任务目标名模糊搜索走 ILIKE 顺序扫，暂不引入 pg_trgm 索引；含复议阈值 |
-| [0024](0024-public-repo-redaction.md) | 公开仓库脱敏：业务词只存私有规则，钩子拦截提交与推送；公开历史随之改写 |
+| [0024](0024-public-repo-redaction.md) | 公开仓库脱敏：业务词只存私有规则，钩子拦截提交与推送；公开历史已改写 |
