@@ -17,6 +17,7 @@ testpaths = [
     "apps/server/tests",
     "apps/agent/tests",
     "packages/protocol/tests",
+    "scripts/redaction/tests",
 ]
 filterwarnings = [
     "error",

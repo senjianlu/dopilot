@@ -40,7 +40,7 @@ dopilot/                        # 仓库根 = Docker 构建上下文
 ├── packages/protocol/          # server↔agent 共享 Pydantic 协议(streams.py 等)
 ├── deploy/docker/              # Dockerfile(.base) + 三份 docker-compose
 ├── configs/                    # server/agent TOML 配置样例
-├── scripts/                    # dev-db / smoke / deps-hash 辅助脚本
+├── scripts/                    # dev-db / smoke / deps-hash / redaction(脱敏)辅助脚本
 ├── examples/                   # 示例被调度对象(scrapy_clock)
 └── docs/  .ai/                 # 持久真相 / 任务过程痕迹
 ```

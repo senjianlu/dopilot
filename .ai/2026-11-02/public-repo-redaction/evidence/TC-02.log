@@ -1,0 +1,43 @@
+# rawf-evidence v1
+tc: TC-02
+label: 
+cmd: .venv/bin/python -m pytest scripts/redaction/tests -v -p no:cacheprovider -k hook
+cwd: /home/rabbir/Projects/dopilot
+git_head: d85a4fb2f59f4d2c6d7115d8fea751b5ec53aa78 dirty
+started: 2026-11-02T17:40:59+09:00
+--- output ---
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 39 items / 19 deselected / 20 selected
+
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_blocks_sensitive_staged_content PASSED [  5%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_blocks_sensitive_path PASSED [ 10%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_allows_clean_commit_and_commit_msg_still_runs PASSED [ 15%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_without_rules_file PASSED [ 20%]
+scripts/redaction/tests/test_redact.py::test_hook_binary_is_blocked_until_a_human_allows_it PASSED [ 25%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_blocks_sensitive_commit_message PASSED [ 30%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_scans_the_index_not_the_work_tree PASSED [ 35%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_on_malformed_rules[lit\tacmemart\n-expected 3 TAB-separated fields] PASSED [ 40%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_on_malformed_rules[re\t([unclosed\tx\n-bad regex] PASSED [ 45%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_on_malformed_rules[bogus\tx\ty\n-unknown kind] PASSED [ 50%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_on_unreadable_rules PASSED [ 55%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_without_python3 PASSED [ 60%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_scans_contents_paths_and_every_pushed_commit[content] PASSED [ 65%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_scans_contents_paths_and_every_pushed_commit[path] PASSED [ 70%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_scans_contents_paths_and_every_pushed_commit[earlier-then-cleaned] PASSED [ 75%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_unknown_remote_tip_scans_whole_new_history PASSED [ 80%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_scans_annotated_tag_message_on_an_already_pushed_commit PASSED [ 85%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_follows_nested_tags PASSED [ 90%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_scans_ref_names PASSED [ 95%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_binary_blocked_until_allowed PASSED [100%]
+
+====================== 20 passed, 19 deselected in 8.13s =======================
+
+--- end ---
+exit: 0
+finished: 2026-11-02T17:41:07+09:00
+bytes: 2874

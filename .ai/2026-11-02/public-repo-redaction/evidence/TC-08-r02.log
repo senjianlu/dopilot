@@ -1,0 +1,69 @@
+# rawf-evidence v1
+tc: TC-08
+label: r02
+cmd: bash .ai/2026-11-02/public-repo-redaction/evidence/docs-check.sh
+cwd: /home/rabbir/Projects/dopilot
+git_head: d85a4fb2f59f4d2c6d7115d8fea751b5ec53aa78 dirty
+started: 2026-11-02T18:00:55+09:00
+--- output ---
+PASS  docs/decisions/0024-public-repo-redaction.md 存在
+PASS  docs/decisions/0024-public-repo-redaction.md 含:- 日期:2026-11-02
+PASS  docs/decisions/0024-public-repo-redaction.md 含:- 背景:
+PASS  docs/decisions/0024-public-repo-redaction.md 含:- 决定:
+PASS  docs/decisions/0024-public-repo-redaction.md 含:- 影响:
+PASS  docs/decisions/0024-public-repo-redaction.md 含:① 目标站点与数据源
+PASS  docs/decisions/0024-public-repo-redaction.md 含:② 下游项目与业务
+PASS  docs/decisions/0024-public-repo-redaction.md 含:③ 业务对象
+PASS  docs/decisions/0024-public-repo-redaction.md 含:④ 生产基础设施
+PASS  docs/decisions/0024-public-repo-redaction.md 含:⑤ 凭据
+PASS  docs/decisions/0024-public-repo-redaction.md 含:⑥ 原始生产数据
+PASS  docs/decisions/0024-public-repo-redaction.md 含:**`.ai/` 只增不改的例外**
+PASS  docs/decisions/0024-public-repo-redaction.md 含:**别名对照只存在私有规则文件里**
+PASS  docs/decisions/0024-public-repo-redaction.md 含:fail-closed
+PASS  docs/decisions/0024-public-repo-redaction.md 含:DOPILOT_REDACTION_RULES=none
+PASS  docs/decisions/README.md 含:| [0024](0024-public-repo-redaction.md) |
+PASS  AGENTS.md 含:公开仓库脱敏
+PASS  AGENTS.md 含:docs/decisions/0024
+PASS  AGENTS.md 含:脱敏改写除外
+PASS  docs/README.md 含:decisions/0024
+PASS  CONTRIBUTING.md 含:pre-commit
+PASS  CONTRIBUTING.md 含:pre-push
+PASS  CONTRIBUTING.md 含:DOPILOT_REDACTION_RULES=none
+PASS  docs/architecture/README.md 含:redaction
+PASS  pyproject.toml 含:"scripts/redaction/tests",
+PASS  docs/decisions/0020-ai-workflow-template-version-anchor.md 含:| D-7 |
+PASS  0020 既有正文未改(只追加)
+PASS  0024-public-repo-redaction.md 链接可解析:0020-ai-workflow-template-version-anchor.md
+PASS  README.md 链接可解析:0001-scrapydweb-behavior-reference-only.md
+PASS  README.md 链接可解析:0002-three-job-types-strict-order.md
+PASS  README.md 链接可解析:0003-single-admin.md
+PASS  README.md 链接可解析:0004-two-docker-roles-unified-image.md
+PASS  README.md 链接可解析:0005-monorepo-apps-packages.md
+PASS  README.md 链接可解析:0006-fastapi-backend-nextjs-static-frontend.md
+PASS  README.md 链接可解析:0007-postgresql-only-log-bodies-on-disk.md
+PASS  README.md 链接可解析:0008-redis-streams-agent-communication.md
+PASS  README.md 链接可解析:0009-realtime-logs-redis-push-sse.md
+PASS  README.md 链接可解析:0010-single-instance-server.md
+PASS  README.md 链接可解析:0011-auth-boundaries.md
+PASS  README.md 链接可解析:0012-domain-model-clean-cut.md
+PASS  README.md 链接可解析:0013-python-wheel-execution-model.md
+PASS  README.md 链接可解析:0014-node-strategy-and-push-mode.md
+PASS  README.md 链接可解析:0015-toml-config-no-scrapydweb-quirks.md
+PASS  README.md 链接可解析:0016-glibc-base-image-apscheduler-310.md
+PASS  README.md 链接可解析:0017-testing-baseline-own-regression-net.md
+PASS  README.md 链接可解析:0018-adopt-ai-workflow-template.md
+PASS  README.md 链接可解析:0019-resource-hard-limits.md
+PASS  README.md 链接可解析:0020-ai-workflow-template-version-anchor.md
+PASS  README.md 链接可解析:0021-log-flood-guard-and-auto-disable.md
+PASS  README.md 链接可解析:0022-schedule-concurrency-limit.md
+PASS  README.md 链接可解析:0023-task-target-search-without-trigram-index.md
+PASS  README.md 链接可解析:0024-public-repo-redaction.md
+PASS  0020-ai-workflow-template-version-anchor.md 链接可解析:0018-adopt-ai-workflow-template.md
+PASS  0020-ai-workflow-template-version-anchor.md 链接可解析:0024-public-repo-redaction.md
+
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T18:00:55+09:00
+bytes: 3671

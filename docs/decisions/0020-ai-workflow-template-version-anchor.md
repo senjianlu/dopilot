@@ -80,3 +80,10 @@
   这些文件可整体替换,**不做改写**;v1.0.0 起即有此现象(`review.sh` 注释的
   0005),升级时不要把它当成漏改。逐文件核验见
   `.ai/2026-11-02/upgrade-ai-workflow-template-v1-2-1/evidence/`。
+
+- 2026-11-02:**新增本仓库自有钩子**(决策 [`0024`](0024-public-repo-redaction.md)
+  公开仓库脱敏)。新增偏离 D-7:
+
+  | 编号 | 文件 | 偏离 | 理由 |
+  |---|---|---|---|
+  | D-7 | `.githooks/pre-commit`、`.githooks/pre-push` | 模板"可整体替换"目录中多出两个本仓库自有文件 | 脱敏检查须在提交与推送两处强制,git 只认 `core.hooksPath` 目录下的钩子;升级时整目录拷入不会删除它们,但基线核验会报 `UNEXPECTED-EXTRA`,属预期,须保留 |

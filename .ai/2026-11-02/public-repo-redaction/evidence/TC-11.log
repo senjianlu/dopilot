@@ -1,0 +1,22 @@
+# rawf-evidence v1
+tc: TC-11
+label: 
+cmd: python3 .ai/2026-11-02/public-repo-redaction/evidence/screenshot-mask-check.py
+cwd: /home/rabbir/Projects/dopilot
+git_head: d85a4fb2f59f4d2c6d7115d8fea751b5ec53aa78 dirty
+started: 2026-11-02T17:44:52+09:00
+--- output ---
+      工作区 sha256 = 93dfcb96c905fd1debcd89ec860b944cc7147ce851c100a8c570f691b199f02c
+      私有打码 sha256 = 93dfcb96c905fd1debcd89ec860b944cc7147ce851c100a8c570f691b199f02c
+PASS  工作区 PNG 与私有打码文件逐字节相同
+PASS  HEAD 原 blob 01e19572389d 已登记为私有 blob 规则,替换物即该打码文件
+PASS  尺寸不变:(1440, 900)
+PASS  矩形以外像素与原图差异 0 个
+PASS  矩形以内 61504 个像素均为填充色 (203, 213, 225)(异常 0)
+PASS  矩形内原图有 61504 个非填充色像素被覆盖(遮盖确实生效)
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T17:44:55+09:00
+bytes: 580

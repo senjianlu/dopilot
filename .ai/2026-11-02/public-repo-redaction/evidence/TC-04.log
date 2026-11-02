@@ -1,0 +1,14 @@
+# rawf-evidence v1
+tc: TC-04
+label: 
+cmd: python3 scripts/redaction/redact.py check --tree --summary
+cwd: /home/rabbir/Projects/dopilot
+git_head: d85a4fb2f59f4d2c6d7115d8fea751b5ec53aa78 dirty
+started: 2026-11-02T17:41:09+09:00
+--- output ---
+redaction: scanned 953 text item(s), 6 binary, 0 hit(s)
+
+--- end ---
+exit: 0
+finished: 2026-11-02T17:41:34+09:00
+bytes: 56

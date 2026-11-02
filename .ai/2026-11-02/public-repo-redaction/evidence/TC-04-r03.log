@@ -1,0 +1,15 @@
+# rawf-evidence v1
+tc: TC-04
+label: r03
+cmd: bash -c python3\ scripts/redaction/redact.py\ check\ --tree\ --summary\ \&\&\ git\ ls-files\ -z\ --others\ --exclude-standard\ \|\ grep\ -z\ -v\ \"\^\\.ai/2026-11-02/transient-failures-permanent-disable/\"\ \|\ xargs\ -0\ python3\ scripts/redaction/redact.py\ check\ --summary\ --files
+cwd: /home/rabbir/Projects/dopilot
+git_head: d85a4fb2f59f4d2c6d7115d8fea751b5ec53aa78 dirty
+started: 2026-11-02T18:16:51+09:00
+--- output ---
+redaction: scanned 953 text item(s), 6 binary, 0 hit(s)
+redaction: scanned 61 text item(s), 0 binary, 0 hit(s)
+
+--- end ---
+exit: 0
+finished: 2026-11-02T18:17:24+09:00
+bytes: 111

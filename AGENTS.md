@@ -92,7 +92,7 @@ Next `output: "export"` 产出纯静态文件,由后端(FastAPI)静态托管,
 | `docs/`、`.ai/` | 持久真相 / 过程痕迹(分工见 docs/README.md;`.ai/` 每个任务目录含 `evidence/` 证据与 `assets/` 资源子目录) |
 | `deploy/` | Dockerfile 之外的编排(`docker/` compose;`kubernetes/` K8s 参考清单) |
 | `configs/` | server/agent TOML 配置样例 |
-| `scripts/` | 仓库级辅助脚本(dev-db、smoke、deps-hash) |
+| `scripts/` | 仓库级辅助脚本(dev-db、smoke、deps-hash、redaction 脱敏检查与历史改写) |
 | `examples/` | 示例被调度对象(scrapy_clock) |
 | `.github/workflows/`、`.agents/skills/` | CI / 项目内建 skill |
 
@@ -110,6 +110,16 @@ Next `output: "export"` 产出纯静态文件,由后端(FastAPI)静态托管,
 
 - 永不主动 git commit / git push,必须用户明确确认
 - `.ai/` 下是开发过程产物(方案/实现记录/评审记录),历史轮次文件只增不改
+  (脱敏改写除外:仅经 `scripts/redaction/redact.py`,不得借机改结论,见
+  `docs/decisions/0024`)
+- **公开仓库脱敏**(仓库在 GitHub 公开,见 `docs/decisions/0024`):目标站点与
+  数据源、下游项目与业务名(含爬虫内部模块/类/表/函数名)、业务对象(appid、
+  商品、币种组合)、生产基础设施(公网域名、主机名、内网 IP/域名)、凭据及其
+  任意前缀、原始生产数据(journal、原始日志、DB/Redis 转储、API 快照、监控
+  时序、生产配置、生产截图)一律不得进入仓库——含提交信息、文件名与截图。
+  原始数据只放本机私有目录,仓库只放结论、聚合统计与脱敏摘录;要入库的命令
+  输出先经 `python3 scripts/redaction/redact.py apply -`;业务词只存在于仓库外
+  的私有规则文件,`.githooks/pre-commit` / `pre-push` 据此拦截,不得绕过
 - `docs/` 下是持久设计真相(架构/决策),任务改变二者时须在收尾前回写,
   与代码同一提交(分工详见 docs/README.md)
 - 开发必须走 rawf 工作流(由 Claude Code 驱动,细则见 CLAUDE.md),

@@ -1,0 +1,32 @@
+# rawf-evidence v1
+tc: TC-10
+label: 
+cmd: bash .ai/2026-11-02/public-repo-redaction/evidence/refs-scope-check.sh
+cwd: /home/rabbir/Projects/dopilot
+git_head: d85a4fb2f59f4d2c6d7115d8fea751b5ec53aa78 dirty
+started: 2026-11-02T17:42:33+09:00
+--- output ---
+远端引用:
+  HEAD
+  refs/heads/master
+PASS  远端只有 HEAD 与 refs/heads/master(无标签、无 PR 引用)
+PASS  本地 master 以外的引用恰为 5 个未推送引用
+  refs/heads/feat/phase-0-skeleton:独有提交 0 个;redaction: scanned 0 text item(s), 0 binary, 0 hit(s);私有业务规则命中 0,通用规则命中 0
+PASS  refs/heads/feat/phase-0-skeleton 独有提交私有业务规则零命中
+  refs/heads/chore/dev-toolchain-mcp-playwright:独有提交 6 个;redaction: scanned 198 text item(s), 7 binary, 3 hit(s);私有业务规则命中 0,通用规则命中 3
+PASS  refs/heads/chore/dev-toolchain-mcp-playwright 独有提交私有业务规则零命中
+  refs/heads/worktree-logo-asset:独有提交 3 个;redaction: scanned 168 text item(s), 7 binary, 2 hit(s);私有业务规则命中 0,通用规则命中 2
+PASS  refs/heads/worktree-logo-asset 独有提交私有业务规则零命中
+  refs/original/refs/heads/feat/phase-0-skeleton:独有提交 28 个;redaction: scanned 1226 text item(s), 12 binary, 15 hit(s);私有业务规则命中 0,通用规则命中 15
+PASS  refs/original/refs/heads/feat/phase-0-skeleton 独有提交私有业务规则零命中
+  refs/tags/backup/pre-normalize:独有提交 27 个;redaction: scanned 1222 text item(s), 12 binary, 15 hit(s);私有业务规则命中 0,通用规则命中 15
+PASS  refs/tags/backup/pre-normalize 独有提交私有业务规则零命中
+  --all 可达 95 个提交,master 67 个,本地独有合计 64 个(各引用独有部分可能重叠)
+PASS  --all 中 master 以外的 28 个提交全部属于这 5 个引用
+
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T17:44:52+09:00
+bytes: 1606

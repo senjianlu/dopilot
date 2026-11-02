@@ -1,0 +1,25 @@
+# rawf-evidence v1
+tc: TC-09
+label: r02
+cmd: bash .ai/2026-11-02/public-repo-redaction/evidence/changeset-check.sh
+cwd: /home/rabbir/Projects/dopilot
+git_head: d85a4fb2f59f4d2c6d7115d8fea751b5ec53aa78 dirty
+started: 2026-11-02T18:00:55+09:00
+--- output ---
+PASS  新增文件恰为 A 表 7 个
+      相对 HEAD:修改 57、删除(改名旧路径)2、新增(改名新路径)2
+PASS  B 表 7 个文件均有修改
+PASS  C 节路径数 = 52(修改 50 + 改名 2)
+PASS  改名 2 个(旧路径删除、新路径新增各 2)
+PASS  apps/ 只改 C 节 5 个文件
+PASS  仓库根与其它目录只改 B 表文件
+PASS  docs/ 规则改写 4 个:docs/architecture/03-execution-and-logs.md docs/architecture/05-deployment.md docs/architecture/06-web-frontend.md docs/decisions/0021-log-flood-guard-and-auto-disable.md
+PASS  建议目录内容未变(19 个文件)
+PASS  建议目录仍未跟踪
+
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T18:00:56+09:00
+bytes: 640

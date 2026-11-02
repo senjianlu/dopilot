@@ -1,0 +1,41 @@
+# rawf-evidence v1
+tc: TC-06
+label: r03
+cmd: bash .ai/2026-11-02/public-repo-redaction/evidence/history-dry-run.sh
+cwd: /home/rabbir/Projects/dopilot
+git_head: d85a4fb2f59f4d2c6d7115d8fea751b5ec53aa78 dirty
+started: 2026-11-02T18:13:06+09:00
+--- output ---
+克隆提交数:68
+blobs: 2624
+blobs_changed: 109
+stubbed: 40
+blob_replaced: 1
+paths_renamed: 2
+msgs_changed: 5
+sha_refs: 54
+commits: 68
+tags: 0
+PASS  提交数一致且全部有映射:src=68 dst=68 map=68
+PASS  1 个引用均指向映射后的对象(不符 0);dst 引用 1 个
+PASS  逐提交父子、作者/提交者行、提交信息一致(不符 0)
+PASS  逐提交整棵树(路径/模式/内容)= 源树经同一变换:68 个提交、37357 个文件版本,不符 0 个提交
+PASS  dst 全历史(提交信息 + 全部 blob + 路径)无检测规则命中:扫描 2713 项文本、15 个二进制,命中 0
+PASS  dst 中残留的旧提交 id 引用:0 处
+RESULT: PASS
+  OK  TC-01.log: bytes 3928 / 正文 3928;git_head 在改写后的库中存在
+  OK  TC-02.log: bytes 1832 / 正文 1832;git_head 在改写后的库中存在
+  OK  TC-03.log: bytes 237 / 正文 237;git_head 在改写后的库中存在
+  OK  TC-04.log: bytes 1056 / 正文 1056;git_head 在改写后的库中存在
+  OK  TC-05.log: bytes 2909 / 正文 2909;git_head 在改写后的库中存在
+  OK  TC-06.log: bytes 4 / 正文 4;git_head 在改写后的库中存在
+  OK  TC-07.log: bytes 2740 / 正文 2740;git_head 在改写后的库中存在
+  OK  TC-08.log: bytes 1356 / 正文 1356;git_head 在改写后的库中存在
+PASS  v1 证据 8 个改写后结构有效(异常 0)
+PASS  scripts/redaction 与 .githooks 共 7 个文件改写前后 blob 完全相同
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T18:18:37+09:00
+bytes: 1441

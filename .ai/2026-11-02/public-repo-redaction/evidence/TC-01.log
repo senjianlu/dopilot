@@ -1,0 +1,62 @@
+# rawf-evidence v1
+tc: TC-01
+label: 
+cmd: .venv/bin/python -m pytest scripts/redaction/tests -v -p no:cacheprovider
+cwd: /home/rabbir/Projects/dopilot
+git_head: d85a4fb2f59f4d2c6d7115d8fea751b5ec53aa78 dirty
+started: 2026-11-02T17:40:48+09:00
+--- output ---
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 39 items
+
+scripts/redaction/tests/test_redact.py::test_lit_respects_word_boundaries PASSED [  2%]
+scripts/redaction/tests/test_redact.py::test_lit_matches_camel_case_segments PASSED [  5%]
+scripts/redaction/tests/test_redact.py::test_lit_keeps_case_shape PASSED [  7%]
+scripts/redaction/tests/test_redact.py::test_lit_never_touches_hex_strings PASSED [ 10%]
+scripts/redaction/tests/test_redact.py::test_rules_apply_in_file_order PASSED [ 12%]
+scripts/redaction/tests/test_redact.py::test_regex_rule_with_backref PASSED [ 15%]
+scripts/redaction/tests/test_redact.py::test_rewrite_rules_are_not_detections PASSED [ 17%]
+scripts/redaction/tests/test_redact.py::test_alias_followed_by_a_real_appid_is_still_detected PASSED [ 20%]
+scripts/redaction/tests/test_redact.py::test_allow_marker_suppresses_hits PASSED [ 23%]
+scripts/redaction/tests/test_redact.py::test_stub_glob PASSED            [ 25%]
+scripts/redaction/tests/test_redact.py::test_binary_detection PASSED     [ 28%]
+scripts/redaction/tests/test_redact.py::test_apply_from_stdin PASSED     [ 30%]
+scripts/redaction/tests/test_redact.py::test_selftest_flags_alias_that_is_itself_detected PASSED [ 33%]
+scripts/redaction/tests/test_redact.py::test_missing_private_rules_fails_closed PASSED [ 35%]
+scripts/redaction/tests/test_redact.py::test_none_runs_generic_rules_only PASSED [ 38%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_blocks_sensitive_staged_content PASSED [ 41%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_blocks_sensitive_path PASSED [ 43%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_allows_clean_commit_and_commit_msg_still_runs PASSED [ 46%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_without_rules_file PASSED [ 48%]
+scripts/redaction/tests/test_redact.py::test_hook_binary_is_blocked_until_a_human_allows_it PASSED [ 51%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_blocks_sensitive_commit_message PASSED [ 53%]
+scripts/redaction/tests/test_redact.py::test_rewrite_history_end_to_end PASSED [ 56%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_scans_the_index_not_the_work_tree PASSED [ 58%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_on_malformed_rules[lit\tacmemart\n-expected 3 TAB-separated fields] PASSED [ 61%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_on_malformed_rules[re\t([unclosed\tx\n-bad regex] PASSED [ 64%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_on_malformed_rules[bogus\tx\ty\n-unknown kind] PASSED [ 66%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_on_unreadable_rules PASSED [ 69%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_commit_fails_closed_without_python3 PASSED [ 71%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_scans_contents_paths_and_every_pushed_commit[content] PASSED [ 74%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_scans_contents_paths_and_every_pushed_commit[path] PASSED [ 76%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_scans_contents_paths_and_every_pushed_commit[earlier-then-cleaned] PASSED [ 79%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_unknown_remote_tip_scans_whole_new_history PASSED [ 82%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_scans_annotated_tag_message_on_an_already_pushed_commit PASSED [ 84%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_follows_nested_tags PASSED [ 87%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_scans_ref_names PASSED [ 89%]
+scripts/redaction/tests/test_redact.py::test_hook_pre_push_binary_blocked_until_allowed PASSED [ 92%]
+scripts/redaction/tests/test_redact.py::test_rewrite_refuses_real_path_collision PASSED [ 94%]
+scripts/redaction/tests/test_redact.py::test_rewrite_handles_extra_branches_and_annotated_tags PASSED [ 97%]
+scripts/redaction/tests/test_redact.py::test_verify_catches_a_corrupted_intermediate_commit_with_a_healthy_tip PASSED [100%]
+
+============================= 39 passed in 10.21s ==============================
+
+--- end ---
+exit: 0
+finished: 2026-11-02T17:40:59+09:00
+bytes: 4589

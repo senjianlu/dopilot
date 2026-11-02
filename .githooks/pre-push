@@ -1,0 +1,11 @@
+#!/bin/sh
+# pre-push 钩子:公开仓库脱敏检查,扫描待推提交的提交信息、改动文件内容与路径
+# (零依赖 POSIX sh + python3)。待推 ref 列表由 git 经 stdin 传入。
+# 启用: git config core.hooksPath .githooks
+# 规则: docs/decisions/0024-public-repo-redaction.md
+root=$(git rev-parse --show-toplevel) || exit 1
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "pre-push: 脱敏检查需要 python3(docs/decisions/0024)" >&2
+  exit 1
+fi
+exec python3 "$root/scripts/redaction/redact.py" check --push "$1"

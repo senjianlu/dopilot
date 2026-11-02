@@ -1,0 +1,26 @@
+# rawf-evidence v1
+tc: TC-05
+label: r02
+cmd: bash .ai/2026-11-02/public-repo-redaction/evidence/tree-consistency-check.sh
+cwd: /home/rabbir/Projects/dopilot
+git_head: d85a4fb2f59f4d2c6d7115d8fea751b5ec53aa78 dirty
+started: 2026-11-02T18:00:08+09:00
+--- output ---
+      apply-tree 第二遍:redaction: stubbed 0, replaced 0 binary, rewrote 0 text, renamed 0
+PASS  apply-tree 幂等(第二遍零改动)
+      selftest:redaction: 106 rule(s), 0 problem(s)
+PASS  selftest 无问题
+      已暂存改名:2 个 → .ai/2026-09-15/stuck-scrapy-job-holds-schedule-slot/evidence/site-ag-g1-job-log.txt, .ai/2026-09-15/stuck-scrapy-job-holds-schedule-slot/evidence/valkey-site-ag-result-timeline.txt
+PASS  改名文件数 = 2(实际 2)
+PASS  说明桩 20 个(期望 20),内容不符 0 个
+PASS  改名文件 .ai/2026-09-15/stuck-scrapy-job-holds-schedule-slot/evidence/site-ag-g1-job-log.txt 属于说明桩
+PASS  改名文件 .ai/2026-09-15/stuck-scrapy-job-holds-schedule-slot/evidence/valkey-site-ag-result-timeline.txt 属于说明桩
+PASS  正文改动全部由规则产生:检查 31 个(期望 31),偏离 0 个
+PASS  改名所在任务目录内 evidence/ 引用 5 处,断链 0 处
+
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T18:00:39+09:00
+bytes: 929

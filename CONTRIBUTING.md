@@ -79,6 +79,12 @@ blocker instead.
   git config core.hooksPath .githooks
   git config commit.template .gitmessage
   ```
+- The same hooks path also enables `pre-commit` and `pre-push` redaction checks
+  (see [`docs/decisions/0024`](docs/decisions/0024-public-repo-redaction.md)):
+  they block business data — crawl targets, production hosts, raw production
+  dumps, credentials — from entering this public repository. The maintainer's
+  term list is private; external contributors run the committed generic rules
+  only by setting `DOPILOT_REDACTION_RULES=none`. The checks need `python3`.
 - Keep PRs scoped; update the relevant `docs/` when a decision or behavior
   changes.
 - New or changed behavior needs tests under `apps/server/tests/`,
