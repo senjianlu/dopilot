@@ -1,0 +1,39 @@
+# rawf-evidence v1
+tc: TC-04
+label: 
+cmd: bash .ai/2026-11-02/upgrade-ai-workflow-template-v1-2-1/evidence/gate-review-check.sh
+cwd: /home/rabbir/Projects/dopilot
+git_head: 31d8db6399f8ad0899fe664e7358d15a7e6265b2 dirty
+started: 2026-11-02T16:27:02+09:00
+--- output ---
+== 情形 1:无锁文件 → 期望 block ==
+rc=0 out={
+  "decision": "block",
+  "reason": "rawf 工作流拦截:第 01 轮实现尚未经过 Codex 评审。请立即运行 /rawf-review;若因故必须先征询用户,说明原因后可再次结束。"
+}
+PASS 情形 1
+== 情形 2:.review-lock 被 flock 持有 → 期望无输出放行 ==
+rc=0 out=''
+PASS 情形 2
+== 情形 2b:锁文件存在但未被持有 → 期望 block ==
+rc=0 out={
+  "decision": "block",
+  "reason": "rawf 工作流拦截:第 01 轮实现尚未经过 Codex 评审。请立即运行 /rawf-review;若因故必须先征询用户,说明原因后可再次结束。"
+}
+PASS 情形 2b
+== 情形 3:.review-lock 是目录(旧版残留)→ 期望仍 block(fail-closed)==
+rc=0 out={
+  "decision": "block",
+  "reason": "rawf 工作流拦截:第 01 轮实现尚未经过 Codex 评审。请立即运行 /rawf-review;若因故必须先征询用户,说明原因后可再次结束。"
+}
+PASS 情形 3
+== 情形 4:已有本轮评审文件 → 期望放行 ==
+rc=0 out=''
+PASS 情形 4
+
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T16:27:02+09:00
+bytes: 1056

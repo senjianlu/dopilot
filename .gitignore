@@ -6,6 +6,9 @@
 # rawf:plan 阶段评审的原始输出与原子发布临时文件
 .ai/**/.plan-review-raw-*
 .ai/**/.plan-review-out-*
+# rawf:评审 flock 锁文件(常驻任务目录,永不删除;锁语义见模板决策 0009)
+.ai/**/.review-lock
+.ai/**/.plan-review-lock
 # Claude Code 本地权限记录等,不入库(项目级 settings.json 入库)
 .claude/settings.local.json
 

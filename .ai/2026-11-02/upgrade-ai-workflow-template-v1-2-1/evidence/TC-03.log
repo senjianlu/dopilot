@@ -1,0 +1,20 @@
+# rawf-evidence v1
+tc: TC-03
+label: 
+cmd: bash -c for\ f\ in\ .ai-workflow/scripts/\*.sh\ .claude/hooks/\*.sh\ .githooks/commit-msg\;\ do\ bash\ -n\ \"\$f\"\ \&\&\ test\ -x\ \"\$f\"\ \&\&\ echo\ \"OK\ \$f\"\ \|\|\ \{\ echo\ \"BAD\ \$f\"\;\ exit\ 1\;\ \}\;\ done
+cwd: /home/rabbir/Projects/dopilot
+git_head: 31d8db6399f8ad0899fe664e7358d15a7e6265b2 dirty
+started: 2026-11-02T16:27:01+09:00
+--- output ---
+OK .ai-workflow/scripts/evidence-check.sh
+OK .ai-workflow/scripts/evidence.sh
+OK .ai-workflow/scripts/plan-review.sh
+OK .ai-workflow/scripts/review.sh
+OK .claude/hooks/gate-plan.sh
+OK .claude/hooks/gate-review.sh
+OK .githooks/commit-msg
+
+--- end ---
+exit: 0
+finished: 2026-11-02T16:27:02+09:00
+bytes: 237

@@ -1,0 +1,53 @@
+# rawf-evidence v1
+tc: TC-07
+label: 
+cmd: bash .ai/2026-11-02/upgrade-ai-workflow-template-v1-2-1/evidence/decision-doc-check.sh
+cwd: /home/rabbir/Projects/dopilot
+git_head: 31d8db6399f8ad0899fe664e7358d15a7e6265b2 dirty
+started: 2026-11-02T16:27:03+09:00
+--- output ---
+PASS  0020-ai-workflow-template-version-anchor.md 含:## 修订
+PASS  0020-ai-workflow-template-version-anchor.md 含:2026-11-02:**升至 v1.2.1**
+PASS  0020-ai-workflow-template-version-anchor.md 含:`v1.0.0` = `2aeab2eaca28b1364a46ec7cfc9195849cc61b68`
+PASS  0020-ai-workflow-template-version-anchor.md 含:`246db2af223f4279f2ddc3773c5c3171dc8096cc`
+PASS  0020-ai-workflow-template-version-anchor.md 含:| D-6 | `CLAUDE.md` / `.gitignore` |
+PASS  0020-ai-workflow-template-version-anchor.md 含:`version: 1.2.1` / `adopted: 2026-11-02`
+PASS  0020-ai-workflow-template-version-anchor.md 含:.ai/2026-11-02/upgrade-ai-workflow-template-v1-2-1/evidence/
+PASS  既有偏离 D-1 仍在
+PASS  既有偏离 D-2 仍在
+PASS  既有偏离 D-3 仍在
+PASS  既有偏离 D-4 仍在
+PASS  既有偏离 D-5 仍在
+PASS  0020 既有正文未改动(只追加)
+PASS  README.md 含:| [0020](0020-ai-workflow-template-version-anchor.md) | 认领 ai-workflow-template v1.0.0 版本锚点；不采用其 Scrapy 标准栈(2026-11-02 升至 v1.2.1) |
+PASS  0020-ai-workflow-template-version-anchor.md 链接可解析:0018-adopt-ai-workflow-template.md
+PASS  README.md 链接可解析:0001-scrapydweb-behavior-reference-only.md
+PASS  README.md 链接可解析:0002-three-job-types-strict-order.md
+PASS  README.md 链接可解析:0003-single-admin.md
+PASS  README.md 链接可解析:0004-two-docker-roles-unified-image.md
+PASS  README.md 链接可解析:0005-monorepo-apps-packages.md
+PASS  README.md 链接可解析:0006-fastapi-backend-nextjs-static-frontend.md
+PASS  README.md 链接可解析:0007-postgresql-only-log-bodies-on-disk.md
+PASS  README.md 链接可解析:0008-redis-streams-agent-communication.md
+PASS  README.md 链接可解析:0009-realtime-logs-redis-push-sse.md
+PASS  README.md 链接可解析:0010-single-instance-server.md
+PASS  README.md 链接可解析:0011-auth-boundaries.md
+PASS  README.md 链接可解析:0012-domain-model-clean-cut.md
+PASS  README.md 链接可解析:0013-python-wheel-execution-model.md
+PASS  README.md 链接可解析:0014-node-strategy-and-push-mode.md
+PASS  README.md 链接可解析:0015-toml-config-no-scrapydweb-quirks.md
+PASS  README.md 链接可解析:0016-glibc-base-image-apscheduler-310.md
+PASS  README.md 链接可解析:0017-testing-baseline-own-regression-net.md
+PASS  README.md 链接可解析:0018-adopt-ai-workflow-template.md
+PASS  README.md 链接可解析:0019-resource-hard-limits.md
+PASS  README.md 链接可解析:0020-ai-workflow-template-version-anchor.md
+PASS  README.md 链接可解析:0021-log-flood-guard-and-auto-disable.md
+PASS  README.md 链接可解析:0022-schedule-concurrency-limit.md
+PASS  README.md 链接可解析:0023-task-target-search-without-trigram-index.md
+
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T16:27:03+09:00
+bytes: 2740

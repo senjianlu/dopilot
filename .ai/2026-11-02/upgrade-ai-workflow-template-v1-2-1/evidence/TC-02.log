@@ -1,0 +1,42 @@
+# rawf-evidence v1
+tc: TC-02
+label: 
+cmd: bash .ai/2026-11-02/upgrade-ai-workflow-template-v1-2-1/evidence/manual-merge-check.sh
+cwd: /home/rabbir/Projects/dopilot
+git_head: 31d8db6399f8ad0899fe664e7358d15a7e6265b2 dirty
+started: 2026-11-02T16:27:01+09:00
+--- output ---
+PASS  CLAUDE.md 含:默认最多 5 轮(第 1、2 轮全量
+PASS  CLAUDE.md 含:穷尽、第 3 轮起收敛;用户明确指定时以其为准,见硬规则),不决转人工
+PASS  CLAUDE.md 含:**评审轮次上限默认值:plan 评审 5 轮、实现层修复 3 轮**(各自计数;
+PASS  CLAUDE.md 含:plan 评审默认值见模板决策 0012),仅当
+PASS  CLAUDE.md 含:**A 档证据一律经 `.ai-workflow/scripts/evidence.sh` 留证**(rawf-evidence
+PASS  CLAUDE.md 含:格式问题由机器判定(模板决策 0010)
+PASS  CLAUDE.md 含:**追加类偏差不得自行实现**:plan 范围之外的新增文件、行为、功能,要么
+PASS  CLAUDE.md 含:原样交用户裁决(模板决策 0011)
+PASS  CLAUDE.md 不含:plan 再重评,默认最多 3 轮
+PASS  CLAUDE.md 含:实现层修复默认最多 3 轮
+PASS  CLAUDE.md 不含:评审轮次上限默认均为 3 轮
+PASS  CLAUDE.md 不含:(机制见 docs/decisions/0003)
+PASS  CLAUDE.md 无裸的 docs/decisions/0009~0012 引用(D-6)
+PASS  .gitignore 无裸的 docs/decisions/0009~0012 引用(D-6)
+      CLAUDE.md 规范化模板 sha256=bda18a63e79420515da80ee1bb056220cc1bc9b2d6ea98f0b33254f69e8adda7
+      CLAUDE.md 本仓库     sha256=bda18a63e79420515da80ee1bb056220cc1bc9b2d6ea98f0b33254f69e8adda7
+PASS  CLAUDE.md = 模板 v1.2.1 经 D-2/D-6 规范化(整文件等价)
+PASS  AGENTS.md 含:先经 plan 阶段 Codex 评审(plan-review,默认最多 5 轮,用户明确指定
+PASS  AGENTS.md 不含:默认最多 3 轮
+      .gitignore 片段:
+        8:.ai/**/.plan-review-out-*
+        9-# rawf:评审 flock 锁文件(常驻任务目录,永不删除;锁语义见模板决策 0009)
+        10-.ai/**/.review-lock
+        11-.ai/**/.plan-review-lock
+PASS  .gitignore 锁文件两行及注释紧随 rawf 块
+PASS  .review-lock 被忽略
+PASS  .plan-review-lock 被忽略
+
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T16:27:01+09:00
+bytes: 1832

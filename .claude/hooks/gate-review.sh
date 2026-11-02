@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Stop hook:最新一轮实现尚未评审时,不许结束回合(只拦一次)。
 # 放行 = 无输出退出 0;拦截 = stdout 输出 decision: block 的 JSON 并退出 0。
+# 评审进行中(当前任务目录的 .review-lock 被 review.sh 以 flock 持有)也放行:
+# 评审后台运行、回合结束后由完成通知唤回,无需原地等待(docs/decisions/0009)。
 set -euo pipefail
 
 block() {
@@ -27,7 +29,16 @@ nn=$(printf '%02d' "$count")
 reviews=("$task_dir"/review-round-"$nn"-*.md)
 shopt -u nullglob
 
-if [ "${#reviews[@]}" -eq 0 ]; then
-  block "rawf 工作流拦截:第 $nn 轮实现尚未经过 Codex 评审。请立即运行 /rawf-review;若因故必须先征询用户,说明原因后可再次结束。"
+[ "${#reviews[@]}" -eq 0 ] || exit 0
+
+# 只认一个精确信号:锁是普通文件且 flock -n 以专用冲突码 75 失败 = 评审
+# 正在运行。其它一切(锁不存在——不创建、是目录即旧残留、flock 缺失、打开/
+# 权限/文件系统错误等非 75 退出码)一律不放行,fail-closed。
+lock="$task_dir/.review-lock"
+if [ -f "$lock" ] && command -v flock >/dev/null 2>&1; then
+  probe_rc=0
+  flock -n -E 75 "$lock" true 2>/dev/null || probe_rc=$?
+  [ "$probe_rc" -eq 75 ] && exit 0
 fi
-exit 0
+
+block "rawf 工作流拦截:第 $nn 轮实现尚未经过 Codex 评审。请立即运行 /rawf-review;若因故必须先征询用户,说明原因后可再次结束。"

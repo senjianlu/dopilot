@@ -1,0 +1,59 @@
+# rawf-evidence v1
+tc: TC-01
+label: 
+cmd: bash .ai/2026-11-02/upgrade-ai-workflow-template-v1-2-1/evidence/baseline-check.sh /tmp/claude-1000/awt/tpl
+cwd: /home/rabbir/Projects/dopilot
+git_head: 31d8db6399f8ad0899fe664e7358d15a7e6265b2 dirty
+started: 2026-11-02T16:27:01+09:00
+--- output ---
+模板 v1.2.1 = 246db2af223f4279f2ddc3773c5c3171dc8096cc(钉死 246db2af223f4279f2ddc3773c5c3171dc8096cc)
+模板 v1.0.0 = 2aeab2eaca28b1364a46ec7cfc9195849cc61b68(钉死 2aeab2eaca28b1364a46ec7cfc9195849cc61b68)
+  第 1-2 行与模板一致:version: 1.2.1 / source: https://github.com/senjianlu/ai-workflow-template
+  第 3 行 = 'adopted: 2026-11-02'
+EXPECTED-DIFF      .ai-workflow/TEMPLATE-VERSION
+IDENTICAL          .ai-workflow/prompts/plan-review.md  sha256=a6cc289efb86255876816dc612b17545cf1504e35b1f6c4d0aa4b652f364cac3
+IDENTICAL          .ai-workflow/prompts/review.md  sha256=947034fa534ef3d0bd3ab5a3501bbef977624e04525ba42131c02d4111738613
+  v1.2.1 中 '- Scrapy:' 起头行数 = 1;D-1 块行数 = 4
+  D-1 块(v1.2.1 侧):
+    | - Scrapy:阻塞调用混入 reactor/事件循环、selector 取值无防御(裸下标/
+    |   无 default 导致页面结构变化即崩)、pipeline/middleware 异常吞噬致
+    |   item 静默丢失、去重/限速/重试配置被关闭或绕过、解析测试依赖真网
+    |   (须用本地 fixture 响应)
+  期望(v1.2.1 删去 D-1 块)sha256 = 93fd043ff10bf50e43bc529ccf0e11779e3d5c9a6fe50afb17ee7fed7458af5c
+  本仓库                   sha256 = 93fd043ff10bf50e43bc529ccf0e11779e3d5c9a6fe50afb17ee7fed7458af5c
+EXPECTED-DIFF      .ai-workflow/review-standards.md
+IDENTICAL          .ai-workflow/schemas/plan-review.schema.json  sha256=938f27f629fc28cdc4ee02dffb965a60bb8e64636b35b2606e4e21d8904fe478
+IDENTICAL          .ai-workflow/schemas/review.schema.json  sha256=924339b7507246f09a0b3bbea2e5b6bbf4e0b0f01c6886821d14fe70dc0524b0
+IDENTICAL          .ai-workflow/scripts/.gitkeep  sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+IDENTICAL          .ai-workflow/scripts/evidence-check.sh  sha256=ee7337480538339e2b426fd8599df8cd02605ae641623d9fecb4c58884d5cd35
+IDENTICAL          .ai-workflow/scripts/evidence.sh  sha256=a27809a2daf3636c80d30dad58d51a7e576e52eb3f499b536ef43b8193112792
+IDENTICAL          .ai-workflow/scripts/plan-review.sh  sha256=d37ab1797f6e80864a97fbb74ea50b3a5d1e083cbd47f9e2cd4f6fcc5766fb72
+IDENTICAL          .ai-workflow/scripts/review.sh  sha256=99598d4a21cb8811fa8073eb39f13d94ee1b19ef3bcec864d066d69d419532f4
+IDENTICAL          .ai-workflow/templates/implementation-round.md  sha256=70ee9abfbcbea952a665f03e815fba78be9dfe6c0bedd81803b051e0f8003611
+IDENTICAL          .ai-workflow/templates/plan.md  sha256=26321761e9b08287374be9f60d30aba5967cbb6e1cde94fcb247343928a4933e
+IDENTICAL          .ai-workflow/templates/summary.md  sha256=98b760a046a934a4365c173f827f07c57c108a81debb9c9542429f5ab6b2e30e
+IDENTICAL          .claude/hooks/gate-plan.sh  sha256=879a7ab139729af2bf98e56bbf3606e9a9fa96e8630632e65fa3b588e2b9d41b
+IDENTICAL          .claude/hooks/gate-review.sh  sha256=1a797966b8b091f5d26557b14e75efa8f0f5a8a64bb9950ae7f8741130fed9ba
+IDENTICAL          .claude/settings.json  sha256=0e1f9bf6eaf1def71c41fde003a903ccf4a10abf17d2cff0777dc44d7b6898f0
+IDENTICAL          .claude/skills/rawf-implement/SKILL.md  sha256=9f416ae8a8c1879db916c75e44fce1df9733eb9edc4424c601b3dbe612f72ab6
+IDENTICAL          .claude/skills/rawf-plan/SKILL.md  sha256=3ede4366b008544f482cdb776c3e907a4c17a3ccdf2371d9ba2ea80ddc1fae1b
+IDENTICAL          .claude/skills/rawf-report/SKILL.md  sha256=c770af1c531f6751cf10f189d3a675389976a2834a096d5c4642cf90d65f9582
+IDENTICAL          .claude/skills/rawf-review/SKILL.md  sha256=4b0aa734d72306a53a6c60229e7dc17d7cfc96c6f9a14470eca15d5f4b9e7570
+EXPECTED-ABSENT    .claude/skills/rawf-stack-scrapy/SKILL.md(D-4)
+IDENTICAL          .githooks/commit-msg  sha256=f5f50c5c846fb66a2db37f4db9eeb53f8644a4228c21b39965c3acfaf794dacb
+IDENTICAL          .gitmessage  sha256=f349b2c108f2c95e6afe767f1719032ab3912a81dd40c03a9d52db04c95f2570
+
+== 汇总 ==
+IDENTICAL          21
+EXPECTED-DIFF      2
+EXPECTED-ABSENT    1
+UNEXPECTED-DIFF    0
+UNEXPECTED-ABSENT  0
+UNEXPECTED-EXTRA   0
+UNEXPECTED-MODE    0
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T16:27:01+09:00
+bytes: 3928

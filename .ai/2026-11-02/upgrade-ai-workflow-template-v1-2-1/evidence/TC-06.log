@@ -1,0 +1,14 @@
+# rawf-evidence v1
+tc: TC-06
+label: 
+cmd: bash .ai-workflow/scripts/plan-review.sh __minors .ai/2026-07-26/align-ai-workflow-template-v1
+cwd: /home/rabbir/Projects/dopilot
+git_head: 31d8db6399f8ad0899fe664e7358d15a7e6265b2 dirty
+started: 2026-11-02T16:27:03+09:00
+--- output ---
+无
+
+--- end ---
+exit: 0
+finished: 2026-11-02T16:27:03+09:00
+bytes: 4

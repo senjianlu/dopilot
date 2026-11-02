@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# 调用 Codex 评审当前改动。退出码:0=pass 1=fail 3=评审执行异常
+# 调用 Codex 评审当前改动。退出码:0=pass 1=fail 3=评审执行异常(含看门狗终止)
 # 评审以只读沙箱(--sandbox read-only)直审原仓库,不建副本(与
 # plan-review.sh 同构;取消副本的决策见 docs/decisions/0005)。评审者不
 # 运行任何测试,测试核验走证据协议(review-standards.md「评审动作边界」)。
 # 完整性哈希保留为双保险:检测评审期间主工作区的并发写入,兜底沙箱失效;
 # 只读沙箱生效且无并发写入时理应永不触发。
+#
+# 卡死治理(docs/decisions/0009):codex 的 stdin 接 /dev/null(codex 在 stdin
+# 非终端时必读到 EOF);--json 事件流落盘作进度信号,静默超过
+# RAWF_REVIEW_IDLE_SECONDS 或总时长超过 RAWF_REVIEW_MAX_SECONDS 即按会话 +
+# 进程组终止 codex 并 exit 3;锁为 flock 文件,随持有进程退出自动释放。
+# 运行环境要求 Linux:util-linux(flock、setsid)与 procps(pgrep)。
 set -euo pipefail
 
 # --- 完整性指纹(封装于顶层,兼作可控测试点)-----------------------------
@@ -16,9 +22,12 @@ set -euo pipefail
 # .claude/ 例外排除:评审强制后台运行,主会话在评审期间仍活跃,而 Claude
 # Code 会自动写 .claude/settings.local.json(记录权限授予,不经工具、无从拦截),
 # 若纳入指纹会把这类并发写入误判为"隔离失败"致评审无效。故整目录不计入。
+# .review-lock:flock 锁文件常驻任务目录(永不删除),评审前后都在,排除只为
+# 让 git status 在评审期间保持干净。
 # TEMPLATE: 按项目构建产物增删排除项。
 hash_excludes=(
   --exclude='.review-raw-*'
+  --exclude='.review-lock'
   --exclude='.claude/'
   --exclude='__pycache__/' --exclude='*.pyc' --exclude='.pytest_cache/'
   --exclude='.venv/' --exclude='node_modules/' --exclude='dist/' --exclude='.next/'
@@ -52,8 +61,68 @@ if [ "${1:-}" = "__workspace_hash" ]; then
   exit $?
 fi
 
+# --- 受管进程集合与终止 ---------------------------------------------------
+# codex 经 setsid 启动,成为新会话与新进程组首进程;受管集合 = 同会话 ∪
+# 同进程组 ∪ 自身。中间进程退出、后代改挂 init 后 sid/pgid 不变,仍能命中。
+managed_pids() {
+  { pgrep -s "$1" || true; pgrep -g "$1" || true; echo "$1"; } 2>/dev/null \
+    | sort -un | while read -r p; do kill -0 "$p" 2>/dev/null && echo "$p" || true; done
+}
+# kill_codex_tree <sid>:TERM 整组 + 逐 pid,等至多 10 s;仍存活则 KILL 升级
+# (按当时重新取得的集合),再等 3 s;残留只告警不阻断退出。
+kill_codex_tree() {
+  local sid=$1 p alive
+  kill -TERM -- "-$sid" 2>/dev/null || true
+  for p in $(managed_pids "$sid"); do kill -TERM "$p" 2>/dev/null || true; done
+  for _ in $(seq 1 20); do
+    alive=$(managed_pids "$sid"); [ -z "$alive" ] && return 0; sleep 0.5
+  done
+  kill -KILL -- "-$sid" 2>/dev/null || true
+  for p in $(managed_pids "$sid"); do kill -KILL "$p" 2>/dev/null || true; done
+  for _ in $(seq 1 6); do
+    alive=$(managed_pids "$sid"); [ -z "$alive" ] && return 0; sleep 0.5
+  done
+  echo "警告:以下受管进程仍存活:$(echo "$alive" | tr '\n' ' ')" >&2
+}
+
+# lock_holders:只列真正持有 flock 的进程(pid 命令名)。判据是
+# /proc/<pid>/fdinfo/<fd> 的 lock: 行(FLOCK + 锁文件 inode)——被继承的 fd
+# 同样带该行,仅打开未持锁的 fd 没有;/proc/locks 里的 pid 是已退出的 flock
+# 命令进程,不可用。调用前须先关闭本实例自己的锁 fd。
+lock_holders() {
+  local real ino fd pid
+  real=$(realpath "$lock" 2>/dev/null) || return 0
+  ino=$(stat -c %i "$lock" 2>/dev/null) || return 0
+  # find -lname 单进程完成全量匹配(逐 fd readlink 要 fork 数千次,快照会过期)
+  # find 对无权限的 /proc 条目会返回非零,须吞掉,否则 set -e/pipefail 下整个
+  # 命令替换失败、脚本静默退出
+  { find /proc/[0-9]*/fd -maxdepth 1 -lname "$real" 2>/dev/null || true; } | while read -r fd; do
+    pid=${fd#/proc/}; pid=${pid%%/*}
+    [ "$pid" = "$$" ] && continue
+    grep -qE "^lock:.*FLOCK.*:${ino}[[:space:]]" "/proc/$pid/fdinfo/${fd##*/}" 2>/dev/null || continue
+    echo "$pid $(cat "/proc/$pid/comm" 2>/dev/null)"
+  done | sort -un
+}
+
+positive_int() {
+  [[ "$2" =~ ^[1-9][0-9]*$ ]] && return 0
+  echo "$1 须为正整数,实际为:${2:-空}" >&2
+  return 1
+}
+
 # --- 主流程 ---------------------------------------------------------------
+for tool in flock setsid pgrep; do
+  command -v "$tool" >/dev/null \
+    || { echo "需要 util-linux(flock、setsid)与 procps(pgrep):缺少 $tool" >&2; exit 3; }
+done
 command -v codex >/dev/null || { echo "codex CLI 未安装或不在 PATH" >&2; exit 3; }
+
+idle_limit=${RAWF_REVIEW_IDLE_SECONDS:-900}
+max_limit=${RAWF_REVIEW_MAX_SECONDS:-3600}
+poll=${RAWF_REVIEW_POLL_SECONDS:-5}
+positive_int RAWF_REVIEW_IDLE_SECONDS "$idle_limit" || exit 3
+positive_int RAWF_REVIEW_MAX_SECONDS "$max_limit" || exit 3
+positive_int RAWF_REVIEW_POLL_SECONDS "$poll" || exit 3
 
 proj="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
 cd "$proj"
@@ -62,14 +131,60 @@ task_rel=$(cat .ai/.current-task 2>/dev/null) || { echo "无进行中任务(.ai/
 task_dir="$proj/$task_rel"
 [ -d "$task_dir" ] || { echo "任务目录不存在:$task_rel" >&2; exit 3; }
 
-# 同轮唯一性由原子锁保证:mkdir 原子性使"检查-评审-发布"全程互斥,
-# 并发第二实例直接拒绝;锁为临时空目录,对 git 与完整性哈希均不可见
+# 同轮唯一性由 flock 保证:fd 9 在脚本整个生命周期持有,"检查-评审-发布"
+# 全程互斥;持有进程(含继承 fd 的 codex)全部退出即自动释放,没有残留态。
+# 锁文件常驻、永不删除(删除-重建会让两个打开者持有不同 inode 的锁)。
 lock="$task_dir/.review-lock"
-if ! mkdir "$lock" 2>/dev/null; then
-  echo "已有评审在进行中($task_rel/.review-lock 存在);确认无并发评审后删除该目录重跑" >&2
+if [ -d "$lock" ]; then
+  echo "检测到旧版锁目录 $task_rel/.review-lock(升级前残留);确认 pgrep -f 'codex exec' 无旧评审进程后执行 rmdir 该目录再重跑" >&2
   exit 3
 fi
-trap 'rm -rf "$lock"' EXIT
+if ! { true 9>>"$lock"; } 2>/dev/null; then
+  echo "无法打开锁文件 $task_rel/.review-lock" >&2; exit 3
+fi
+exec 9>>"$lock"
+flock_rc=0
+flock -n -E 75 9 || flock_rc=$?
+case "$flock_rc" in
+  0) ;;
+  75)
+    exec 9>&-
+    recorded=$(sed -n 's/^script=//p' "$lock" | head -1)
+    holders=$(lock_holders)
+    # 持有者里是否还有评审脚本进程(按 cmdline 判断,不依赖锁文件元数据):
+    # 有 → 正常并发;无 → 脚本被强杀后遗留的评审进程
+    script_alive=0
+    for hp in $(echo "$holders" | awk '{print $1}'); do
+      if { tr '\0' ' ' < "/proc/$hp/cmdline"; } 2>/dev/null | grep -q 'review.sh'; then script_alive=1; fi
+    done
+    # 快照可能过期(扫描期间评审刚结束):输出前复核锁仍被持有、名单仍存活
+    recheck=0
+    flock -n -E 75 "$lock" true 2>/dev/null || recheck=$?
+    if [ "$recheck" -eq 0 ]; then
+      echo "评审刚结束,锁 $task_rel/.review-lock 已释放;请重跑" >&2
+      exit 3
+    fi
+    alive=$(echo "$holders" | while read -r hp hc; do
+      [ -n "$hp" ] && kill -0 "$hp" 2>/dev/null && echo "$hp $hc" || true; done)
+    {
+      echo "已有评审在进行中,锁 $task_rel/.review-lock 被以下进程持有:"
+      echo "${alive:-(未定位到持有进程,可能刚结束;请重跑)}"
+      if [ -n "$alive" ] && [ "$script_alive" = 0 ]; then
+        echo "持有者中已无评审脚本进程(记录的脚本 pid ${recorded:-未知}),上述为脚本被强杀后遗留的评审进程;确认后执行 kill -TERM $(echo "$alive" | awk '{print $1}' | tr '\n' ' ')再重跑"
+      elif [ -n "$alive" ]; then
+        echo "待其结束后重跑"
+      fi
+    } >&2
+    exit 3 ;;
+  *) echo "锁探测失败(flock 退出码 $flock_rc)" >&2; exit 3 ;;
+esac
+printf 'script=%s\n' "$$" > "$lock"
+
+codex_pid=
+cleanup() { [ -n "$codex_pid" ] && kill_codex_tree "$codex_pid"; return 0; }
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 # nullglob 数组计数:无匹配为 0,避免 ls 管道在 set -e/pipefail 下以
 # 非预期退出码崩溃(会与"评审结论 fail"的退出码 1 冲突)
@@ -86,23 +201,89 @@ if ls "$task_dir"/review-round-"$nn"-*.md >/dev/null 2>&1; then
   exit 3
 fi
 
+# A 档证据机器核验(docs/decisions/0010):结构不完整的证据不送评审——
+# 格式问题由脚本判定并直接开出补交清单,不消耗 codex 评审轮次;通过的报告
+# 注入 prompt,评审者只核内容不核格式。plan 未声明 evidence_format(历史
+# 任务)→ 跳过,占位改为提示评审者自行核对格式。
+# stdout(报告表)与 stderr(补交清单 / 错误诊断)按产生顺序合并捕获:
+# 通过时 stderr 为空,注入 prompt 的就是纯报告;失败时整段原样转 stderr
+ev_rc=0
+ev_report=$(bash "$proj/.ai-workflow/scripts/evidence-check.sh" "$nn" 2>&1) || ev_rc=$?
+case "$ev_rc" in
+  0) ;;
+  1)
+    { echo "证据核验未通过(evidence-check),评审未启动;按补交清单补齐证据或修正实现记录后重跑 review.sh(当前轮尚未评审,不开新轮):"; echo "$ev_report"; } >&2
+    exit 3 ;;
+  2) ev_report="(历史任务:plan 未声明 evidence_format: v1,未经机器核验;A 档证据的格式——命令、完整输出、退出码——由评审按 review-standards.md 自行核对)" ;;
+  *) echo "evidence-check 执行异常(退出码 $ev_rc):$ev_report" >&2; exit 3 ;;
+esac
+
+# bash 5.2 起 patsub_replacement 默认开启:替换文本里的 & 会被换成匹配原文、\& 丢
+# 反斜杠,证据报告(B/C 档证据格原文、%q 转义的 cmd)会被改写。关闭后再做占位
+# 替换(与 plan-review.sh 同一处理,见 docs/decisions/0012)。
+shopt -u patsub_replacement 2>/dev/null || true
 prompt=$(cat .ai-workflow/prompts/review.md)
 prompt="${prompt//\{\{TASK_DIR\}\}/$task_rel}"
 prompt="${prompt//\{\{ROUND\}\}/$nn}"
+prompt="${prompt//\{\{EVIDENCE_REPORT\}\}/$ev_report}"
 
 pre_hash=$(workspace_hash)
 
 # 原始输出直接落任务目录(已由 .gitignore 忽略、hash_excludes 排除),
 # 由 codex CLI 进程自身写入,不经受沙箱约束(沙箱只管模型生成的 shell
 # 命令);非法/异常时原地保留供排查,无需任何回搬逻辑。
+# 事件流(--json)同样落任务目录,文件名命中 .review-raw-* 模式。
 raw_name=".review-raw-$nn.json"
 raw="$task_dir/$raw_name"
-rm -f "$raw"   # 清除历史遗留输出,防陈旧结论被误用
+events="$task_dir/.review-raw-$nn.events.jsonl"
+rm -f "$raw" "$events"   # 清除历史遗留输出,防陈旧结论被误用
+
+setsid codex exec --json --sandbox read-only -C "$proj" \
+  --output-schema "$proj/.ai-workflow/schemas/review.schema.json" \
+  --output-last-message "$raw" "$prompt" </dev/null >"$events" &
+codex_pid=$!
+# 子进程要先执行到 setsid(2) 才成为会话首进程,最多等 2 s;已退出(极快完成)
+# 则无需受管,直接放过。
+sid_ok=0
+for _ in $(seq 1 20); do
+  if ! kill -0 "$codex_pid" 2>/dev/null; then sid_ok=1; break; fi
+  if [ "$(ps -o sid= -p "$codex_pid" 2>/dev/null | tr -d ' ')" = "$codex_pid" ]; then sid_ok=1; break; fi
+  sleep 0.1
+done
+if [ "$sid_ok" != 1 ]; then
+  echo "setsid 未按预期生效(codex pid $codex_pid 不是会话首进程),无法受管终止" >&2
+  exit 3
+fi
+
+# 看门狗:以事件文件字节数为进度信号;醒来先查存活,已结束则不做超时判定
+start=$SECONDS; last_size=0; last_change=$SECONDS; reason=
+while kill -0 "$codex_pid" 2>/dev/null; do
+  sleep "$poll" 9>&-   # 不让 sleep 继承锁 fd:脚本被强杀时它不应再持锁
+  kill -0 "$codex_pid" 2>/dev/null || break
+  size=$(wc -c < "$events" 2>/dev/null || echo 0)
+  if [ "$size" != "$last_size" ]; then last_size=$size; last_change=$SECONDS; fi
+  if [ $((SECONDS - last_change)) -ge "$idle_limit" ]; then reason=idle; break; fi
+  if [ $((SECONDS - start)) -ge "$max_limit" ]; then reason=max; break; fi
+done
 
 codex_rc=0
-codex exec --sandbox read-only -C "$proj" \
-  --output-schema "$proj/.ai-workflow/schemas/review.schema.json" \
-  --output-last-message "$raw" "$prompt" || codex_rc=$?
+if [ -n "$reason" ]; then
+  kill_codex_tree "$codex_pid"
+  wait "$codex_pid" 2>/dev/null || true
+  codex_pid=
+  case "$reason" in
+    idle) echo "评审 ${idle_limit} 秒无新事件,判定卡死,已终止;请重跑评审" >&2 ;;
+    max)  echo "评审超过墙钟上限 ${max_limit} 秒,已终止;请重跑评审" >&2 ;;
+  esac
+  exit 3
+fi
+wait "$codex_pid" || codex_rc=$?
+# codex 主进程已退出但受管后代仍存活(继承锁 fd 会一直持锁)→ 一并清理
+if [ -n "$(managed_pids "$codex_pid")" ]; then
+  echo "警告:codex 已退出但受管后代仍存活,清理中" >&2
+  kill_codex_tree "$codex_pid"
+fi
+codex_pid=
 
 # 双保险:主工作区必须分毫未动(只读沙箱生效且无并发写入时恒真)
 post_hash=$(workspace_hash)
@@ -142,7 +323,8 @@ if [ "$verdict" != "$derived" ]; then
   exit 3
 fi
 
-# 渲染为与历史轮次同构的 markdown(问题按严重度排序,plan-blocker 置顶);
+# 渲染为与历史轮次同构的 markdown(问题按严重度排序,plan-blocker 置顶;
+# 范围核对单列一节,不计入 pass/fail,缺字段按空数组容错);
 # --arg render 1 为渲染调用的特征标记,便于测试注入,对 jq 语义无影响
 render_review() {
   jq -r --arg render 1 --arg nn "$nn" '
@@ -152,6 +334,9 @@ render_review() {
      else ((.issues // []) | sort_by(sev_rank[.severity]) | .[]
        | "- [\(.severity)] \(.id) \(.summary)\n  - 详情:\(.detail)")
      end),
+    "\n## 范围核对",
+    (if ((.scope_findings // []) | length) == 0 then "无"
+     else ((.scope_findings // []) | .[] | "- \(.)") end),
     "\n## 总评\n\(.overall)\n\nVERDICT: \(.verdict)"
   ' "$raw"
 }

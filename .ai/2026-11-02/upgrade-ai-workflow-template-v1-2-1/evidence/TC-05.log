@@ -1,0 +1,90 @@
+# rawf-evidence v1
+tc: TC-05
+label: 
+cmd: bash .ai/2026-11-02/upgrade-ai-workflow-template-v1-2-1/evidence/evidence-tools-check.sh
+cwd: /home/rabbir/Projects/dopilot
+git_head: 31d8db6399f8ad0899fe664e7358d15a7e6265b2 dirty
+started: 2026-11-02T16:27:02+09:00
+--- output ---
+== evidence.sh:退出码透传与头尾字段 ==
+hello
+to-stderr
+证据已写入 .ai/2099-01-01/fake-task/evidence/TC-01.log(exit 7,正文 16 字节)
+PASS  退出码透传 7
+--- TC-01.log ---
+# rawf-evidence v1
+tc: TC-01
+label: 
+cmd: bash -c echo\ hello\;\ echo\ to-stderr\ \>\&2\;\ exit\ 7
+cwd: /home/rabbir/Projects/dopilot
+git_head: 5ddd93b4a1a94a8fa15d9455a9b7d85476c178e1
+started: 2026-11-02T16:27:02+09:00
+--- output ---
+hello
+to-stderr
+
+--- end ---
+exit: 7
+finished: 2026-11-02T16:27:02+09:00
+bytes: 16
+--- /TC-01.log ---
+PASS  首行 rawf-evidence v1
+PASS  含字段 'tc: TC-01'
+PASS  含字段 'cmd: '
+PASS  含字段 'cwd: '
+PASS  含字段 'git_head: '
+PASS  含字段 'started: '
+PASS  含字段 '--- output ---'
+PASS  含字段 '--- end ---'
+PASS  含字段 'exit: 7'
+PASS  含字段 'finished: '
+PASS  含字段 'bytes: '
+PASS  stdout 与 stderr 均已收录
+== evidence.sh:同名二次运行须拒绝覆盖(exit 3)==
+证据文件已存在:.ai/2099-01-01/fake-task/evidence/TC-01.log(.ai/ 只增不改;重跑请加 -l <label>)
+PASS  同名重跑 exit 3
+PASS  原证据未被改动
+== evidence.sh:非法 TC 编号 exit 3 ==
+TC 编号不合法:BAD-01(须匹配 ^TC-[0-9]+[A-Za-z0-9]*$)
+PASS  非法编号 exit 3
+== evidence-check.sh:完整假任务 → exit 0 ==
+机器核验(evidence-check,.ai/2099-01-01/fake-task,第 01 轮):
+
+| 编号 | 档位 | 结果 | 证据文件 | 机器核验 | exit | cmd |
+|---|---|---|---|---|---|---|
+| TC-01 | A | pass | TC-01.log | OK | 7 | bash -c echo\ hello\;\ echo\ to-stderr\ \>\&2\;\ exit\ 7 |
+| TC-02 | A | pass | TC-02.log | OK | 0 | bash -c echo\ fine |
+
+结论:全部 A 档证据结构完整,记录与 plan 用例清单一致。
+PASS  完整记录 evidence-check exit 0
+== evidence-check.sh:实现记录缺 TC-02 行 → 非零 ==
+机器核验(evidence-check,.ai/2099-01-01/fake-task,第 01 轮):
+
+| 编号 | 档位 | 结果 | 证据文件 | 机器核验 | exit | cmd |
+|---|---|---|---|---|---|---|
+| TC-01 | A | pass | TC-01.log | OK | 7 | bash -c echo\ hello\;\ echo\ to-stderr\ \>\&2\;\ exit\ 7 |
+| TC-02 | A | — | — | MISSING-ROW |  | plan 有此用例,记录无 |
+
+结论:未通过(补交清单见 stderr)。
+补交清单:
+- TC-02:MISSING-ROW 实现记录缺少该用例行(plan 档位 A)
+PASS  缺行 → exit 1 且报 MISSING-ROW
+== evidence-check.sh:证据被截断 → 非零 ==
+机器核验(evidence-check,.ai/2099-01-01/fake-task,第 01 轮):
+
+| 编号 | 档位 | 结果 | 证据文件 | 机器核验 | exit | cmd |
+|---|---|---|---|---|---|---|
+| TC-01 | A | pass | TC-01.log | OK | 7 | bash -c echo\ hello\;\ echo\ to-stderr\ \>\&2\;\ exit\ 7 |
+| TC-02 | A | pass | TC-02.log | TRUNCATED(正文 5 字节,bytes: 99999) | 0 | bash -c echo\ fine |
+
+结论:未通过(补交清单见 stderr)。
+补交清单:
+- TC-02:evidence/TC-02.log → TRUNCATED(正文 5 字节,bytes: 99999)
+PASS  bytes 不符 → exit 1 且报 TRUNCATED
+
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T16:27:03+09:00
+bytes: 2909

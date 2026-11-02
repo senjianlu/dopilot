@@ -1,7 +1,7 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["verdict", "issues", "overall"],
+  "required": ["verdict", "issues", "scope_findings", "overall"],
   "properties": {
     "verdict": { "type": "string", "enum": ["pass", "fail"] },
     "issues": {
@@ -21,6 +21,7 @@
         }
       }
     },
+    "scope_findings": { "type": "array", "items": { "type": "string" } },
     "overall": { "type": "string" }
   }
 }

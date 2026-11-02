@@ -114,7 +114,7 @@ Next `output: "export"` 产出纯静态文件,由后端(FastAPI)静态托管,
   与代码同一提交(分工详见 docs/README.md)
 - 开发必须走 rawf 工作流(由 Claude Code 驱动,细则见 CLAUDE.md),
   不得绕过其闸门与产物约定;预计触及文件 > 10 的改动,须在方案确认闸之前
-  先经 plan 阶段 Codex 评审(plan-review,默认最多 3 轮,用户明确指定
+  先经 plan 阶段 Codex 评审(plan-review,默认最多 5 轮,用户明确指定
   轮数时以其为准);≤ 10 不强制。细则见 CLAUDE.md
 - 代码评审的角色约束、标准与严重度定义见 .ai-workflow/review-standards.md
 - 尊重 `docs/decisions/` 的已确认决策,不复议(如单管理员、单实例

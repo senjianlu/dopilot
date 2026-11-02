@@ -1,0 +1,47 @@
+# rawf-evidence v1
+tc: TC-08
+label: 
+cmd: bash .ai/2026-11-02/upgrade-ai-workflow-template-v1-2-1/evidence/changeset-check.sh
+cwd: /home/rabbir/Projects/dopilot
+git_head: 31d8db6399f8ad0899fe664e7358d15a7e6265b2 dirty
+started: 2026-11-02T16:27:03+09:00
+--- output ---
+plan 列出文件数:23
+实际变更(除本任务目录与建议目录):23 个
+  .ai-workflow/TEMPLATE-VERSION
+  .ai-workflow/prompts/plan-review.md
+  .ai-workflow/prompts/review.md
+  .ai-workflow/review-standards.md
+  .ai-workflow/schemas/plan-review.schema.json
+  .ai-workflow/schemas/review.schema.json
+  .ai-workflow/scripts/evidence-check.sh
+  .ai-workflow/scripts/evidence.sh
+  .ai-workflow/scripts/plan-review.sh
+  .ai-workflow/scripts/review.sh
+  .ai-workflow/templates/implementation-round.md
+  .ai-workflow/templates/plan.md
+  .ai-workflow/templates/summary.md
+  .claude/hooks/gate-review.sh
+  .claude/skills/rawf-implement/SKILL.md
+  .claude/skills/rawf-plan/SKILL.md
+  .claude/skills/rawf-report/SKILL.md
+  .claude/skills/rawf-review/SKILL.md
+  .gitignore
+  AGENTS.md
+  CLAUDE.md
+  docs/decisions/0020-ai-workflow-template-version-anchor.md
+  docs/decisions/README.md
+PASS  plan 列出的 23 个文件全部有改动
+PASS  无 plan 之外的改动
+PASS  apps/ packages/ deploy/ configs/ scripts/ examples/ tests/ 零改动
+PASS  本任务目录只含任务产物
+建议目录:基线 19 个文件 清单 sha256=6c428ed54d8645c961e1de35b7b850dfc886e4748b3799d8cca6ee155d3629e4;当前 19 个 清单 sha256=6c428ed54d8645c961e1de35b7b850dfc886e4748b3799d8cca6ee155d3629e4
+PASS  建议目录内容未变
+PASS  建议目录仍未跟踪
+
+RESULT: PASS
+
+--- end ---
+exit: 0
+finished: 2026-11-02T16:27:03+09:00
+bytes: 1356
