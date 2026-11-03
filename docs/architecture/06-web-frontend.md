@@ -40,7 +40,7 @@
   菜单项沿用 `schedule-{tasks,trigger,edit,delete}-<name>` 这组 testid);名称列与
   执行模板列的文本为 `max-w-[15rem] truncate`,**截断的 span 自身就是 tooltip
   触发器**并带 `tabIndex={0}`——hover 与键盘聚焦两条路径都能看到完整原文,原生
-  `title` 只作无 JS 兜底。「已自动禁用」徽标与归档标是截断 span 的**兄弟节点**
+  `title` 只作无 JS 兜底。「已自动禁用」/ 熔断徽标与归档标是截断 span 的**兄弟节点**
   (外层 flex 不截断),不会随文本一起被裁。这套收窄是为了让
   `crawler-a | SITE-Z VOUCHER_USD_100_MARKET_X_CNY` 这类超长
   命名在 1440 宽下连卡片内滚动都不需要,操作入口也不被挤出视野。
@@ -71,11 +71,18 @@
   拉 `GET /notifications?limit=20`,每条按 `type` + `payload` 经 i18n
   `notifications.types.<type>.{title,body}` 渲染(server 不存自然语言),未读加粗、
   `count` 折叠显示 `×N`;点击条目 `POST /notifications/read` 并跳转
-  (`schedule_auto_disabled` → `/schedules?highlight=<id>`,`log_flood` /
+  (`schedule_auto_disabled` 与 `schedule_breaker_{open,held,closed}` →
+  `/schedules?highlight=<id>`;`payload.escalated` 为真时正文取 `body_escalated`,
+  `log_flood` /
   `log_truncated` → 既有静态路由 `/tasks/detail?id=<task_id>`,资源类 →
   `/maintenance`);底部「全部已读」。调度页对 `auto_disabled_at` 非空的行显示
-  「已自动禁用」`Badge`(tooltip 含连续出错次数与时间),重新打开走既有
-  `PUT /schedules/{id}`。机制见 [03-execution-and-logs](03-execution-and-logs.md#任务结果记录与调度自动禁用)。
+  「已自动禁用」`Badge`(决策 0025 之前的旧行;tooltip 含连续出错次数与时间),
+  重新打开走既有 `PUT /schedules/{id}`。`breaker_state` 非 `closed` 的行显示熔断
+  徽标(`schedule-breaker-<name>`,`data-state` 为状态):`open`「熔断中」、
+  `half_open`「试跑中」、`held`「需人工」(destructive),tooltip 给起始时间 /
+  下次试跑时间 / 连错次数;行操作菜单此时多出「复位熔断」
+  (`schedule-breaker-reset-<name>` → `POST /schedules/{id}/breaker/reset`,成功
+  toast 并刷新)。机制见 [03-execution-and-logs](03-execution-and-logs.md#任务结果记录与调度熔断)。
 - i18n 默认中文;后端 API 只返回结构化 message code，文案映射在前端。
 - 测试:vitest + @testing-library/react + jsdom（单测/组件），Playwright
   （e2e，选择器走 `data-tone`/`data-testid`）;lint 为 ESLint flat config;

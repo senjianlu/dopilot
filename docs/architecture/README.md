@@ -12,7 +12,7 @@ dopilot 是**自托管、单管理员**的调度平台（MIT 开源），在远�
 | `README.md`(本文) | 目录地图 + 系统形态 |
 | [`01-runtime-topology.md`](01-runtime-topology.md) | 运行拓扑:server / agent / Redis / PostgreSQL,三条 stream 与 heartbeat |
 | [`02-domain-model.md`](02-domain-model.md) | 领域模型:BuildArtifact → … → Execution,快照与能力过滤 |
-| [`03-execution-and-logs.md`](03-execution-and-logs.md) | 执行与日志链路:command outbox、幂等、lost/reconcile、日志完整性、日志洪泛防护、结果记录与自动禁用 |
+| [`03-execution-and-logs.md`](03-execution-and-logs.md) | 执行与日志链路:command outbox、幂等、lost/reconcile、日志完整性、日志洪泛防护、结果记录与调度熔断 |
 | [`04-configuration.md`](04-configuration.md) | 配置与认证:TOML + env 覆盖,令牌体系 |
 | [`05-deployment.md`](05-deployment.md) | 部署:统一镜像、三份 compose、持久化卷、CI、事故恢复 runbook |
 | [`06-web-frontend.md`](06-web-frontend.md) | 前端:Next.js 静态导出 SPA、SSE、i18n、消息中心 |

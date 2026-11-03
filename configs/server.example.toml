@@ -150,10 +150,21 @@ agents = []
 [scheduler]
 enabled = true
 timezone = "Asia/Shanghai"
-# Auto-disable (log-flood guard): a schedule whose last N recorded outcomes are
-# all erroneous (failed/lost, finished with scrapy ERRORs, truncated/flooded
-# log) is switched off and a notification is raised. 0 disables.
+# Schedule circuit breaker (decision 0025; key name kept from 0021): a schedule
+# whose last N recorded outcomes are all erroneous (failed/lost, finished with
+# scrapy ERRORs, truncated/flooded log) trips its breaker - "open" (timed
+# back-off, then an automatic half-open probe run) when any of them was
+# transient, "held" (needs a human) when all were broken. The breaker never
+# changes `enabled`. 0 = never trip.
 auto_disable_after_errors = 5
+# Open-breaker back-off: min(base * 2^level, max) seconds before the next timer
+# firing may run a probe (900 -> 1800 -> 3600 -> 7200). `max` is also the
+# half-open probe deadline. base >= 1, max >= base.
+breaker_backoff_base_seconds = 900
+breaker_backoff_max_seconds = 7200
+# A breaker open this long is escalated to an error notification at its next
+# failed probe. 0 = never escalate.
+breaker_escalate_after_seconds = 86400
 # A soft "lost" task is only recorded as an outcome after reclaim + drain, or
 # after this many seconds as a bounded fallback.
 lost_outcome_grace_seconds = 86400

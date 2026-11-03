@@ -321,9 +321,23 @@ export interface Schedule {
   auto_disabled_at: string | null;
   auto_disabled_reason: Record<string, unknown> | null;
   outcome_generation: number;
+  // Schedule circuit breaker (decision 0025). `auto_disabled_*` above only
+  // appear on rows auto-disabled before 0025; the breaker never touches
+  // `enabled`.
+  breaker_state: BreakerState;
+  breaker_level: number;
+  breaker_opened_at: string | null;
+  breaker_retry_at: string | null;
+  breaker_escalated_at: string | null;
+  breaker_reason: Record<string, unknown> | null;
+  breaker_artifact_id: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
+
+// closed = normal; open = timed back-off, auto half-open probe; half_open = a
+// probe run is in flight; held = needs a human (reset, or a new artifact).
+export type BreakerState = "closed" | "open" | "half_open" | "held";
 
 export interface SchedulesResponse {
   schedules: Schedule[];
@@ -481,6 +495,9 @@ export interface ApiError {
 
 export type NotificationType =
   | "schedule_auto_disabled"
+  | "schedule_breaker_open"
+  | "schedule_breaker_held"
+  | "schedule_breaker_closed"
   | "log_truncated"
   | "log_flood"
   | "redis_stream_over_budget"

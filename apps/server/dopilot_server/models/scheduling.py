@@ -164,6 +164,33 @@ class Schedule(Base):
     )
     auto_disabled_reason: Mapped[dict | None] = mapped_column(_JSON, nullable=True)
     outcome_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Schedule circuit breaker (decision 0025, migration 0016). Replaces the
+    # threshold's ``enabled=false``: the breaker NEVER touches ``enabled`` (only
+    # people and declarative sync do), so the two can no longer fight.
+    # ``breaker_state``: closed | open (timed back-off, auto half-open probe) |
+    # half_open (one probe admitted, awaiting its outcome) | held (needs a human;
+    # re-probed only when the template's artifact moved off
+    # ``breaker_artifact_id``). ``breaker_level`` is the back-off exponent;
+    # ``breaker_retry_at`` is the earliest probe time while open and the probe
+    # deadline while half_open. ``auto_disabled_*`` above are legacy (pre-0025
+    # rows only) and are never written by the breaker.
+    breaker_state: Mapped[str] = mapped_column(
+        String, nullable=False, default="closed", server_default="closed"
+    )
+    breaker_level: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    breaker_opened_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    breaker_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    breaker_escalated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    breaker_reason: Mapped[dict | None] = mapped_column(_JSON, nullable=True)
+    breaker_artifact_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -201,6 +228,10 @@ class ScheduleOutcomeLedger(Base):
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     erroneous: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Decision 0025: ok | neutral | transient | broken (``states.task_outcome_class``).
+    # NULL on rows recorded before migration 0016 — an erroneous NULL counts as
+    # ``broken`` (the pre-0025 meaning of every error).
+    outcome_class: Mapped[str | None] = mapped_column(String, nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -1,0 +1,39 @@
+# rawf-evidence v1
+tc: TC-08
+label: r02
+cmd: .venv/bin/python -m pytest apps/server/tests/test_schedule_breaker.py -v -k half_open
+cwd: /home/rabbir/Projects/dopilot
+git_head: 52727f04dc3f6c27f5e942f491e561fc14d08a95 dirty
+started: 2026-11-03T12:14:37+09:00
+--- output ---
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 52 items / 37 deselected / 15 selected
+
+apps/server/tests/test_schedule_breaker.py::test_gate_open_due_admits_half_open_probe PASSED [  6%]
+apps/server/tests/test_schedule_breaker.py::test_gate_half_open_before_deadline_skips PASSED [ 13%]
+apps/server/tests/test_schedule_breaker.py::test_gate_half_open_past_deadline_reprobes_same_generation PASSED [ 20%]
+apps/server/tests/test_schedule_breaker.py::test_half_open_ok_closes PASSED [ 26%]
+apps/server/tests/test_schedule_breaker.py::test_half_open_transient_backoff_sequence PASSED [ 33%]
+apps/server/tests/test_schedule_breaker.py::test_half_open_broken_holds PASSED [ 40%]
+apps/server/tests/test_schedule_breaker.py::test_half_open_neutral_retries_at_next_firing[canceled] PASSED [ 46%]
+apps/server/tests/test_schedule_breaker.py::test_half_open_neutral_retries_at_next_firing[no_target] PASSED [ 53%]
+apps/server/tests/test_schedule_breaker.py::test_half_open_old_generation_outcomes_ignored PASSED [ 60%]
+apps/server/tests/test_schedule_breaker.py::test_half_open_current_ok_closes_open_and_held[open] PASSED [ 66%]
+apps/server/tests/test_schedule_breaker.py::test_half_open_current_ok_closes_open_and_held[held] PASSED [ 73%]
+apps/server/tests/test_schedule_breaker.py::test_half_open_open_ignores_current_errors PASSED [ 80%]
+apps/server/tests/test_schedule_breaker.py::test_half_open_late_lost_after_reprobe_still_counts PASSED [ 86%]
+apps/server/tests/test_schedule_breaker.py::test_half_open_long_running_success_after_reprobe_closes PASSED [ 93%]
+apps/server/tests/test_schedule_breaker.py::test_reset_endpoint_closes_breaker[half_open] PASSED [100%]
+
+====================== 15 passed, 37 deselected in 1.54s =======================
+
+--- end ---
+exit: 0
+finished: 2026-11-03T12:14:40+09:00
+bytes: 2157

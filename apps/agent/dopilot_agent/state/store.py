@@ -87,6 +87,9 @@ class AttemptState(BaseModel):
     error_count: int | None = None
     finish_reason: str | None = None
     log_bytes: int | None = None
+    # Schedule circuit breaker (decision 0025): the crawler's ``'outcome/class'``
+    # stat parsed at terminal; additive (default keeps old state files loading).
+    outcome_class: str | None = None
 
     # --- stop state machine: additive fields (defaults keep old state files
     # loading unchanged). A stop is no longer handled inline -- waiting for the
@@ -374,6 +377,7 @@ class StateStore:
         error_count: int | None,
         finish_reason: str | None,
         log_bytes: int | None,
+        outcome_class: str | None = None,
     ) -> AttemptState | None:
         """Persist the scrapy stats parsed at terminal (None = unknown)."""
         state = self.read(execution_id)
@@ -382,6 +386,7 @@ class StateStore:
         state.error_count = error_count
         state.finish_reason = finish_reason
         state.log_bytes = log_bytes
+        state.outcome_class = outcome_class
         return self.write(state)
 
     def read(self, execution_id: str) -> AttemptState | None:

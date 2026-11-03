@@ -378,6 +378,29 @@ async def test_terminal_event_carries_scrapy_stats(workdir, fake_redis):
     assert (st.error_count, st.finish_reason, st.log_bytes) == (91, "finished", ev.log_bytes)
 
 
+async def test_terminal_event_carries_outcome_class(workdir, fake_redis):
+    """Decision 0025: the crawler's ``'outcome/class'`` rides the terminal event
+    and is persisted in the attempt state next to the other stats."""
+    fake = fake_redis()
+    scrapyd = FakeScrapyd()
+    store, _r, consumer, _pub, state, log = await _start(workdir, scrapyd, fake)
+    log.write_text(
+        "2026 INFO: Scrapy started\n"
+        "[scrapy.statscollectors] INFO: Dumping Scrapy stats:\n"
+        "{'finish_reason': 'site_request_failed',\n 'log_count/ERROR': 2,\n"
+        " 'outcome/class': 'transient'}\n",
+        encoding="utf-8",
+    )
+    scrapyd.move_to_finished(state.scrapyd_job_id)
+    await consumer.reconcile_started_attempts()
+    ev = (await _events(fake))[-1]
+    assert ev.type is AgentEventType.finished
+    assert (ev.error_count, ev.finish_reason, ev.outcome_class) == (
+        2, "site_request_failed", "transient"
+    )
+    assert store.read("a1").outcome_class == "transient"
+
+
 # --- TC-08: stop_logs backpressure ----------------------------------------------------
 
 

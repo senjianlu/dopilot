@@ -1,4 +1,6 @@
-"""TC-22: the reconcile loop records outcomes and reloads the runner AFTER commit."""
+"""TC-22: the reconcile loop records outcomes and commits the breaker state;
+decision 0025 — the breaker never touches ``enabled``, so the runner's job set
+is left alone (no reload)."""
 
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ from .test_outcomes import _schedule, _task
 from .test_scheduler_runner import _seed_schedule
 
 
-async def test_tick_reloads_runner_only_after_commit(
+async def test_tick_trips_breaker_without_reloading_runner(
     db_session, exec_settings, seeder, test_sessionmaker, exec_redis, monkeypatch
 ):
     exec_settings.scheduler.auto_disable_after_errors = 3
@@ -30,31 +32,29 @@ async def test_tick_reloads_runner_only_after_commit(
     runner = ScheduleRunner(test_sessionmaker, exec_settings, dispatcher)
     await runner.start()
     assert [j.id for j in runner._scheduler.get_jobs()] == [sched.id]
+    reloads: list[int] = []
+    original_reload = runner.reload
 
-    calls: list[tuple[str, list[str], bool]] = []
+    async def counting_reload() -> None:
+        reloads.append(1)
+        await original_reload()
 
-    async def on_disabled(ids: list[str]) -> None:
-        # Observed from a FRESH session: the disable must already be committed.
-        async with test_sessionmaker() as s:
-            fresh = await sched_svc.get_schedule(s, ids[0])
-            calls.append(("callback", ids, fresh.enabled))
-        await runner.reload()
+    monkeypatch.setattr(runner, "reload", counting_reload)
 
-    loop = RedisReconcileLoop(
-        test_sessionmaker, exec_settings, on_schedules_disabled=on_disabled
-    )
+    loop = RedisReconcileLoop(test_sessionmaker, exec_settings)
     await loop._tick()
-    assert calls == [("callback", [sched.id], False)]
-    assert runner._scheduler.get_jobs() == []  # job set no longer contains the schedule
+    # Observed from a FRESH session: the trip is committed by the tick.
     async with test_sessionmaker() as s:
         fresh = await sched_svc.get_schedule(s, sched.id)
-        assert fresh.enabled is False and fresh.consecutive_error_count == 3
+        assert fresh.enabled is True and fresh.consecutive_error_count == 3
+        assert fresh.breaker_state == "held"
+    assert reloads == []  # no reload: the job stays registered, gated at firing time
+    assert [j.id for j in runner._scheduler.get_jobs()] == [sched.id]
 
-    # Failed commit -> no callback and nothing recorded.
+    # Failed commit -> nothing recorded.
     sched2 = await _schedule(db_session, seeder)  # fresh template + schedule
     for i in range(3):
         await _task(db_session, exec_settings, sched2, finished_at=now - timedelta(minutes=5 - i))
-    calls.clear()
 
     class Boom(Exception):
         pass
@@ -65,16 +65,14 @@ async def test_tick_reloads_runner_only_after_commit(
         raise Boom()
 
     monkeypatch.setattr(AsyncSession, "commit", failing_commit)
-    loop2 = RedisReconcileLoop(
-        test_sessionmaker, exec_settings, on_schedules_disabled=on_disabled
-    )
+    loop2 = RedisReconcileLoop(test_sessionmaker, exec_settings)
     try:
         await loop2._tick()
     except Boom:
         pass
     monkeypatch.undo()
-    assert calls == []
     async with test_sessionmaker() as s:
         fresh = await sched_svc.get_schedule(s, sched2.id)
         assert fresh.enabled is True and fresh.consecutive_error_count == 0
+        assert fresh.breaker_state == "closed"
     await runner.stop()

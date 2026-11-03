@@ -1,0 +1,405 @@
+# rawf-evidence v1
+tc: TC-17
+label: r02
+cmd: bash -c corepack\ pnpm\ --dir\ apps/web\ test\ \&\&\ corepack\ pnpm\ --dir\ apps/web\ typecheck\ \&\&\ corepack\ pnpm\ --dir\ apps/web\ lint\ \&\&\ corepack\ pnpm\ --dir\ apps/web\ build
+cwd: /home/rabbir/Projects/dopilot
+git_head: 52727f04dc3f6c27f5e942f491e561fc14d08a95 dirty
+started: 2026-11-03T12:16:34+09:00
+--- output ---
+$ vitest run
+
+ RUN  v2.1.9 /home/rabbir/Projects/dopilot/apps/web
+
+stderr | components/layout/__tests__/notification-bell.test.tsx > NotificationBell (TC-28) > shows the unread badge, lists items via i18n, navigates and marks read
+An update to NotificationBell inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to LocaleSwitch inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ThemeToggle inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to TopControls inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | components/layout/__tests__/notification-bell.test.tsx > NotificationBell (TC-28) > renders English copy for every type without missing keys
+An update to NotificationBell inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to LocaleSwitch inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ThemeToggle inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to TopControls inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | components/layout/__tests__/notification-bell.test.tsx > NotificationBell (TC-28) > caps the badge at 99+
+An update to NotificationBell inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to LocaleSwitch inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ThemeToggle inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to TopControls inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | components/layout/__tests__/notification-bell.test.tsx > NotificationBell (TC-28) > tells a stalled attempt apart from one it also stopped
+An update to NotificationBell inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to LocaleSwitch inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ThemeToggle inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to TopControls inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | components/layout/__tests__/notification-bell.test.tsx > NotificationBell (TC-28) > renders the three schedule breaker types in zh and links to the schedule
+An update to NotificationBell inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to LocaleSwitch inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ThemeToggle inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to TopControls inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | components/layout/__tests__/notification-bell.test.tsx > NotificationBell (TC-28) > renders the escalated breaker body when the payload says escalated
+An update to NotificationBell inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to LocaleSwitch inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ThemeToggle inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to TopControls inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ ✓ components/layout/__tests__/notification-bell.test.tsx (7 tests) 2786ms
+   ✓ NotificationBell (TC-28) > shows the unread badge, lists items via i18n, navigates and marks read 1309ms
+   ✓ NotificationBell (TC-28) > renders English copy for every type without missing keys 667ms
+   ✓ NotificationBell (TC-28) > tells a stalled attempt apart from one it also stopped 354ms
+ ✓ app/(app)/templates/__tests__/templates.test.tsx (10 tests) 2070ms
+   ✓ TemplatesPage > defaults the command from the artifact's first spider on open 314ms
+   ✓ TemplatesPage > edit form keeps an archived current binding visible but not a fresh option 313ms
+   ✓ TemplatesPage > filters templates by name prefix (trim, case-insensitive, startsWith) 421ms
+   ✓ TemplatesPage > deletes a template only after confirmation 400ms
+ ✓ app/(app)/tasks/__tests__/tasks.test.tsx (16 tests) 8946ms
+   ✓ TasksPage build-artifact filter > shows the build artifact label in the table column (not the spider) 534ms
+   ✓ TasksPage build-artifact filter > selecting a build artifact calls listTasks with buildArtifactId 1257ms
+   ✓ TasksPage build-artifact filter > offers a distinct build-artifact option per known artifact 679ms
+   ✓ TasksPage status filter > selecting a status calls listTasks with status and resets to page 1 536ms
+   ✓ TasksPage status filter > preserves status across refresh, pagination, and page-size changes 1192ms
+   ✓ TasksPage target search > searches immediately on Enter and does not fire again after the delay 918ms
+   ✓ TasksPage target search > uses the LATEST filters when the debounce fires, not the ones captured while typing 660ms
+   ✓ TasksPage target search > discards a stale response that lands after a newer one 655ms
+   ✓ TasksPage target search > caps the search input so the UI cannot build a request the backend rejects 586ms
+   ✓ TasksPage target search > preserves the search term and schedule filter across paging and refresh 756ms
+ ✓ app/(app)/schedules/__tests__/schedules.test.tsx (30 tests) 11502ms
+   ✓ SchedulesPage > triggers a schedule and navigates to the created task 556ms
+   ✓ SchedulesPage > edits a schedule: pre-fills the dialog and calls updateSchedule 1053ms
+   ✓ SchedulesPage > creates a schedule with enabled true when the modal switch is on 1393ms
+   ✓ SchedulesPage > pre-fills the edit dialog switch from an enabled schedule 549ms
+   ✓ SchedulesPage > filters schedules by name prefix (trim, case-insensitive, startsWith) 533ms
+   ✓ SchedulesPage > submits max_concurrency on create 848ms
+   ✓ SchedulesPage > prefills and updates max_concurrency on edit 646ms
+   ✓ SchedulesPage > supports zero as unlimited 1097ms
+   ✓ SchedulesPage auto-disable badge (TC-29) > shows the auto-disabled badge with the consecutive-error tooltip 397ms
+   ✓ SchedulesPage long names and the row actions menu > surfaces the full name by hover and by keyboard focus 423ms
+   ✓ SchedulesPage long names and the row actions menu > does not delete from the menu when the confirm is cancelled 561ms
+   ✓ SchedulesPage long names and the row actions menu > shows breaker badges for open, half_open and held with their tooltips 834ms
+   ✓ SchedulesPage long names and the row actions menu > offers the breaker reset only when not closed, then resets and reloads 511ms
+stderr | app/(app)/maintenance/__tests__/maintenance.test.tsx > MaintenancePage — polling > polls every 10s and stops after unmount
+An update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to MaintenancePage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ ✓ app/(app)/maintenance/__tests__/maintenance.test.tsx (10 tests) 2651ms
+   ✓ MaintenancePage — dashboard > renders scopes, level tones, null-limit and scope statuses 304ms
+   ✓ MaintenancePage — actions > runs sweep-now only after confirmation 451ms
+   ✓ MaintenancePage — actions > rewrites AOF after confirmation 560ms
+   ✓ MaintenancePage — actions > previews terminal cleanup (dry run) and renders the summary 347ms
+   ✓ MaintenancePage — actions > executes terminal cleanup (destructive) only after confirmation 305ms
+ ✓ app/(app)/tasks/__tests__/task-detail.test.tsx (6 tests) 1128ms
+ ✓ components/features/__tests__/log-viewer.test.tsx (8 tests) 419ms
+ ✓ lib/api/__tests__/client.test.ts (8 tests) 36ms
+ ✓ app/(app)/artifacts/__tests__/artifacts.test.tsx (6 tests) 678ms
+ ✓ lib/__tests__/format.test.ts (8 tests) 30ms
+ ✓ lib/__tests__/nodeSelection.test.ts (5 tests) 6ms
+ ✓ app/(app)/nodes/__tests__/nodes.test.tsx (3 tests) 537ms
+ ✓ lib/__tests__/scrapyCommand.test.ts (9 tests) 7ms
+ ✓ lib/__tests__/templateCommand.test.ts (5 tests) 6ms
+ ✓ components/features/__tests__/archived-indicator.test.tsx (2 tests) 341ms
+ ✓ components/ui/__tests__/sidebar.test.tsx (1 test) 46ms
+
+ Test Files  16 passed (16)
+      Tests  134 passed (134)
+   Start at  12:16:35
+   Duration  22.62s (transform 1.83s, setup 6.38s, collect 8.02s, tests 31.19s, environment 12.25s, prepare 2.35s)
+
+$ tsc --noEmit
+$ eslint .
+$ next build
+⚠ `eslint` configuration in next.config.mjs is no longer supported. See more info here: https://nextjs.org/docs/app/api-reference/cli/next#next-lint-options
+⚠ Invalid next.config.mjs options detected: 
+⚠     Unrecognized key(s) in object: 'eslint'
+⚠ See more info here: https://nextjs.org/docs/messages/invalid-next-config
+▲ Next.js 16.2.6 (Turbopack)
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 10.4s
+  Running TypeScript ...
+  Finished TypeScript in 8.7s ...
+  Collecting page data using 3 workers ...
+  Generating static pages using 3 workers (0/12) ...
+  Generating static pages using 3 workers (3/12) 
+  Generating static pages using 3 workers (6/12) 
+  Generating static pages using 3 workers (9/12) 
+✓ Generating static pages using 3 workers (12/12) in 609ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /artifacts
+├ ○ /dashboard
+├ ○ /login
+├ ○ /maintenance
+├ ○ /nodes
+├ ○ /schedules
+├ ○ /tasks
+├ ○ /tasks/detail
+└ ○ /templates
+
+
+○  (Static)  prerendered as static content
+
+
+--- end ---
+exit: 0
+finished: 2026-11-03T12:17:29+09:00
+bytes: 17542

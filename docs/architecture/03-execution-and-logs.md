@@ -225,14 +225,16 @@ server 守卫    ─[闸 4 StreamGuardLoop]─ MEMORY USAGE > stream_max_bytes_l
   窗口(900s)与重试额度——原 `give_up_at` 在长停机后早已过期,不重开会在同一
   tick 被判 `dispatch_timeout` 而非重投。
 
-### 任务结果记录与调度自动禁用
+### 任务结果记录与调度熔断
 
 scrapyd 1.x 不暴露退出码:pipeline 全部报错的爬虫终态仍是 `finished`。因此
 agent 在终态时解析日志尾 64KB 的 scrapy stats(`log_count/ERROR`、
 `finish_reason`;只取最后一个 `Dumping Scrapy stats` 块内的字典行,业务日志
 打印同名字段不会伪造 stats;无块或块被截断到该键之前 → `None`)并连同本地
 日志大小随事件上报(`AgentEvent.error_count / finish_reason / log_bytes`,均
-可选),server 落到 `executions` 新列。
+可选),server 落到 `executions` 新列。同一 stats 块里爬虫自写的
+`'outcome/class'`(决策 0025)经 `AgentEvent.outcome_class` 原样透传(截断 64
+字符),落 `executions.outcome_class`;缺键 = NULL。
 
 **唯一提交点**是 `services/outcomes.record_task_outcomes`,由
 `RedisReconcileLoop` 每 tick 在 `finalize_drained_logs` 之后轮询:任何终态写入
@@ -250,14 +252,48 @@ agent 在终态时解析日志尾 64KB 的 scrapy stats(`log_count/ERROR`、
    (仅 finished)`error_count>0` / `finish_reason≠finished`、`size-cap`/
    `dir-budget` 截断、agent 上报 `log_bytes ≥ max_file_bytes`;维护截断
    (`maintenance`)永不算;
-4. 来自 `schedule_timer` / `schedule_trigger_now` 的 task 写入独立账本
-   `schedule_outcome_ledger`(按 `task_id` upsert,不随 Task 保留期清理,按条数
-   自修剪),并**重算**该 schedule 当前代际的"连续出错前缀长度"→
-   `consecutive_error_count`;达 `auto_disable_after_errors` 即 `enabled=false`
-   + `auto_disabled_at/reason` + `schedule_auto_disabled` 通知,tick 提交后再
-   `ScheduleRunner.reload()`。
+4. 来自 `schedule_timer` / `schedule_trigger_now` 的 task 先按
+   `states.task_outcome_class` 分类(`ok | neutral | transient | broken`),写入
+   独立账本 `schedule_outcome_ledger`(按 `task_id` upsert,带 `outcome_class`,
+   不随 Task 保留期清理,按条数自修剪),并**重算**该 schedule 当前代际的
+   "连续出错前缀长度"→ `consecutive_error_count`,然后驱动**调度熔断**(决策
+   0025,见下)。熔断从不改 `enabled`,所以记录后不再 `ScheduleRunner.reload()`。
+
+**结果分类**(仅对出错执行,优先级自上而下):server 自身判据(`log_flood`、
+`size-cap`/`dir-budget` 截断、`max_file_bytes > 0` 时上报 `log_bytes` 达上限)
+一律 `broken`,不采信爬虫自报;平台侧故障(执行 `lost`、`error_code` 为
+`dispatch_unavailable` / `dispatch_timeout`)→ `transient`;爬虫
+`outcome_class == "transient"` → `transient`;其余(含缺键、未知值、无 stats 的
+failed)→ `broken`。任务级:未出错时 `complete` 为 `ok`、`canceled`/`no_target`
+为 `neutral`;出错时任一 `broken` 即 `broken`,否则 `transient`。迁移前的账本行
+`outcome_class` 为 NULL,出错的按 `broken` 计。
+
+**熔断状态机**(`schedules.breaker_*`):
+
+- `closed` 达阈值(`auto_disable_after_errors`,仅已启用的调度):连错前缀全为
+  `broken` → `held`(记 `breaker_artifact_id` = 触发任务快照的制品,通知
+  `schedule_breaker_held`/error);否则 → `open`(`level=0`、
+  `retry_at = now + backoff(0)`,通知 `schedule_breaker_open`/warning)。
+- 定时闸在 `acquire_firing_slot` 的行锁内、**所有其它闸放行之后**判熔断:
+  `open` 未到 `retry_at` 跳过(`SKIP_BREAKER`),到点 → `half_open`、代际 + 1、
+  `retry_at = now + max`(试跑期限)并把本次触发作为试跑;`half_open` 未到期限
+  跳过,到期限 → 同代际再放行一次;`held` 跳过,除非模板当前
+  `build_artifact_id` ≠ `breaker_artifact_id`(拉取式:模板更新不碰调度行)→
+  `level=0` 的半开试跑。半开转换与试跑任务同一次建单提交,建单前抛错一并回滚。
+  trigger-now 不受熔断闸限制。
+- 当前代际结果:`half_open` 遇 `ok` → `closed`(通知 `schedule_breaker_closed`/
+  info),`transient` → `open`、`level + 1`(封顶)、`retry_at = now +
+  backoff(level)`,熔断已持续 ≥ `breaker_escalate_after_seconds` 且本轮未升级时
+  以 error 再发 `schedule_breaker_open`(`escalated=true`),`broken` → `held`,
+  `neutral` → `open` 且 `retry_at = now`;`open`/`held` 遇 `ok` → `closed`,
+  其余不变。旧代际结果只入账。
+- 手动复位(`POST /schedules/{id}/breaker/reset`)或 `enabled` 假→真:
+  `closed`、代际 + 1、清零;复位对 `closed` 为无操作。`update_schedule` 先对行
+  `FOR UPDATE` 并锁内重读。熔断通知都在 SAVEPOINT 里写,失败不中止结果记录事务。
+- `backoff(level) = min(base × 2^level, max)`,默认 900 / 7200 秒。
 
 纠正:`lost` 被 agent 硬终态覆盖时 `_update_task` 清空 `outcome_recorded_at`,
-记录器下个 tick 重评并更新账本行。手动重启用(`PUT /schedules/{id}`
-`enabled=true`)递增 `outcome_generation`、清零计数;task 在创建时固化
-`schedule_generation`,旧代际的行(含迟到纠正)永不跨越重置边界。
+记录器下个 tick 重评并更新账本行。代际在进入 `half_open` 与手动复位 / 重启用
+(`PUT /schedules/{id}` `enabled` 假→真)时递增并清零计数;task 在创建时固化
+`schedule_generation`,旧代际的行(含迟到纠正)永不跨越重置边界。决策 0025 之前
+被自动禁用的调度保留 `enabled=false` 与 `auto_disabled_*`,由人手动重新启用。

@@ -122,3 +122,34 @@ async def test_republish_missing_state_emits_lost(workdir, fake_redis):
     ev = (await _events(fake))[-1]
     assert ev.type is AgentEventType.lost
     assert ev.lost_reason is not None and ev.lost_reason.value == "state_missing"
+
+
+async def test_republish_done_replays_outcome_class(workdir, fake_redis):
+    """Decision 0025: a terminal re-emitted from the state file carries the
+    persisted ``outcome_class`` (redelivery must not lose the classification)."""
+    fake = fake_redis()
+    store, _runner, pub = _publisher(workdir, fake, FakeScrapyd())
+    store.create_reserved(task_id="e1", execution_id="a1", project="demo", spider="phase1")
+    store.mark_stats(
+        "a1", error_count=3, finish_reason="finished", log_bytes=10, outcome_class="transient"
+    )
+    store.mark_done("a1", result="finished", exit_code=0)
+
+    await pub.republish_current("e1", "a1")
+    ev = (await _events(fake))[-1]
+    assert ev.type is AgentEventType.finished
+    assert (ev.error_count, ev.outcome_class) == (3, "transient")
+
+
+def test_old_state_file_without_outcome_class_loads_none(workdir):
+    """A state file written before decision 0025 has no ``outcome_class`` key."""
+    import json
+
+    store = StateStore(state_dir(workdir))
+    store.create_reserved(task_id="e1", execution_id="a1", project="demo", spider="phase1")
+    path = store.path_for("a1")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("outcome_class", None)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    state = store.read("a1")
+    assert state is not None and state.outcome_class is None

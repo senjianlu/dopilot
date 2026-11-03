@@ -205,6 +205,16 @@ const en = {
     autoDisabledHint:
       "Disabled automatically after {{count}} consecutive erroneous runs at {{at}}; re-enable to start a fresh run.",
     consecutiveErrors: "{{count}} consecutive errors",
+    breakerOpen: "Circuit open",
+    breakerHalfOpen: "Probing",
+    breakerHeld: "Needs attention",
+    breakerOpenHint: "Open since {{since}}; next probe no earlier than {{retry}}.",
+    breakerHalfOpenHint: "Open since {{since}}; a probe run is in flight.",
+    breakerHeldHint:
+      "Since {{since}}, {{count}} consecutive runs were judged broken. Reset the breaker after fixing it; a new template artifact also triggers one probe.",
+    breakerReset: "Reset breaker",
+    breakerResetDone: "Breaker reset",
+    breakerResetError: "Failed to reset the breaker",
   },
   notifications: {
     title: "Notifications",
@@ -215,6 +225,19 @@ const en = {
       schedule_auto_disabled: {
         title: "Schedule \"{{schedule_name}}\" was disabled automatically",
         body: "{{consecutive_errors}} consecutive erroneous runs reached the threshold ({{threshold}}). Fix the spider, then re-enable the schedule.",
+      },
+      schedule_breaker_open: {
+        title: "Schedule \"{{schedule_name}}\" circuit opened",
+        body: "{{consecutive_errors}} consecutive erroneous runs (threshold {{threshold}}), some of them transient. Timer runs are paused; a probe runs automatically after a back-off and recovery is automatic on success.",
+        body_escalated: "The circuit has stayed open past the configured escalation window and probes keep failing. Check the spider or its upstream.",
+      },
+      schedule_breaker_held: {
+        title: "Schedule \"{{schedule_name}}\" needs attention",
+        body: "Runs were judged broken ({{consecutive_errors}} in a row, threshold {{threshold}}); automatic probing stopped. Reset the breaker after fixing it; a new template artifact also triggers one probe.",
+      },
+      schedule_breaker_closed: {
+        title: "Schedule \"{{schedule_name}}\" recovered",
+        body: "A probe succeeded; the circuit is closed and timer runs resumed.",
       },
       attempt_no_progress: {
         title: "Execution made no progress",

@@ -1,0 +1,38 @@
+# rawf-evidence v1
+tc: TC-10
+label: 
+cmd: .venv/bin/python -m pytest apps/server/tests/test_schedule_breaker.py -v -k reset\ or\ enable\ or\ artifact\ or\ view
+cwd: /home/rabbir/Projects/dopilot
+git_head: 52727f04dc3f6c27f5e942f491e561fc14d08a95 dirty
+started: 2026-11-03T12:02:34+09:00
+--- output ---
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 51 items / 37 deselected / 14 selected
+
+apps/server/tests/test_schedule_breaker.py::test_trip_transient_opens_without_touching_enabled PASSED [  7%]
+apps/server/tests/test_schedule_breaker.py::test_trip_success_resets_run_without_tripping PASSED [ 14%]
+apps/server/tests/test_schedule_breaker.py::test_reset_endpoint_closes_breaker[open] PASSED [ 21%]
+apps/server/tests/test_schedule_breaker.py::test_reset_endpoint_closes_breaker[half_open] PASSED [ 28%]
+apps/server/tests/test_schedule_breaker.py::test_reset_endpoint_closes_breaker[held] PASSED [ 35%]
+apps/server/tests/test_schedule_breaker.py::test_reset_endpoint_closed_is_noop PASSED [ 42%]
+apps/server/tests/test_schedule_breaker.py::test_reset_endpoint_unknown_schedule_404 PASSED [ 50%]
+apps/server/tests/test_schedule_breaker.py::test_enable_false_to_true_resets_breaker PASSED [ 57%]
+apps/server/tests/test_schedule_breaker.py::test_enable_true_to_true_keeps_breaker[open] PASSED [ 64%]
+apps/server/tests/test_schedule_breaker.py::test_enable_true_to_true_keeps_breaker[held] PASSED [ 71%]
+apps/server/tests/test_schedule_breaker.py::test_held_records_artifact_and_reprobes_new_artifact PASSED [ 78%]
+apps/server/tests/test_schedule_breaker.py::test_held_artifact_interleave_new_artifact_not_blocked PASSED [ 85%]
+apps/server/tests/test_schedule_breaker.py::test_held_null_artifact_never_reprobes PASSED [ 92%]
+apps/server/tests/test_schedule_breaker.py::test_view_exposes_breaker_and_legacy_fields PASSED [100%]
+
+====================== 14 passed, 37 deselected in 2.04s =======================
+
+--- end ---
+exit: 0
+finished: 2026-11-03T12:02:38+09:00
+bytes: 2020

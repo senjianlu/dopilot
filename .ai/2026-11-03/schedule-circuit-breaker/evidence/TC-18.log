@@ -1,0 +1,43 @@
+# rawf-evidence v1
+tc: TC-18
+label: 
+cmd: bash .ai/2026-11-03/schedule-circuit-breaker/evidence/docs-config-check.sh
+cwd: /home/rabbir/Projects/dopilot
+git_head: 52727f04dc3f6c27f5e942f491e561fc14d08a95 dirty
+started: 2026-11-03T12:05:49+09:00
+--- output ---
+PASS 0025 exists
+PASS decisions README indexes 0025
+PASS 0021 points to 0025
+PASS 03 has the new section heading
+PASS no markdown link targets the old anchor
+PASS 06 links the new anchor
+PASS 04 documents breaker_backoff_base_seconds
+PASS 04 documents DOPILOT_SCHEDULER_BREAKER_BACKOFF_BASE_SECONDS
+PASS server.example.toml sets breaker_backoff_base_seconds
+PASS server.docker.toml sets breaker_backoff_base_seconds
+PASS loader maps DOPILOT_SCHEDULER_BREAKER_BACKOFF_BASE_SECONDS
+PASS 04 documents breaker_backoff_max_seconds
+PASS 04 documents DOPILOT_SCHEDULER_BREAKER_BACKOFF_MAX_SECONDS
+PASS server.example.toml sets breaker_backoff_max_seconds
+PASS server.docker.toml sets breaker_backoff_max_seconds
+PASS loader maps DOPILOT_SCHEDULER_BREAKER_BACKOFF_MAX_SECONDS
+PASS 04 documents breaker_escalate_after_seconds
+PASS 04 documents DOPILOT_SCHEDULER_BREAKER_ESCALATE_AFTER_SECONDS
+PASS server.example.toml sets breaker_escalate_after_seconds
+PASS server.docker.toml sets breaker_escalate_after_seconds
+PASS loader maps DOPILOT_SCHEDULER_BREAKER_ESCALATE_AFTER_SECONDS
+PASS zh locale has schedule_breaker_open
+PASS zh locale has schedule_breaker_held
+PASS zh locale has schedule_breaker_closed
+PASS zh locale has body_escalated
+PASS en locale has schedule_breaker_open
+PASS en locale has schedule_breaker_held
+PASS en locale has schedule_breaker_closed
+PASS en locale has body_escalated
+ALL ASSERTIONS PASSED
+
+--- end ---
+exit: 0
+finished: 2026-11-03T12:05:50+09:00
+bytes: 1411

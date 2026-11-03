@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -498,32 +497,23 @@ class RedisReconcileLoop:
         settings: Settings,
         *,
         interval_seconds: float = 5.0,
-        on_schedules_disabled: Callable[[list[str]], Awaitable[None]] | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._settings = settings
         self._interval = interval_seconds
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
-        # Log-flood guard / auto-disable: invoked with the schedule ids the
-        # outcome recorder just disabled — strictly AFTER the tick's commit, so
-        # a ``ScheduleRunner.reload()`` reading a fresh session sees
-        # ``enabled=false`` (never re-registers the job). Commit failure -> no
-        # callback.
-        self._on_schedules_disabled = on_schedules_disabled
 
     async def _tick(self) -> None:
-        disabled: list[str] = []
+        # The outcome recorder drives the schedule circuit breaker (decision
+        # 0025), which never touches ``enabled`` and is decided at firing time —
+        # so no APScheduler reload follows (a reload would needlessly re-phase
+        # every interval job).
         async with self._sm() as session:
             await reconcile_once(session, self._settings)
             await finalize_drained_logs(session, self._settings)
-            disabled = await record_task_outcomes(session, self._settings)
+            await record_task_outcomes(session, self._settings)
             await session.commit()
-        if disabled and self._on_schedules_disabled is not None:
-            try:
-                await self._on_schedules_disabled(disabled)
-            except Exception:  # noqa: BLE001 - reload failure must not kill the loop
-                logger.warning("on_schedules_disabled callback failed", exc_info=True)
 
     async def _run(self) -> None:
         while not self._stop.is_set():

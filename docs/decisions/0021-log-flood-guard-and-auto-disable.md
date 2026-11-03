@@ -1,5 +1,8 @@
 # 0021:日志洪泛防护与调度自动禁用
 
+> §6 的「达阈值自动 `enabled=false`」已由 [0025](0025-schedule-circuit-breaker.md)
+> 取代为调度熔断;账本、代际与连续出错计数机制保留。
+
 - 日期:2026-08-22
 - 背景:2026-08-21 12:10 UTC 生产 console 被 Redis OOM 拖死(调查见
   `.ai/2026-08-22/redis-log-stream-oom-investigation/investigation.md`)。

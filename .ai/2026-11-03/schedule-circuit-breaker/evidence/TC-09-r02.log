@@ -1,0 +1,28 @@
+# rawf-evidence v1
+tc: TC-09
+label: r02
+cmd: .venv/bin/python -m pytest apps/server/tests/test_schedule_breaker.py -v -k escalat
+cwd: /home/rabbir/Projects/dopilot
+git_head: 52727f04dc3f6c27f5e942f491e561fc14d08a95 dirty
+started: 2026-11-03T12:14:40+09:00
+--- output ---
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 52 items / 48 deselected / 4 selected
+
+apps/server/tests/test_schedule_breaker.py::test_escalation_after_24h_on_failed_probe_once PASSED [ 25%]
+apps/server/tests/test_schedule_breaker.py::test_escalation_not_before_24h PASSED [ 50%]
+apps/server/tests/test_schedule_breaker.py::test_escalation_disabled_when_zero PASSED [ 75%]
+apps/server/tests/test_schedule_breaker.py::test_escalation_not_on_reprobe_deadline PASSED [100%]
+
+======================= 4 passed, 48 deselected in 0.49s =======================
+
+--- end ---
+exit: 0
+finished: 2026-11-03T12:14:42+09:00
+bytes: 969

@@ -227,4 +227,61 @@ describe("NotificationBell (TC-28)", () => {
     ).getByTestId("notification-item-attempt_no_progress");
     expect(item).toHaveTextContent("cancelled automatically");
   });
+  it("renders the three schedule breaker types in zh and links to the schedule", async () => {
+    await i18n.changeLanguage("zh");
+    const payload = {
+      schedule_id: "sch-7",
+      schedule_name: "crawler-b-site-t",
+      consecutive_errors: 5,
+      threshold: 5,
+    };
+    const open: NotificationItem = {
+      ...scheduleNote, id: "b-1", type: "schedule_breaker_open", severity: "warning",
+      payload: { ...payload, escalated: false },
+    };
+    const held: NotificationItem = {
+      ...scheduleNote, id: "b-2", type: "schedule_breaker_held", payload,
+    };
+    const closed: NotificationItem = {
+      ...scheduleNote, id: "b-3", type: "schedule_breaker_closed", severity: "info",
+      payload: { schedule_id: "sch-7", schedule_name: "crawler-b-site-t", opened_at: null },
+    };
+    listNotifications.mockResolvedValue({ notifications: [open, held, closed], unread_count: 3 });
+    const user = userEvent.setup();
+    renderWithProviders(<TopControls />);
+    await user.click(await screen.findByTestId("notification-bell"));
+    const menu = await screen.findByTestId("notification-menu");
+    const openItem = within(menu).getByTestId("notification-item-schedule_breaker_open");
+    expect(openItem).toHaveTextContent("调度“crawler-b-site-t”已熔断");
+    expect(openItem).toHaveTextContent("将按退避自动试跑");
+    const heldItem = within(menu).getByTestId("notification-item-schedule_breaker_held");
+    expect(heldItem).toHaveTextContent("需要人工处理");
+    expect(heldItem).toHaveTextContent("连续 5 次，阈值 5");
+    const closedItem = within(menu).getByTestId("notification-item-schedule_breaker_closed");
+    expect(closedItem).toHaveTextContent("已恢复");
+    for (const item of [openItem, heldItem, closedItem]) {
+      expect(item.textContent).not.toContain("notifications.types");
+    }
+    for (const note of [open, held, closed]) {
+      expect(notificationHref(note)).toBe("/schedules?highlight=sch-7");
+    }
+  });
+
+  it("renders the escalated breaker body when the payload says escalated", async () => {
+    await i18n.changeLanguage("zh");
+    const escalated: NotificationItem = {
+      ...scheduleNote, id: "b-4", type: "schedule_breaker_open",
+      payload: {
+        schedule_id: "sch-7", schedule_name: "crawler-b-site-t",
+        consecutive_errors: 1, threshold: 5, escalated: true,
+      },
+    };
+    listNotifications.mockResolvedValue({ notifications: [escalated], unread_count: 1 });
+    const user = userEvent.setup();
+    renderWithProviders(<TopControls />);
+    await user.click(await screen.findByTestId("notification-bell"));
+    const item = await screen.findByTestId("notification-item-schedule_breaker_open");
+    expect(item).toHaveTextContent("已超过配置的升级时限");
+    expect(item.textContent).not.toContain("24 小时");
+  });
 });

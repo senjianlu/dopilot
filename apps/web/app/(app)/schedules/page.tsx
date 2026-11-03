@@ -73,6 +73,7 @@ import {
   disableAllSchedules,
   listSchedules,
   previewNextRun,
+  resetScheduleBreaker,
   triggerSchedule,
   updateSchedule,
 } from "@/lib/api/schedules";
@@ -103,6 +104,50 @@ function autoDisabledCount(schedule: Schedule): number {
   const reason = schedule.auto_disabled_reason ?? {};
   const n = reason.consecutive_errors;
   return typeof n === "number" ? n : schedule.consecutive_error_count;
+}
+
+// Schedule circuit breaker (decision 0025): the badge label + tooltip for a
+// non-closed breaker. `held` is the only state that needs a human, so only it
+// uses the destructive variant.
+function breakerBadge(
+  schedule: Schedule,
+  t: (key: string, vars?: Record<string, unknown>) => string,
+): { label: string; hint: string; variant: "destructive" | "secondary" } | null {
+  const since = schedule.breaker_opened_at
+    ? formatDateTime(schedule.breaker_opened_at)
+    : "-";
+  switch (schedule.breaker_state) {
+    case "open":
+      return {
+        label: t("schedules.breakerOpen"),
+        hint: t("schedules.breakerOpenHint", {
+          since,
+          retry: schedule.breaker_retry_at
+            ? formatDateTime(schedule.breaker_retry_at)
+            : "-",
+        }),
+        variant: "secondary",
+      };
+    case "half_open":
+      return {
+        label: t("schedules.breakerHalfOpen"),
+        hint: t("schedules.breakerHalfOpenHint", { since }),
+        variant: "secondary",
+      };
+    case "held": {
+      const n = (schedule.breaker_reason ?? {}).consecutive_errors;
+      return {
+        label: t("schedules.breakerHeld"),
+        hint: t("schedules.breakerHeldHint", {
+          since,
+          count: typeof n === "number" ? n : schedule.consecutive_error_count,
+        }),
+        variant: "destructive",
+      };
+    }
+    default:
+      return null;
+  }
 }
 
 // Schedule and template names run long (e.g. "crawler-a | SITE-Z
@@ -150,6 +195,7 @@ export default function SchedulesPage() {
   const [nodes, setNodes] = React.useState<NodeInfo[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [triggeringId, setTriggeringId] = React.useState("");
+  const [resettingId, setResettingId] = React.useState("");
   // The row whose enable/disable toggle is in flight; blocks duplicate submits.
   const [togglingId, setTogglingId] = React.useState("");
   const [dialogOpen, setDialogOpen] = React.useState(false);
@@ -374,6 +420,19 @@ export default function SchedulesPage() {
     }
   }
 
+  async function onResetBreaker(schedule: Schedule) {
+    setResettingId(schedule.id);
+    try {
+      await resetScheduleBreaker(schedule.id);
+      toast.success(t("schedules.breakerResetDone"));
+      await load();
+    } catch {
+      toast.error(t("schedules.breakerResetError"));
+    } finally {
+      setResettingId("");
+    }
+  }
+
   async function onTrigger(schedule: Schedule) {
     setTriggeringId(schedule.id);
     try {
@@ -532,6 +591,32 @@ export default function SchedulesPage() {
                         </Tooltip>
                         </TooltipProvider>
                       ) : null}
+                      {(() => {
+                        const breaker = breakerBadge(schedule, t);
+                        if (!breaker) return null;
+                        return (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge
+                                  asChild
+                                  variant={breaker.variant}
+                                  className="shrink-0"
+                                >
+                                  <button
+                                    type="button"
+                                    data-testid={`schedule-breaker-${schedule.name}`}
+                                    data-state={schedule.breaker_state}
+                                  >
+                                    {breaker.label}
+                                  </button>
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent>{breaker.hint}</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        );
+                      })()}
                     </span>
                   </TableCell>
                   <TableCell>
@@ -607,6 +692,18 @@ export default function SchedulesPage() {
                           )}
                           {t("schedules.triggerNow")}
                         </DropdownMenuItem>
+                        {schedule.breaker_state !== "closed" && (
+                          <DropdownMenuItem
+                            data-testid={`schedule-breaker-reset-${schedule.name}`}
+                            disabled={resettingId === schedule.id}
+                            onSelect={() => onResetBreaker(schedule)}
+                          >
+                            {resettingId === schedule.id && (
+                              <Spinner data-icon="inline-start" />
+                            )}
+                            {t("schedules.breakerReset")}
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem
                           data-testid={`schedule-edit-${schedule.name}`}
                           onSelect={() => openEdit(schedule)}

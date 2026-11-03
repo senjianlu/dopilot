@@ -381,6 +381,7 @@ class CommandConsumer:
             error_count=stats.error_count,
             finish_reason=stats.finish_reason,
             log_bytes=log_bytes,
+            outcome_class=stats.outcome_class,
         )
         error_code: str | None = None
         error_detail: dict | None = None
@@ -410,6 +411,7 @@ class CommandConsumer:
             error_count=stats.error_count,
             finish_reason=stats.finish_reason,
             log_bytes=log_bytes,
+            outcome_class=stats.outcome_class,
         )
 
     # --- log-flood watchdog --------------------------------------------------

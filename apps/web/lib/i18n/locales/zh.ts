@@ -201,6 +201,16 @@ const zh = {
     autoDisabledHint:
       "因连续 {{count}} 次运行出错于 {{at}} 被自动禁用；重新启用后重新计数。",
     consecutiveErrors: "连续出错 {{count}} 次",
+    breakerOpen: "熔断中",
+    breakerHalfOpen: "试跑中",
+    breakerHeld: "需人工",
+    breakerOpenHint: "自 {{since}} 起熔断，下次试跑不早于 {{retry}}。",
+    breakerHalfOpenHint: "自 {{since}} 起熔断，正在试跑。",
+    breakerHeldHint:
+      "自 {{since}} 起，连续 {{count}} 次运行判定为真坏；修复后请复位熔断，模板换新制品后也会自动试跑一次。",
+    breakerReset: "复位熔断",
+    breakerResetDone: "已复位熔断",
+    breakerResetError: "复位熔断失败",
   },
   notifications: {
     title: "消息中心",
@@ -211,6 +221,19 @@ const zh = {
       schedule_auto_disabled: {
         title: "调度“{{schedule_name}}”已被自动禁用",
         body: "连续 {{consecutive_errors}} 次运行出错，达到阈值（{{threshold}}）。请修复爬虫后再重新启用该调度。",
+      },
+      schedule_breaker_open: {
+        title: "调度“{{schedule_name}}”已熔断",
+        body: "连续 {{consecutive_errors}} 次运行出错（阈值 {{threshold}}），其中含瞬态失败。已暂停定时运行，将按退避自动试跑，成功即恢复。",
+        body_escalated: "熔断持续时间已超过配置的升级时限，试跑仍然失败，请检查爬虫或上游。",
+      },
+      schedule_breaker_held: {
+        title: "调度“{{schedule_name}}”需要人工处理",
+        body: "运行被判定为真坏（连续 {{consecutive_errors}} 次，阈值 {{threshold}}），已停止自动试跑。修复后请复位熔断；模板换新制品后会自动试跑一次。",
+      },
+      schedule_breaker_closed: {
+        title: "调度“{{schedule_name}}”已恢复",
+        body: "试跑成功，熔断已解除，恢复正常定时运行。",
       },
       attempt_no_progress: {
         title: "执行长时间无进度",

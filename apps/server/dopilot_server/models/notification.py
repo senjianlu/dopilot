@@ -33,7 +33,12 @@ SEVERITY_ERROR = "error"
 SEVERITY_RANK = {SEVERITY_INFO: 0, SEVERITY_WARNING: 1, SEVERITY_ERROR: 2}
 
 # Notification types (web renders each via i18n keys ``notifications.<type>``).
+# Legacy (pre-0025): no longer produced; still rendered for historical rows.
 TYPE_SCHEDULE_AUTO_DISABLED = "schedule_auto_disabled"
+# Schedule circuit breaker (decision 0025).
+TYPE_SCHEDULE_BREAKER_OPEN = "schedule_breaker_open"
+TYPE_SCHEDULE_BREAKER_HELD = "schedule_breaker_held"
+TYPE_SCHEDULE_BREAKER_CLOSED = "schedule_breaker_closed"
 TYPE_LOG_TRUNCATED = "log_truncated"
 TYPE_LOG_FLOOD = "log_flood"
 TYPE_ATTEMPT_NO_PROGRESS = "attempt_no_progress"

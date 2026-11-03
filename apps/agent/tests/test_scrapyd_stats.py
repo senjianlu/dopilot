@@ -109,3 +109,64 @@ def test_stats_block_cut_off_before_error_key_is_unknown_not_zero() -> None:
     stats = parse_scrapy_stats(tail)
     assert stats.error_count is None
     assert stats.finish_reason == "finished"
+
+
+# --- schedule circuit breaker (decision 0025): ``'outcome/class'`` -------------------
+
+
+def test_outcome_class_is_read_from_the_last_stats_block() -> None:
+    tail = (
+        b"[scrapy.statscollectors] INFO: Dumping Scrapy stats:\n"
+        b"{'finish_reason': 'site_request_failed',\n"
+        b" 'log_count/ERROR': 2,\n"
+        b" 'outcome/class': 'transient'}\n"
+    )
+    stats = parse_scrapy_stats(tail)
+    assert stats.outcome_class == "transient"
+    # the two pre-existing keys are parsed exactly as before
+    assert (stats.error_count, stats.finish_reason) == (2, "site_request_failed")
+
+
+def test_outcome_class_absent_from_last_block_is_none() -> None:
+    assert parse_scrapy_stats(STATS_TAIL).outcome_class is None
+    assert parse_scrapy_stats(b"").outcome_class is None
+
+
+def test_outcome_class_only_in_an_earlier_block_is_ignored() -> None:
+    tail = (
+        b"Dumping Scrapy stats:\n{'finish_reason': 'shutdown', 'outcome/class': 'transient'}\n"
+        b"Dumping Scrapy stats:\n{'finish_reason': 'finished', 'log_count/ERROR': 1}\n"
+    )
+    stats = parse_scrapy_stats(tail)
+    assert stats.outcome_class is None
+    assert (stats.error_count, stats.finish_reason) == (1, "finished")
+
+
+def test_outcome_class_in_business_log_lines_is_never_trusted() -> None:
+    tail = (
+        b"INFO: audit {'outcome/class': 'transient'}\n"
+        b"[scrapy.statscollectors] INFO: Dumping Scrapy stats:\n"
+        b"{'finish_reason': 'finished',\n 'log_count/ERROR': 4}\n"
+        b"INFO: after {'outcome/class': 'transient'}\n"
+    )
+    stats = parse_scrapy_stats(tail)
+    assert stats.outcome_class is None
+    assert (stats.error_count, stats.finish_reason) == (4, "finished")
+
+
+def test_outcome_class_is_truncated_to_64_chars() -> None:
+    long_value = "t" * 200
+    tail = (
+        b"Dumping Scrapy stats:\n{'finish_reason': 'finished', 'outcome/class': '"
+        + long_value.encode()
+        + b"'}\n"
+    )
+    stats = parse_scrapy_stats(tail)
+    assert stats.outcome_class == "t" * 64
+
+
+def test_outcome_class_with_invalid_utf8_does_not_raise() -> None:
+    tail = b"Dumping Scrapy stats:\n{'finish_reason': 'finished', 'outcome/class': 'tr\xff\xfe'}\n"
+    stats = parse_scrapy_stats(tail)
+    assert stats.outcome_class is not None and stats.outcome_class.startswith("tr")
+    assert stats.finish_reason == "finished"

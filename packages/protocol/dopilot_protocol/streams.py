@@ -225,6 +225,12 @@ class AgentEvent(BaseModel):
     error_count: int | None = None
     finish_reason: str | None = None
     log_bytes: int | None = None
+    # Schedule circuit breaker (decision 0025): the crawler's own round outcome
+    # class from the same last stats block (``'outcome/class'``, e.g. ``ok`` /
+    # ``transient`` / ``broken``), passed through verbatim (bounded). Optional
+    # and default None so older agents keep parsing; unknown values are the
+    # server's to judge.
+    outcome_class: str | None = None
     created_at: str
 
     @computed_field  # type: ignore[prop-decorator]

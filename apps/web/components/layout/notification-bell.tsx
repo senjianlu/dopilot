@@ -42,7 +42,10 @@ function formatBadge(count: number): string {
 export function notificationHref(item: NotificationItem): string | null {
   const p = item.payload ?? {};
   switch (item.type) {
-    case "schedule_auto_disabled": {
+    case "schedule_auto_disabled":
+    case "schedule_breaker_open":
+    case "schedule_breaker_held":
+    case "schedule_breaker_closed": {
       const id = typeof p.schedule_id === "string" ? p.schedule_id : "";
       return id ? `/schedules?highlight=${encodeURIComponent(id)}` : "/schedules";
     }
@@ -155,6 +158,11 @@ export function NotificationBell() {
     // file instead of assembling them here.
     if (item.payload?.auto_stopped === true) {
       vars.context = "stopped";
+    }
+    // Same mechanism for a breaker open past the escalation window
+    // (`<key>.body_escalated`, decision 0025).
+    if (item.payload?.escalated === true) {
+      vars.context = "escalated";
     }
     const title = t(`${key}.title`, { ...vars, defaultValue: item.type });
     const body = t(`${key}.body`, { ...vars, defaultValue: "" });

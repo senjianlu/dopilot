@@ -20,6 +20,11 @@ TAIL_BYTES = 65536
 
 _RE_ERROR_COUNT = re.compile(rb"'log_count/ERROR':\s*(\d+)")
 _RE_FINISH_REASON = re.compile(rb"'finish_reason':\s*'([^']+)'")
+# Schedule circuit breaker (decision 0025): the crawler-written round outcome
+# class, read from the same last stats block. Bounded so a runaway value can
+# never bloat the event / column.
+_RE_OUTCOME_CLASS = re.compile(rb"'outcome/class':\s*'([^']+)'")
+OUTCOME_CLASS_MAX_CHARS = 64
 _STATS_BLOCK_MARKER = b"Dumping Scrapy stats"
 # Lines of scrapy's pretty-printed stats dict: ``{'k': v,`` then `` 'k': v,``
 # continuation lines; the last one ends with ``}``.
@@ -30,6 +35,7 @@ _RE_DICT_LINE = re.compile(rb"\A\s*[{']")
 class ScrapyStats:
     error_count: int | None
     finish_reason: str | None
+    outcome_class: str | None = None
 
 
 def _last_stats_dict(tail: bytes) -> tuple[bytes, bool] | None:
@@ -64,7 +70,10 @@ def parse_scrapy_stats(tail: bytes) -> ScrapyStats:
     complete block has no ``log_count/ERROR`` key (scrapy omits zero counters);
     it is ``None`` when no block exists at all (truncated log, crashed crawler,
     non-scrapy output) or when the block itself was cut off before that key.
-    ``finish_reason`` is ``None`` when absent.
+    ``finish_reason`` is ``None`` when absent. ``outcome_class`` (the
+    crawler's ``'outcome/class'`` stat, decision 0025) follows the same rule:
+    only the last block counts, ``None`` when absent, truncated to
+    ``OUTCOME_CLASS_MAX_CHARS`` characters.
     """
     if not tail:
         return ScrapyStats(None, None)
@@ -74,6 +83,12 @@ def parse_scrapy_stats(tail: bytes) -> ScrapyStats:
     block, closed = found
     reason_m = _RE_FINISH_REASON.search(block)
     finish_reason = reason_m.group(1).decode("utf-8", errors="replace") if reason_m else None
+    class_m = _RE_OUTCOME_CLASS.search(block)
+    outcome_class = (
+        class_m.group(1).decode("utf-8", errors="replace")[:OUTCOME_CLASS_MAX_CHARS]
+        if class_m
+        else None
+    )
     count_m = _RE_ERROR_COUNT.search(block)
     if count_m:
         error_count: int | None = int(count_m.group(1))
@@ -81,7 +96,9 @@ def parse_scrapy_stats(tail: bytes) -> ScrapyStats:
         error_count = 0
     else:
         error_count = None
-    return ScrapyStats(error_count=error_count, finish_reason=finish_reason)
+    return ScrapyStats(
+        error_count=error_count, finish_reason=finish_reason, outcome_class=outcome_class
+    )
 
 
 def read_log_tail(path: str | Path, max_bytes: int = TAIL_BYTES) -> bytes:

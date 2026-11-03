@@ -1,4 +1,4 @@
-"""Schedule endpoints (phase 1.7 packet 2): CRUD + trigger-now.
+"""Schedule endpoints (phase 1.7 packet 2): CRUD + trigger-now + breaker reset.
 
 A schedule references one template and creates tasks from its snapshot.
 ``POST /schedules/{id}/trigger-now`` fires immediately through the same path as
@@ -171,3 +171,24 @@ async def trigger_now(
     except DispatchUnknownError as exc:
         response.status_code = 202
         return TaskRunResponse(task_id=exc.task_id, status="queued")
+
+
+@router.post(
+    "/schedules/{schedule_id}/breaker/reset", response_model=ScheduleView
+)
+async def reset_breaker(
+    schedule_id: str,
+    _admin: AdminContext = Depends(get_current_admin),
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> ScheduleView:
+    """Reset the schedule's circuit breaker to ``closed`` (decision 0025).
+
+    A non-closed breaker gets a new outcome generation and a zeroed run; a
+    closed one is a no-op. ``enabled`` is untouched, so the runner needs no
+    reload (the breaker is decided at firing time).
+    """
+    schedule = await svc.reset_schedule_breaker(session, schedule_id)
+    await session.commit()
+    await session.refresh(schedule)
+    return ScheduleView(**svc.schedule_view(schedule, timezone=_tz(settings)))

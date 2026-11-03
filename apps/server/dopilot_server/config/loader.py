@@ -123,6 +123,12 @@ _INT_OVERRIDES: tuple[tuple[str, str, str], ...] = (
     ("DOPILOT_REDIS_SENT_RECONCILE_BATCH_LIMIT", "redis",
      "sent_reconcile_batch_limit"),
     ("DOPILOT_SCHEDULER_AUTO_DISABLE_AFTER_ERRORS", "scheduler", "auto_disable_after_errors"),
+    ("DOPILOT_SCHEDULER_BREAKER_BACKOFF_BASE_SECONDS", "scheduler",
+     "breaker_backoff_base_seconds"),
+    ("DOPILOT_SCHEDULER_BREAKER_BACKOFF_MAX_SECONDS", "scheduler",
+     "breaker_backoff_max_seconds"),
+    ("DOPILOT_SCHEDULER_BREAKER_ESCALATE_AFTER_SECONDS", "scheduler",
+     "breaker_escalate_after_seconds"),
     ("DOPILOT_SCHEDULER_LOST_OUTCOME_GRACE_SECONDS", "scheduler",
      "lost_outcome_grace_seconds"),
     ("DOPILOT_MAINTENANCE_STALE_COMMAND_STREAM_DAYS", "maintenance",
@@ -289,6 +295,31 @@ def _enforce_fail_closed_auth(settings: Settings) -> None:
         )
 
 
+def _validate_breaker(settings: Settings) -> None:
+    """Reject an unusable circuit-breaker back-off (decision 0025).
+
+    Runs AFTER env overrides so a bad ``DOPILOT_SCHEDULER_BREAKER_*`` value is
+    caught the same way as a bad TOML value — the server refuses to start.
+    """
+    sched = settings.scheduler
+    if sched.breaker_backoff_base_seconds < 1:
+        raise ConfigError(
+            "[scheduler].breaker_backoff_base_seconds must be >= 1, got "
+            f"{sched.breaker_backoff_base_seconds}"
+        )
+    if sched.breaker_backoff_max_seconds < sched.breaker_backoff_base_seconds:
+        raise ConfigError(
+            "[scheduler].breaker_backoff_max_seconds must be >= "
+            "breaker_backoff_base_seconds, got "
+            f"{sched.breaker_backoff_max_seconds} < {sched.breaker_backoff_base_seconds}"
+        )
+    if sched.breaker_escalate_after_seconds < 0:
+        raise ConfigError(
+            "[scheduler].breaker_escalate_after_seconds must be >= 0, got "
+            f"{sched.breaker_escalate_after_seconds}"
+        )
+
+
 def load_settings(
     path: str | None = None, *, default_path: str | None = None
 ) -> Settings:
@@ -326,6 +357,7 @@ def load_settings(
 
     settings = Settings.model_validate(raw)
     _apply_env_overrides(settings)
+    _validate_breaker(settings)
     _validate_admin_api_token(settings)
     _validate_agent_token(settings)
     _enforce_fail_closed_auth(settings)

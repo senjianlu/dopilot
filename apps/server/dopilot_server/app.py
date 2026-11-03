@@ -173,17 +173,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 consumer_name=active.redis.consumer_name, gauge=logs_gauge,
             )
             # Phase 1.7: the single-instance schedule runner (OFF unless
-            # [scheduler].enabled). Built early so the reconcile loop's
-            # auto-disable callback can reload it AFTER each committed tick.
+            # [scheduler].enabled). The schedule circuit breaker (decision 0025)
+            # never touches ``enabled``, so the reconcile loop no longer
+            # reloads it after recording outcomes.
             schedule_runner = build_schedule_runner(bg_maker, active, dispatcher)
-
-            async def _on_schedules_disabled(_ids: list[str]) -> None:
-                if schedule_runner is not None:
-                    await schedule_runner.reload()
-
-            reconcile_loop = RedisReconcileLoop(
-                bg_maker, active, on_schedules_disabled=_on_schedules_disabled
-            )
+            reconcile_loop = RedisReconcileLoop(bg_maker, active)
 
             dispatcher.start()
             event_consumer.start()

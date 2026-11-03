@@ -30,12 +30,12 @@ from typing import Any
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config.settings import Settings
+from ..config.settings import SchedulerSettings, Settings
 from ..errors import ApiError
 from ..models.execution import Task
 from ..models.scheduling import Schedule
 from ..redis.dispatcher import CommandDispatcher
-from . import resolve, states, templates
+from . import outcomes, resolve, states, templates
 from .dispatch import run_execution_template
 from .executions import _iso, new_id
 from .outbox import has_undispatched_backlog_for_schedule
@@ -57,6 +57,9 @@ SKIP_MISSING = "missing"
 SKIP_DISABLED = "disabled"
 SKIP_BACKLOG = "backlog"
 SKIP_CONCURRENCY = "concurrency"
+# Schedule circuit breaker (decision 0025): open and not yet due, a half-open
+# probe still in flight, or held for a human. Silent like the others.
+SKIP_BREAKER = "breaker"
 
 
 @dataclass(frozen=True)
@@ -204,6 +207,17 @@ async def create_schedule(
 async def update_schedule(
     session: AsyncSession, schedule: Schedule, data: dict[str, Any]
 ) -> Schedule:
+    # Decision 0025: lock the row and re-read it (``populate_existing`` refreshes
+    # this same identity-mapped instance) BEFORE deciding anything — the
+    # false->true check, the current generation and the reset all act on the
+    # row as it is under the lock, so a concurrent reset / re-enable is never
+    # overwritten with a stale generation.
+    await session.execute(
+        select(Schedule)
+        .where(Schedule.id == schedule.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if "execution_template_id" in data:
         await templates.get_template_or_404(
             session, data["execution_template_id"]
@@ -231,6 +245,8 @@ async def update_schedule(
             schedule.consecutive_error_count = 0
             schedule.auto_disabled_at = None
             schedule.auto_disabled_reason = None
+            # ...and the circuit breaker restarts closed (decision 0025).
+            outcomes.clear_breaker(schedule)
     if "overrides" in data:
         template = await templates.get_template_or_404(
             session, schedule.execution_template_id
@@ -370,11 +386,17 @@ async def acquire_firing_slot(
     raise_on_full: bool,
     require_enabled: bool,
     coalesce_backlog: bool,
+    breaker: SchedulerSettings | None = None,
+    now: datetime | None = None,
 ) -> FiringSlot:
     """The single admission gate for one schedule firing (decision 0022).
 
     Everything is decided INSIDE one ``FOR UPDATE`` serialized region: exists ->
-    enabled -> backlog coalesce -> concurrency. Two reasons it must be this way:
+    enabled -> backlog coalesce -> concurrency -> (timer only, ``breaker`` given)
+    circuit breaker (decision 0025). The breaker is LAST so a half-open
+    transition only ever happens when the firing is otherwise admitted: it is
+    committed together with the probe task by the executor's create commit, or
+    rolled back with it. Two reasons it must be this way:
 
     - the caller's ``Schedule`` may predate the lock, and ``max_concurrency``
       can be changed by a concurrent PUT; deciding on a pre-lock value (the
@@ -419,7 +441,7 @@ async def acquire_firing_slot(
 
     limit = int(schedule.max_concurrency or 0)
     if limit == 0:  # 0 = unlimited (pre-0022 behaviour, kept as escape hatch)
-        return FiringSlot(granted=True, schedule=schedule)
+        return await _admit_breaker(session, schedule, breaker, now)
 
     active = await count_active_tasks_for_schedule(session, schedule_id)
     if active >= limit:
@@ -436,7 +458,82 @@ async def acquire_firing_slot(
             active=active,
             limit=limit,
         )
+    return await _admit_breaker(session, schedule, breaker, now)
+
+
+async def _admit_breaker(
+    session: AsyncSession,
+    schedule: Schedule,
+    breaker: SchedulerSettings | None,
+    now: datetime | None,
+) -> FiringSlot:
+    """Circuit-breaker admission for an otherwise-admitted TIMER firing.
+
+    ``closed`` passes. ``open``: skip until ``breaker_retry_at``, then enter
+    ``half_open`` (generation + 1) and admit this firing as the probe.
+    ``half_open``: skip until the probe deadline, then admit another probe in
+    the SAME generation (a late outcome of the first still counts). ``held``:
+    skip, unless the template's current artifact differs from
+    ``breaker_artifact_id`` -> half-open probe of the new artifact (level 0).
+    """
+    if breaker is None:
+        return FiringSlot(granted=True, schedule=schedule)
+    state = schedule.breaker_state or outcomes.BREAKER_CLOSED
+    if state not in (outcomes.BREAKER_OPEN, outcomes.BREAKER_HALF_OPEN, outcomes.BREAKER_HELD):
+        return FiringSlot(granted=True, schedule=schedule)
+    now = now or datetime.now(UTC)
+    retry_at = outcomes._aware(schedule.breaker_retry_at)
+    due = retry_at is None or now >= retry_at
+    if state == outcomes.BREAKER_OPEN:
+        if not due:
+            return FiringSlot(granted=False, skip_reason=SKIP_BREAKER)
+        outcomes.enter_half_open(schedule, breaker, now)
+        return FiringSlot(granted=True, schedule=schedule)
+    if state == outcomes.BREAKER_HALF_OPEN:
+        if not due:
+            return FiringSlot(granted=False, skip_reason=SKIP_BREAKER)
+        schedule.breaker_retry_at = now + timedelta(
+            seconds=int(breaker.breaker_backoff_max_seconds)
+        )
+        return FiringSlot(granted=True, schedule=schedule)
+    # held
+    if schedule.breaker_artifact_id is None:
+        return FiringSlot(granted=False, skip_reason=SKIP_BREAKER)
+    current = await outcomes.current_template_artifact_id(session, schedule)
+    if current is None or current == schedule.breaker_artifact_id:
+        return FiringSlot(granted=False, skip_reason=SKIP_BREAKER)
+    schedule.breaker_level = 0
+    outcomes.enter_half_open(schedule, breaker, now)
     return FiringSlot(granted=True, schedule=schedule)
+
+
+async def reset_schedule_breaker(session: AsyncSession, schedule_id: str) -> Schedule:
+    """Manual breaker reset (``POST /schedules/{id}/breaker/reset``).
+
+    Locks the row and re-reads it first. A non-closed breaker goes back to
+    ``closed`` with a new outcome generation and a zeroed run; a closed one is
+    left untouched (no-op). ``enabled`` is never changed. Caller commits.
+    """
+    schedule = (
+        await session.execute(
+            select(Schedule)
+            .where(Schedule.id == schedule_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if schedule is None:
+        raise ApiError(
+            404,
+            "schedule.not_found",
+            "errors.scheduleNotFound",
+            {"schedule_id": schedule_id},
+        )
+    if (schedule.breaker_state or outcomes.BREAKER_CLOSED) != outcomes.BREAKER_CLOSED:
+        outcomes.clear_breaker(schedule)
+        schedule.outcome_generation = int(schedule.outcome_generation or 0) + 1
+        schedule.consecutive_error_count = 0
+    return schedule
 
 
 async def trigger_now(
@@ -502,6 +599,7 @@ async def fire_timer(
         raise_on_full=False,
         require_enabled=True,
         coalesce_backlog=True,
+        breaker=settings.scheduler,
     )
     if not slot.granted:
         if slot.skip_reason == SKIP_CONCURRENCY:
@@ -603,6 +701,15 @@ def schedule_view(
             else None
         ),
         "outcome_generation": int(schedule.outcome_generation or 0),
+        "breaker_state": schedule.breaker_state or outcomes.BREAKER_CLOSED,
+        "breaker_level": int(schedule.breaker_level or 0),
+        "breaker_opened_at": _iso(schedule.breaker_opened_at),
+        "breaker_retry_at": _iso(schedule.breaker_retry_at),
+        "breaker_escalated_at": _iso(schedule.breaker_escalated_at),
+        "breaker_reason": (
+            dict(schedule.breaker_reason) if schedule.breaker_reason else None
+        ),
+        "breaker_artifact_id": schedule.breaker_artifact_id,
         "created_at": _iso(schedule.created_at),
         "updated_at": _iso(schedule.updated_at),
     }

@@ -295,3 +295,86 @@ def task_is_erroneous(
         execution_is_erroneous(e, files.get(getattr(e, "id", None)), max_file_bytes)
         for e in executions
     )
+
+
+# ---- schedule circuit breaker: outcome classification (decision 0025) ----
+OUTCOME_OK = "ok"
+OUTCOME_NEUTRAL = "neutral"
+OUTCOME_TRANSIENT = "transient"
+OUTCOME_BROKEN = "broken"
+# Server-side delivery failures: the command never reached an agent. Like
+# ``lost`` these are platform problems, not the crawler's (user-confirmed).
+TRANSIENT_ERROR_CODES = frozenset({"dispatch_unavailable", "dispatch_timeout"})
+
+
+def _server_judged_broken(
+    execution: object, log_file: object | None, max_file_bytes: int
+) -> bool:
+    """The server's OWN erroneous signals — conditions verbatim from
+    :func:`execution_is_erroneous`. These always mean ``broken``: the crawler's
+    self-reported class is never trusted over them (0021's original purpose)."""
+    if getattr(execution, "error_code", None) == LOG_FLOOD_ERROR_CODE:
+        return True
+    if (
+        log_file is not None
+        and getattr(log_file, "log_integrity", None) == "truncated"
+        and getattr(log_file, "truncation_reason", None) in ERRONEOUS_TRUNCATION_REASONS
+    ):
+        return True
+    log_bytes = getattr(execution, "log_bytes", None)
+    return max_file_bytes > 0 and log_bytes is not None and log_bytes >= max_file_bytes
+
+
+def execution_outcome_class(
+    execution: object, log_file: object | None, max_file_bytes: int = 0
+) -> str | None:
+    """``transient`` / ``broken`` for an erroneous execution, ``None`` otherwise.
+
+    Precedence: server-judged signals -> ``broken``; ``lost`` or a delivery
+    failure (``TRANSIENT_ERROR_CODES``) -> ``transient``; the crawler's
+    ``outcome_class == "transient"`` -> ``transient``; anything else (``broken``,
+    ``ok``, missing, unknown, a stats-less failure) -> ``broken``.
+    """
+    if not execution_is_erroneous(execution, log_file, max_file_bytes):
+        return None
+    if _server_judged_broken(execution, log_file, max_file_bytes):
+        return OUTCOME_BROKEN
+    if getattr(execution, "status", None) == EXEC_LOST:
+        return OUTCOME_TRANSIENT
+    if getattr(execution, "error_code", None) in TRANSIENT_ERROR_CODES:
+        return OUTCOME_TRANSIENT
+    if getattr(execution, "outcome_class", None) == OUTCOME_TRANSIENT:
+        return OUTCOME_TRANSIENT
+    return OUTCOME_BROKEN
+
+
+def task_outcome_class(
+    task: object,
+    executions: list,
+    log_files: dict[str, object] | None = None,
+    max_file_bytes: int = 0,
+) -> str:
+    """Task-level class for the breaker: ``ok | neutral | transient | broken``.
+
+    Not erroneous: ``complete`` -> ``ok``, any other terminal (``canceled`` /
+    ``no_target``) -> ``neutral``. Erroneous: any ``broken`` execution ->
+    ``broken``; all erroneous executions ``transient`` -> ``transient``; judged
+    erroneous only by the task's own status (defensive) -> ``lost`` is
+    ``transient``, otherwise ``broken``.
+    """
+    files = log_files or {}
+    if not task_is_erroneous(task, executions, files, max_file_bytes):
+        return OUTCOME_OK if getattr(task, "status", None) == TASK_COMPLETE else OUTCOME_NEUTRAL
+    classes = [
+        c
+        for c in (
+            execution_outcome_class(e, files.get(getattr(e, "id", None)), max_file_bytes)
+            for e in executions
+        )
+        if c is not None
+    ]
+    if OUTCOME_BROKEN in classes:
+        return OUTCOME_BROKEN
+    if classes:
+        return OUTCOME_TRANSIENT
+    return OUTCOME_TRANSIENT if getattr(task, "status", None) == TASK_LOST else OUTCOME_BROKEN

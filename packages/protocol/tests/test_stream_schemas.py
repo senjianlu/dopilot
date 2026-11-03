@@ -326,3 +326,35 @@ def test_stop_logs_command_roundtrip() -> None:
     assert back == cmd
     assert back.type is AgentCommandType.stop_logs
     assert AgentCommandType("stop_logs") is AgentCommandType.stop_logs
+
+
+# --- schedule circuit breaker (decision 0025): outcome_class ------------------------
+
+
+def test_agent_event_without_outcome_class_parses_as_none() -> None:
+    legacy = (
+        '{"event_id":"ev1","agent_id":"agent-01","task_id":"t1","execution_id":"x1",'
+        '"type":"attempt.finished","error_count":2,"finish_reason":"finished",'
+        '"created_at":"t","status":"finished"}'
+    )
+    ev = AgentEvent.model_validate_json(legacy)
+    assert ev.outcome_class is None
+    assert ev.error_count == 2
+
+
+def test_agent_event_outcome_class_roundtrip() -> None:
+    ev = AgentEvent(
+        event_id="ev3",
+        agent_id="agent-01",
+        task_id="t1",
+        execution_id="x1",
+        type=AgentEventType.finished,
+        error_count=2,
+        finish_reason="site_request_failed",
+        outcome_class="transient",
+        created_at="t",
+    )
+    back = from_stream_entry(AgentEvent, to_stream_entry(ev))
+    assert back == ev
+    assert back.outcome_class == "transient"
+    assert AgentEvent.model_validate_json(ev.model_dump_json()).outcome_class == "transient"

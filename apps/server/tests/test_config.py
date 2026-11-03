@@ -692,3 +692,66 @@ def test_outbox_oom_guard_env_overrides(tmp_path, monkeypatch):
     assert s.redis.sent_reconcile_batch_limit == 2001
     assert s.maintenance.outbox_retention_days == 2002
     assert s.maintenance.outbox_delete_batch == 2003
+
+
+# --- schedule circuit breaker settings (decision 0025) -------------------------------
+
+
+def _breaker_toml(tmp_path, scheduler_block: str) -> str:
+    path = _write_toml(tmp_path)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write("\n[scheduler]\n" + scheduler_block + "\n")
+    return path
+
+
+def test_breaker_defaults(tmp_path):
+    sched = load_settings(_write_toml(tmp_path)).scheduler
+    assert sched.auto_disable_after_errors == 5
+    assert sched.breaker_backoff_base_seconds == 900
+    assert sched.breaker_backoff_max_seconds == 7200
+    assert sched.breaker_escalate_after_seconds == 86400
+
+
+def test_breaker_env_overrides(tmp_path, monkeypatch):
+    monkeypatch.setenv("DOPILOT_SCHEDULER_BREAKER_BACKOFF_BASE_SECONDS", "60")
+    monkeypatch.setenv("DOPILOT_SCHEDULER_BREAKER_BACKOFF_MAX_SECONDS", "600")
+    monkeypatch.setenv("DOPILOT_SCHEDULER_BREAKER_ESCALATE_AFTER_SECONDS", "0")
+    sched = load_settings(_write_toml(tmp_path)).scheduler
+    assert sched.breaker_backoff_base_seconds == 60
+    assert sched.breaker_backoff_max_seconds == 600
+    assert sched.breaker_escalate_after_seconds == 0
+
+
+def test_breaker_toml_values(tmp_path):
+    path = _breaker_toml(
+        tmp_path,
+        "breaker_backoff_base_seconds = 30\nbreaker_backoff_max_seconds = 30\n"
+        "breaker_escalate_after_seconds = 3600",
+    )
+    sched = load_settings(path).scheduler
+    assert (sched.breaker_backoff_base_seconds, sched.breaker_backoff_max_seconds) == (30, 30)
+    assert sched.breaker_escalate_after_seconds == 3600
+
+
+@pytest.mark.parametrize(
+    "block, fragment",
+    [
+        ("breaker_backoff_base_seconds = 0", "breaker_backoff_base_seconds"),
+        (
+            "breaker_backoff_base_seconds = 900\nbreaker_backoff_max_seconds = 899",
+            "breaker_backoff_max_seconds",
+        ),
+        ("breaker_escalate_after_seconds = -1", "breaker_escalate_after_seconds"),
+    ],
+)
+def test_breaker_invalid_toml_rejected(tmp_path, block, fragment):
+    with pytest.raises(ConfigError) as exc:
+        load_settings(_breaker_toml(tmp_path, block))
+    assert fragment in str(exc.value)
+
+
+def test_breaker_invalid_env_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("DOPILOT_SCHEDULER_BREAKER_BACKOFF_MAX_SECONDS", "10")
+    with pytest.raises(ConfigError) as exc:
+        load_settings(_write_toml(tmp_path))
+    assert "breaker_backoff_max_seconds" in str(exc.value)

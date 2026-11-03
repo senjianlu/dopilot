@@ -208,6 +208,7 @@ class EventPublisher:
         error_count: int | None = None,
         finish_reason: str | None = None,
         log_bytes: int | None = None,
+        outcome_class: str | None = None,
     ) -> AgentEvent:
         return AgentEvent(
             event_id=uuid.uuid4().hex,
@@ -223,6 +224,7 @@ class EventPublisher:
             error_count=error_count,
             finish_reason=finish_reason,
             log_bytes=log_bytes,
+            outcome_class=outcome_class,
             created_at=_now(),
         )
 
@@ -305,6 +307,7 @@ class EventPublisher:
         error_count: int | None = None,
         finish_reason: str | None = None,
         log_bytes: int | None = None,
+        outcome_class: str | None = None,
     ) -> None:
         await self.emit(
             self._event(
@@ -318,6 +321,7 @@ class EventPublisher:
                 error_count=error_count,
                 finish_reason=finish_reason,
                 log_bytes=log_bytes,
+                outcome_class=outcome_class,
             )
         )
 
@@ -364,6 +368,7 @@ class EventPublisher:
                 error_count=state.error_count,
                 finish_reason=state.finish_reason,
                 log_bytes=state.log_bytes,
+                outcome_class=state.outcome_class,
             )
             return
         # started Python-wheel attempt: never poll Scrapy status — the terminal

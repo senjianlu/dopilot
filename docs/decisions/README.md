@@ -46,3 +46,4 @@
 | [0022](0022-schedule-concurrency-limit.md) | 定时调度并发上限（默认 1，0=不限）；手动触发与定时共用同一额度池 |
 | [0023](0023-task-target-search-without-trigram-index.md) | 任务目标名模糊搜索走 ILIKE 顺序扫，暂不引入 pg_trgm 索引；含复议阈值 |
 | [0024](0024-public-repo-redaction.md) | 公开仓库脱敏：业务词只存私有规则，钩子拦截提交与推送；公开历史已改写 |
+| [0025](0025-schedule-circuit-breaker.md) | 调度熔断代替永久停用：瞬态退避半开试跑、真坏需人工，熔断态与 enabled 分开存；取代 0021 §6 的停用动作 |

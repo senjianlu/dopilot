@@ -78,7 +78,7 @@ runtime context 键**同名**:二者表达同一事实("本 agent 的 id"),且�
   (workspaces/缓存/scrapyd/outbox/state/卷),经心跳 `detail["disk"]` 上报,
   供运维仪表盘展示。
 
-### 日志洪泛防护与自动禁用(决策 0021)
+### 日志洪泛防护与调度熔断(决策 0021 / 0025)
 
 机制见 [03-execution-and-logs](03-execution-and-logs.md#日志洪泛防护log-flood-guard决策-0021);
 这里只列配置项(TOML 键 / env,括号内为默认值,**0 = 关闭**该项):
@@ -94,7 +94,10 @@ runtime context 键**同名**:二者表达同一事实("本 agent 的 id"),且�
 | `[redis].stream_max_bytes_logs` | `DOPILOT_REDIS_STREAM_MAX_BYTES_LOGS` | 268435456 | 日志流字节预算(`StreamGuardLoop` 精确裁剪,不收敛则清空) |
 | `[redis].stream_guard_interval_seconds` | `DOPILOT_REDIS_STREAM_GUARD_INTERVAL_SECONDS` | 30 | 守卫周期(启动时先跑一次,早于消费者) |
 | `[redis].sent_reconcile_interval_seconds` / `_min_age_seconds` | `DOPILOT_REDIS_SENT_RECONCILE_INTERVAL_SECONDS` / `..._MIN_AGE_SECONDS` | 300 / 60 | `sent` 命令对账:流中已不存在的命令回退 `pending` 重投 |
-| `[scheduler].auto_disable_after_errors` | `DOPILOT_SCHEDULER_AUTO_DISABLE_AFTER_ERRORS` | 5 | 同一调度连续出错 N 次自动禁用 |
+| `[scheduler].auto_disable_after_errors` | `DOPILOT_SCHEDULER_AUTO_DISABLE_AFTER_ERRORS` | 5 | 调度熔断阈值(决策 0025,键名沿用 0021):连续出错 N 次跳闸,含瞬态 → `open`、全为真坏 → `held`;不改 `enabled` |
+| `[scheduler].breaker_backoff_base_seconds` | `DOPILOT_SCHEDULER_BREAKER_BACKOFF_BASE_SECONDS` | 900 | `open` 退避基数:`min(base × 2^level, max)` 秒后才放行半开试跑;须 ≥ 1 |
+| `[scheduler].breaker_backoff_max_seconds` | `DOPILOT_SCHEDULER_BREAKER_BACKOFF_MAX_SECONDS` | 7200 | 退避封顶,兼作半开试跑期限(到期无结果则下一次触发再放行一次);须 ≥ base |
+| `[scheduler].breaker_escalate_after_seconds` | `DOPILOT_SCHEDULER_BREAKER_ESCALATE_AFTER_SECONDS` | 86400 | 熔断持续超过该时长后,下一次试跑失败时把熔断通知升级为 error;0 = 不升级 |
 | `[scheduler].lost_outcome_grace_seconds` | `DOPILOT_SCHEDULER_LOST_OUTCOME_GRACE_SECONDS` | 86400 | 纯 server-lost 任务多久后兜底记为出错 |
 | `[maintenance].stale_command_stream_days` | `DOPILOT_MAINTENANCE_STALE_COMMAND_STREAM_DAYS` | 7 | 退役 agent 命令流清理窗口 |
 | `[maintenance].notification_retention_days` / `notification_unread_max_days` / `notification_max_rows` | `DOPILOT_MAINTENANCE_NOTIFICATION_*` | 30 / 90 / 2000 | 消息中心:已读保留、未读上限年龄、表行数硬上限 |

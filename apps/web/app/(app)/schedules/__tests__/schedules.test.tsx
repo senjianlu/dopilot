@@ -17,6 +17,7 @@ const previewNextRun = vi.fn();
 const createSchedule = vi.fn();
 const updateSchedule = vi.fn();
 const disableAllSchedules = vi.fn();
+const resetScheduleBreaker = vi.fn();
 vi.mock("@/lib/api/schedules", () => ({
   listSchedules: () => listSchedules(),
   deleteSchedule: (id: string) => deleteSchedule(id),
@@ -25,6 +26,7 @@ vi.mock("@/lib/api/schedules", () => ({
   createSchedule: (p: unknown) => createSchedule(p),
   updateSchedule: (id: string, p: unknown) => updateSchedule(id, p),
   disableAllSchedules: () => disableAllSchedules(),
+  resetScheduleBreaker: (id: string) => resetScheduleBreaker(id),
 }));
 const listTemplates = vi.fn();
 vi.mock("@/lib/api/templates", () => ({ listTemplates: () => listTemplates() }));
@@ -70,6 +72,13 @@ const schedule: Schedule = {
   auto_disabled_at: null,
   auto_disabled_reason: null,
   outcome_generation: 0,
+  breaker_state: "closed",
+  breaker_level: 0,
+  breaker_opened_at: null,
+  breaker_retry_at: null,
+  breaker_escalated_at: null,
+  breaker_reason: null,
+  breaker_artifact_id: null,
   created_at: null,
   updated_at: null,
 };
@@ -87,6 +96,7 @@ beforeEach(() => {
   push.mockReset();
   listSchedules.mockReset().mockResolvedValue(schedulesResponse([schedule]));
   disableAllSchedules.mockReset().mockResolvedValue({ disabled: 1 });
+  resetScheduleBreaker.mockReset().mockResolvedValue(schedule);
   deleteSchedule.mockReset().mockResolvedValue(undefined);
   triggerSchedule.mockReset().mockResolvedValue({ task_id: "task-7", status: "queued" });
   previewNextRun.mockReset().mockResolvedValue({ next_run_at: null });
@@ -716,5 +726,86 @@ describe("SchedulesPage long names and the row actions menu", () => {
     expect(tplSpan.contains(archived)).toBe(false);
     expect(badge).toBeVisible();
     expect(archived).toBeVisible();
+  });
+  it("shows breaker badges for open, half_open and held with their tooltips", async () => {
+    const open: Schedule = {
+      ...schedule, id: "sch-o", name: "open-schedule", enabled: true,
+      breaker_state: "open", breaker_level: 1,
+      breaker_opened_at: "2026-11-03T01:00:00+00:00",
+      breaker_retry_at: "2026-11-03T01:30:00+00:00",
+    };
+    const probing: Schedule = {
+      ...schedule, id: "sch-p", name: "probing-schedule", enabled: true,
+      breaker_state: "half_open", breaker_opened_at: "2026-11-03T01:00:00+00:00",
+    };
+    const held: Schedule = {
+      ...schedule, id: "sch-h", name: "held-schedule", enabled: true,
+      breaker_state: "held", breaker_opened_at: "2026-11-03T01:00:00+00:00",
+      consecutive_error_count: 5,
+      breaker_reason: { kind: "broken", consecutive_errors: 5, threshold: 5 },
+    };
+    listSchedules.mockResolvedValue(schedulesResponse([schedule, open, probing, held]));
+    const user = userEvent.setup();
+    renderWithProviders(<SchedulesPage />);
+    const openBadge = await screen.findByTestId("schedule-breaker-open-schedule");
+    expect(openBadge).toHaveTextContent("Circuit open");  // test locale is en
+    expect(openBadge).toHaveAttribute("data-state", "open");
+    const probingBadge = screen.getByTestId("schedule-breaker-probing-schedule");
+    expect(probingBadge).toHaveTextContent("Probing");
+    expect(probingBadge).toHaveAttribute("data-state", "half_open");
+    const heldBadge = screen.getByTestId("schedule-breaker-held-schedule");
+    expect(heldBadge).toHaveTextContent("Needs attention");
+    expect(heldBadge).toHaveAttribute("data-variant", "destructive");
+    expect(screen.queryByTestId("schedule-breaker-demo-schedule")).not.toBeInTheDocument();
+    await user.hover(openBadge);
+    await waitFor(() =>
+      expect(screen.getAllByText(/next probe no earlier than/).length).toBeGreaterThan(0),
+    );
+    await user.unhover(openBadge);
+    await user.hover(probingBadge);
+    await waitFor(() =>
+      expect(screen.getAllByText(/a probe run is in flight/).length).toBeGreaterThan(0),
+    );
+    await user.unhover(probingBadge);
+    await user.hover(heldBadge);
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(/5 consecutive runs were judged broken/).length,
+      ).toBeGreaterThan(0),
+    );
+  });
+
+  it("offers the breaker reset only when not closed, then resets and reloads", async () => {
+    const held: Schedule = {
+      ...schedule, id: "sch-h", name: "held-schedule", enabled: true,
+      breaker_state: "held", breaker_opened_at: "2026-11-03T01:00:00+00:00",
+    };
+    listSchedules.mockResolvedValue(schedulesResponse([schedule, held]));
+    const user = userEvent.setup();
+    renderWithProviders(<SchedulesPage />);
+    await openRowActions(user, "demo-schedule");
+    expect(
+      screen.queryByTestId("schedule-breaker-reset-demo-schedule"),
+    ).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await openRowActions(user, "held-schedule");
+    const calls = listSchedules.mock.calls.length;
+    await user.click(screen.getByTestId("schedule-breaker-reset-held-schedule"));
+    await waitFor(() => expect(resetScheduleBreaker).toHaveBeenCalledWith("sch-h"));
+    await waitFor(() => expect(listSchedules.mock.calls.length).toBeGreaterThan(calls));
+  });
+
+  it("keeps the legacy auto-disabled badge next to a closed breaker", async () => {
+    const legacy: Schedule = {
+      ...schedule, id: "sch-l", name: "legacy-schedule",
+      consecutive_error_count: 5, auto_disabled_at: "2026-10-31T19:46:00+00:00",
+      auto_disabled_reason: { consecutive_errors: 5, threshold: 5, task_ids: [] },
+    };
+    listSchedules.mockResolvedValue(schedulesResponse([legacy]));
+    renderWithProviders(<SchedulesPage />);
+    expect(
+      await screen.findByTestId("schedule-auto-disabled-legacy-schedule"),
+    ).toHaveTextContent("Auto-disabled");
+    expect(screen.queryByTestId("schedule-breaker-legacy-schedule")).not.toBeInTheDocument();
   });
 });

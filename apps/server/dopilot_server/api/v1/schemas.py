@@ -310,10 +310,19 @@ class ScheduleView(BaseModel):
     # estimate (now + interval); for cron it is computed from the expression.
     next_run_at: str | None = None
     # Log-flood guard / auto-disable (derived from the outcome ledger).
+    # ``auto_disabled_*`` are legacy (rows auto-disabled before decision 0025).
     consecutive_error_count: int = 0
     auto_disabled_at: str | None = None
     auto_disabled_reason: dict[str, Any] | None = None
     outcome_generation: int = 0
+    # Schedule circuit breaker (decision 0025): closed | open | half_open | held.
+    breaker_state: str = "closed"
+    breaker_level: int = 0
+    breaker_opened_at: str | None = None
+    breaker_retry_at: str | None = None
+    breaker_escalated_at: str | None = None
+    breaker_reason: dict[str, Any] | None = None
+    breaker_artifact_id: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 

@@ -173,6 +173,10 @@ class Execution(Base):
     error_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     finish_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     log_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Decision 0025: the crawler's own ``'outcome/class'`` stat from the same
+    # stats block, verbatim (bounded to 64 chars). Only ``transient`` softens a
+    # judgement; anything else / NULL is treated as ``broken``.
+    outcome_class: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Phase 1.5: set to "lost" when an agent-authoritative terminal overrides a
     # prior server-inferred lost (audit of the soft-terminal override).
     reconciled_from: Mapped[str | None] = mapped_column(String, nullable=True)

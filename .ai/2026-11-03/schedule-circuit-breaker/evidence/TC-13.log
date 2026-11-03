@@ -1,0 +1,32 @@
+# rawf-evidence v1
+tc: TC-13
+label: 
+cmd: env DOPILOT_TEST_DATABASE_URL=postgresql+psycopg://dopilot:dopilot@localhost:5432/dopilot .venv/bin/python -m pytest apps/server/tests/test_schedule_breaker_pg.py -v
+cwd: /home/rabbir/Projects/dopilot
+git_head: 52727f04dc3f6c27f5e942f491e561fc14d08a95 dirty
+started: 2026-11-03T12:03:04+09:00
+--- output ---
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 8 items
+
+apps/server/tests/test_schedule_breaker_pg.py::test_concurrent_due_firings_admit_one_probe PASSED [ 12%]
+apps/server/tests/test_schedule_breaker_pg.py::test_concurrent_enables_reset_once PASSED [ 25%]
+apps/server/tests/test_schedule_breaker_pg.py::test_reset_then_enable_bumps_twice PASSED [ 37%]
+apps/server/tests/test_schedule_breaker_pg.py::test_enable_then_reset_bumps_once PASSED [ 50%]
+apps/server/tests/test_schedule_breaker_pg.py::test_held_vs_template_change_template_commits_first PASSED [ 62%]
+apps/server/tests/test_schedule_breaker_pg.py::test_held_vs_template_change_recorder_commits_first PASSED [ 75%]
+apps/server/tests/test_schedule_breaker_pg.py::test_recorder_and_template_update_do_not_deadlock PASSED [ 87%]
+apps/server/tests/test_schedule_breaker_pg.py::test_notification_failure_does_not_abort_recording PASSED [100%]
+
+============================== 8 passed in 4.44s ===============================
+
+--- end ---
+exit: 0
+finished: 2026-11-03T12:03:10+09:00
+bytes: 1395

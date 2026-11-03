@@ -180,13 +180,24 @@ class NodesSettings(BaseModel):
 class SchedulerSettings(BaseModel):
     enabled: bool = False
     timezone: str = "UTC"
-    # Log-flood guard / auto-disable: a schedule whose last N recorded task
-    # outcomes (current generation, ordered by finished_at) are ALL erroneous is
-    # switched off (``enabled=false``) and a notification is raised. 0 disables
-    # the feature. "Erroneous" = failed/lost, or finished with scrapy
-    # ``log_count/ERROR > 0`` / abnormal ``finish_reason``, or a log-flood /
-    # size-cap truncation (see ``states.execution_is_erroneous``).
+    # Schedule circuit breaker threshold (decision 0025; key name kept from
+    # 0021 for compatibility): a schedule whose last N recorded task outcomes
+    # (current generation, ordered by finished_at) are ALL erroneous trips its
+    # breaker — ``open`` (timed back-off + half-open probe) when any of them is
+    # ``transient``, ``held`` (needs a human) when all are ``broken``. The
+    # breaker never touches ``enabled``. 0 = never trip. "Erroneous" = see
+    # ``states.execution_is_erroneous``.
     auto_disable_after_errors: int = 5
+    # Back-off for an ``open`` breaker: ``min(base * 2**level, max)`` seconds
+    # before the next timer firing may run a half-open probe. ``max`` is also
+    # the half-open probe deadline (no outcome by then -> another probe may run
+    # at the next firing, same generation). Validated at load: base >= 1,
+    # max >= base.
+    breaker_backoff_base_seconds: int = 900
+    breaker_backoff_max_seconds: int = 7200
+    # A breaker open this long is escalated (the open notification re-raised
+    # as ``error``) at its next failed probe. 0 = never escalate; must be >= 0.
+    breaker_escalate_after_seconds: int = 86400
     # A ``lost`` task is a soft terminal the agent may still override; it is
     # only recorded as an outcome once its executions were reclaimed and the
     # drain window passed, or after this many seconds as a bounded fallback.

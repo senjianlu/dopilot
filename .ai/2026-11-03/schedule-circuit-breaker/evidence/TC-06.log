@@ -1,0 +1,30 @@
+# rawf-evidence v1
+tc: TC-06
+label: 
+cmd: .venv/bin/python -m pytest apps/server/tests/test_schedule_breaker.py -v -k trip
+cwd: /home/rabbir/Projects/dopilot
+git_head: 52727f04dc3f6c27f5e942f491e561fc14d08a95 dirty
+started: 2026-11-03T12:02:23+09:00
+--- output ---
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 51 items / 45 deselected / 6 selected
+
+apps/server/tests/test_schedule_breaker.py::test_trip_transient_opens_without_touching_enabled PASSED [ 16%]
+apps/server/tests/test_schedule_breaker.py::test_trip_broken_holds PASSED [ 33%]
+apps/server/tests/test_schedule_breaker.py::test_trip_mixed_streak_opens PASSED [ 50%]
+apps/server/tests/test_schedule_breaker.py::test_trip_legacy_null_rows_count_as_broken PASSED [ 66%]
+apps/server/tests/test_schedule_breaker.py::test_trip_success_resets_run_without_tripping PASSED [ 83%]
+apps/server/tests/test_schedule_breaker.py::test_trip_threshold_zero_never_trips PASSED [100%]
+
+======================= 6 passed, 45 deselected in 0.80s =======================
+
+--- end ---
+exit: 0
+finished: 2026-11-03T12:02:25+09:00
+bytes: 1161

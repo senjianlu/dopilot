@@ -56,6 +56,13 @@ export async function triggerSchedule(id: string): Promise<TaskRunResponse> {
   return data;
 }
 
+// Reset the schedule's circuit breaker to closed (decision 0025). A closed
+// breaker is a no-op server-side; `enabled` is never changed.
+export async function resetScheduleBreaker(id: string): Promise<Schedule> {
+  const { data } = await client.post<Schedule>(`/schedules/${id}/breaker/reset`);
+  return data;
+}
+
 // Estimate the next run for an unsaved trigger (backs the create-dialog preview).
 export async function previewNextRun(
   payload: NextRunPreviewRequest,

@@ -62,6 +62,9 @@ OUTCOME_HEARTBEAT = "heartbeat"
 # Agent error_code for a run the log-flood watchdog stopped (see agent
 # ``redis/commands.py``): surfaces as a ``log_flood`` notification here.
 LOG_FLOOD_ERROR_CODE = "log_flood"
+#: Decision 0025: bound on the stored crawler ``outcome/class`` (column String(64)).
+OUTCOME_CLASS_MAX_CHARS = 64
+
 logger = logging.getLogger(__name__)
 
 _EVENT_TO_EXEC = {
@@ -103,6 +106,10 @@ def _apply_status(
             execution.finish_reason = event.finish_reason
         if event.log_bytes is not None:
             execution.log_bytes = event.log_bytes
+        # Decision 0025: the crawler's ``'outcome/class'`` (bounded; the column
+        # is String(64) and the server must not trust the agent's own cap).
+        if event.outcome_class is not None:
+            execution.outcome_class = event.outcome_class[:OUTCOME_CLASS_MAX_CHARS]
 
 
 def _mark_progress(execution: Execution, now: datetime) -> None:

@@ -1,4 +1,5 @@
-"""Outcome recorder + schedule auto-disable (log-flood guard).
+"""Outcome recorder + schedule circuit breaker (log-flood guard; decision 0025
+replaced the threshold's ``enabled=false`` with the breaker).
 
 TC-15 (via states), TC-18, TC-19, TC-19b, TC-19c, TC-20, TC-20b, TC-20c,
 TC-21, TC-23 (ledger side).
@@ -18,7 +19,7 @@ from dopilot_protocol import (
 from dopilot_server.models.execution import Execution, ExecutionLogFile, Task
 from dopilot_server.models.notification import (
     TYPE_LOG_FLOOD,
-    TYPE_SCHEDULE_AUTO_DISABLED,
+    TYPE_SCHEDULE_BREAKER_HELD,
     Notification,
 )
 from dopilot_server.models.scheduling import Schedule, ScheduleOutcomeLedger
@@ -30,7 +31,7 @@ from dopilot_server.services.events import apply_event
 from dopilot_server.services.executions import new_id
 from dopilot_server.services.logs import OUTCOME_SEALED, apply_log_event
 from dopilot_server.services.outcomes import record_task_outcomes
-from dopilot_server.services.schedules import update_schedule
+from dopilot_server.services.schedules import reset_schedule_breaker, update_schedule
 from dopilot_server.services.states import (
     execution_is_erroneous,
     task_is_erroneous,
@@ -145,10 +146,10 @@ async def _refresh(session, obj):
     return obj
 
 
-# --- TC-19: three failures -> disabled, idempotent -------------------------------------
+# --- TC-19: three failures -> breaker trips (held), idempotent -------------------------
 
 
-async def test_three_consecutive_failures_disable_schedule(db_session, exec_settings, seeder):
+async def test_three_consecutive_failures_trip_breaker(db_session, exec_settings, seeder):
     exec_settings.scheduler.auto_disable_after_errors = 3
     sched = await _schedule(db_session, seeder)
     tasks = []
@@ -164,12 +165,14 @@ async def test_three_consecutive_failures_disable_schedule(db_session, exec_sett
         await _refresh(db_session, t)
         assert t.outcome_recorded_at is not None and t.outcome_erroneous is True
     await _refresh(db_session, sched)
-    assert sched.enabled is False and sched.auto_disabled_at is not None
+    # stats-less failures are ``broken`` -> held; ``enabled`` is never touched
+    assert sched.enabled is True and sched.auto_disabled_at is None
+    assert sched.breaker_state == "held" and sched.breaker_opened_at is not None
     assert sched.consecutive_error_count == 3
-    reason = sched.auto_disabled_reason
+    reason = sched.breaker_reason
     assert reason["consecutive_errors"] == 3 and len(reason["task_ids"]) == 3
     notes = list((await db_session.execute(
-        select(Notification).where(Notification.type == TYPE_SCHEDULE_AUTO_DISABLED)
+        select(Notification).where(Notification.type == TYPE_SCHEDULE_BREAKER_HELD)
     )).scalars().all())
     assert len(notes) == 1 and notes[0].severity == "error"
     assert notes[0].payload["schedule_id"] == sched.id
@@ -195,7 +198,8 @@ async def test_trigger_now_tasks_count(db_session, exec_settings, seeder):
     assert disabled == [sched.id]
     assert len(await _ledger(db_session, sched)) == 3
     await _refresh(db_session, sched)
-    assert sched.consecutive_error_count == 3 and sched.enabled is False
+    assert sched.consecutive_error_count == 3 and sched.enabled is True
+    assert sched.breaker_state == "held"
 
 
 # --- TC-19c: stats end-to-end via apply_event -------------------------------------------
@@ -208,7 +212,7 @@ def _terminal_event(execution, **kw) -> AgentEvent:
     )
 
 
-async def test_stats_drive_auto_disable_end_to_end(db_session, exec_settings, seeder):
+async def test_stats_drive_breaker_end_to_end(db_session, exec_settings, seeder):
     exec_settings.scheduler.auto_disable_after_errors = 3
     sched = await _schedule(db_session, seeder)
     stats = [
@@ -237,8 +241,10 @@ async def test_stats_drive_auto_disable_end_to_end(db_session, exec_settings, se
     assert disabled == [sched.id]
     assert all(r.erroneous for r in await _ledger(db_session, sched))
 
-    # manual re-enable, then a clean finished run -> ledger false, count 0
-    await update_schedule(db_session, sched, {"enabled": True})
+    await _refresh(db_session, sched)
+    assert sched.breaker_state == "held" and sched.enabled is True
+    # manual breaker reset, then a clean finished run -> ledger false, count 0
+    await reset_schedule_breaker(db_session, sched.id)
     await db_session.commit()
     _t, e, lf = await _task(
         db_session, exec_settings, sched, status="running", exec_status="running",
@@ -253,6 +259,7 @@ async def test_stats_drive_auto_disable_end_to_end(db_session, exec_settings, se
     rows = await _ledger(db_session, sched)
     assert rows[0].erroneous is False and rows[0].generation == 1
     assert sched.consecutive_error_count == 0 and sched.enabled is True
+    assert sched.breaker_state == "closed"
 
 
 # --- TC-20: success resets; direct tasks ignored; threshold 0 off; multi-exec -----------
@@ -354,7 +361,8 @@ async def test_ledger_is_order_independent(db_session, exec_settings, seeder):
     await db_session.commit()
     assert disabled == [sched2.id]
     await _refresh(db_session, sched2)
-    assert sched2.consecutive_error_count == 5 and sched2.enabled is False
+    assert sched2.consecutive_error_count == 5 and sched2.enabled is True
+    assert sched2.breaker_state == "held"
 
 
 async def test_soft_lost_policy(db_session, exec_settings, seeder):
@@ -588,13 +596,18 @@ async def test_manual_reenable_starts_new_generation(db_session, exec_settings, 
     assert await record_task_outcomes(db_session, exec_settings, now=NOW) == [sched.id]
     await db_session.commit()
     await _refresh(db_session, sched)
-    assert sched.enabled is False and sched.consecutive_error_count == 5
+    assert sched.enabled is True and sched.consecutive_error_count == 5
+    assert sched.breaker_state == "held"
 
+    # the breaker leaves ``enabled`` alone, so a re-enable is off -> on
+    await update_schedule(db_session, sched, {"enabled": False})
+    await db_session.commit()
     await update_schedule(db_session, sched, {"enabled": True})
     await db_session.commit()
     await _refresh(db_session, sched)
     assert sched.enabled and sched.consecutive_error_count == 0
     assert sched.auto_disabled_at is None and sched.auto_disabled_reason is None
+    assert sched.breaker_state == "closed" and sched.breaker_reason is None
     assert sched.outcome_generation == 1
 
     # (a) new task (generation 1) fails -> count 1, not 6

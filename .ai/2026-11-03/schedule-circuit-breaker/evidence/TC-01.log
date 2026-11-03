@@ -1,0 +1,38 @@
+# rawf-evidence v1
+tc: TC-01
+label: 
+cmd: .venv/bin/python -m pytest apps/agent/tests/test_scrapyd_stats.py -v
+cwd: /home/rabbir/Projects/dopilot
+git_head: 52727f04dc3f6c27f5e942f491e561fc14d08a95 dirty
+started: 2026-11-03T12:02:15+09:00
+--- output ---
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0 -- /home/rabbir/Projects/dopilot/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rabbir/Projects/dopilot/apps/agent
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, anyio-4.14.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 14 items
+
+apps/agent/tests/test_scrapyd_stats.py::test_parses_error_count_and_finish_reason PASSED [  7%]
+apps/agent/tests/test_scrapyd_stats.py::test_truncated_log_without_stats_block_is_unknown PASSED [ 14%]
+apps/agent/tests/test_scrapyd_stats.py::test_stats_block_without_error_key_means_zero_errors PASSED [ 21%]
+apps/agent/tests/test_scrapyd_stats.py::test_last_stats_block_wins_when_log_has_several PASSED [ 28%]
+apps/agent/tests/test_scrapyd_stats.py::test_read_log_tail_reads_only_last_bytes PASSED [ 35%]
+apps/agent/tests/test_scrapyd_stats.py::test_business_log_lines_without_stats_block_never_fabricate_stats PASSED [ 42%]
+apps/agent/tests/test_scrapyd_stats.py::test_lines_after_the_stats_block_are_ignored PASSED [ 50%]
+apps/agent/tests/test_scrapyd_stats.py::test_stats_block_cut_off_before_error_key_is_unknown_not_zero PASSED [ 57%]
+apps/agent/tests/test_scrapyd_stats.py::test_outcome_class_is_read_from_the_last_stats_block PASSED [ 64%]
+apps/agent/tests/test_scrapyd_stats.py::test_outcome_class_absent_from_last_block_is_none PASSED [ 71%]
+apps/agent/tests/test_scrapyd_stats.py::test_outcome_class_only_in_an_earlier_block_is_ignored PASSED [ 78%]
+apps/agent/tests/test_scrapyd_stats.py::test_outcome_class_in_business_log_lines_is_never_trusted PASSED [ 85%]
+apps/agent/tests/test_scrapyd_stats.py::test_outcome_class_is_truncated_to_64_chars PASSED [ 92%]
+apps/agent/tests/test_scrapyd_stats.py::test_outcome_class_with_invalid_utf8_does_not_raise PASSED [100%]
+
+============================== 14 passed in 0.04s ==============================
+
+--- end ---
+exit: 0
+finished: 2026-11-03T12:02:16+09:00
+bytes: 2041
